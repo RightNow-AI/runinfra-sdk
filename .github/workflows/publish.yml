@@ -40,10 +40,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Node
+        # Note: do NOT set `registry-url` here — it creates an .npmrc with
+        # `_authToken=${NODE_AUTH_TOKEN}` which makes the CLI demand a token
+        # instead of using OIDC. The publish step sets the registry inline.
         uses: actions/setup-node@v4
         with:
           node-version: 22.14.0
-          registry-url: https://registry.npmjs.org
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -94,13 +96,12 @@ jobs:
       - name: Publish to npm
         if: ${{ github.event.inputs.dry_run != 'true' }}
         working-directory: typescript
-        env:
-          # actions/setup-node@v4 with registry-url auto-injects a placeholder
-          # NODE_AUTH_TOKEN. We use OIDC Trusted Publishing instead — unset it
-          # so npm CLI uses the OIDC exchange and generates a fresh registry
-          # token at publish time (along with a provenance attestation).
-          NODE_AUTH_TOKEN: ""
-        run: npm publish runinfra-sdk-*.tgz --access public --provenance
+        run: |
+          # npm 11.5.1+ with id-token: write permission performs OIDC trusted
+          # publishing automatically when --provenance is used and no other
+          # auth is configured.
+          npm config set registry https://registry.npmjs.org/
+          npm publish runinfra-sdk-*.tgz --access public --provenance
 
       - name: Dry-run summary
         if: ${{ github.event.inputs.dry_run == 'true' }}
