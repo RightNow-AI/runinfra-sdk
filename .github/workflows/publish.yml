@@ -52,7 +52,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: typescript
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --lockfile=false
 
       - name: Type-check
         working-directory: typescript
