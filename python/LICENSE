@@ -1,0 +1,37 @@
+RunInfra SDK License
+Copyright (c) 2026 RightNow AI, Inc.
+
+This software is licensed under a proprietary, source-available license.
+By installing, copying, or using this package you agree to the terms below.
+
+1. Permitted use
+   You may use this SDK to integrate your own applications with RunInfra
+   inference services hosted at api.runinfra.ai. This includes:
+   - Calling the public gateway endpoints documented in the README.
+   - Embedding this SDK in your applications (commercial or personal),
+     provided your use does not violate Section 2.
+
+2. Restrictions
+   You may not:
+   - Redistribute or sublicense this SDK in modified form.
+   - Use this SDK to reverse-engineer, replicate, or impair the RunInfra
+     hosted service.
+   - Remove or alter the attribution notices in this LICENSE or in package
+     metadata.
+   - Misrepresent the origin of this SDK or its packaging artifacts.
+
+3. No warranty
+   This SDK is provided "as is", without warranty of any kind, express or
+   implied, including but not limited to merchantability, fitness for a
+   particular purpose, and non-infringement. In no event shall RightNow AI,
+   Inc. or its affiliates be liable for any claim, damages, or other
+   liability arising from the use of this SDK.
+
+4. Termination
+   This license terminates automatically if you breach any of the
+   restrictions in Section 2. Upon termination, you must cease all use of
+   this SDK and delete all copies in your possession.
+
+5. Contact
+   For commercial licensing inquiries, partnerships, or questions about
+   this license, contact licensing@runinfra.ai.

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runinfra"
+version = "0.1.1"
+description = "RunInfra SDK for optimized inference deployments (beta; LLM + embeddings tested, image/audio surfaces experimental)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "RunInfra" }]
+license = { file = "LICENSE" }
+keywords = [
+  "runinfra",
+  "inference",
+  "openai",
+  "responses",
+  "embeddings",
+  "tts",
+  "asr",
+  "image-generation",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Documentation = "https://runinfra.ai/docs/tools-sdks/runinfra-sdk"
+Homepage = "https://runinfra.ai"
+Issues = "https://github.com/RightNow-AI/runinfra-sdk/issues"
+Source = "https://github.com/RightNow-AI/runinfra-sdk"
+Changelog = "https://github.com/RightNow-AI/runinfra-sdk/blob/main/python/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["runinfra*"]
+
+[tool.setuptools.package-data]
+runinfra = ["py.typed"]

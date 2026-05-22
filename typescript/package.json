@@ -1,0 +1,59 @@
+{
+  "name": "@runinfra/sdk",
+  "version": "0.1.1",
+  "description": "RunInfra SDK for optimized inference deployments (beta; LLM + embeddings tested, image/audio surfaces experimental)",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://runinfra.ai/docs/tools-sdks/runinfra-sdk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RightNow-AI/runinfra-sdk.git",
+    "directory": "typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/RightNow-AI/runinfra-sdk/issues"
+  },
+  "keywords": [
+    "runinfra",
+    "inference",
+    "openai",
+    "responses",
+    "embeddings",
+    "tts",
+    "asr",
+    "image-generation"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "tsc -p tsconfig.json",
+    "test": "vitest run src/index.test.ts"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

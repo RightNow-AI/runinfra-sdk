@@ -1,0 +1,34 @@
+# Node
+node_modules/
+*.log
+.npm/
+.pnpm-store/
+
+# TypeScript build output
+typescript/dist/
+typescript/*.tgz
+typescript/.tsbuildinfo
+typescript/coverage/
+
+# Python build output
+python/build/
+python/dist/
+python/*.egg-info/
+python/__pycache__/
+python/runinfra/__pycache__/
+python/tests/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local env
+.env
+.env.local
+.env.*.local

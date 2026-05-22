@@ -1,0 +1,10 @@
+include README.md
+include CHANGELOG.md
+include LICENSE
+include pyproject.toml
+include runinfra/py.typed
+recursive-include runinfra *.py
+prune tests
+prune build
+prune dist
+global-exclude __pycache__ *.py[cod]

@@ -1,0 +1,167 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Which package to publish
+        required: true
+        type: choice
+        options:
+          - both
+          - typescript
+          - python
+        default: both
+      dry_run:
+        description: Build and verify without publishing
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runinfra-sdk-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-npm:
+    name: Publish TypeScript SDK
+    if: ${{ github.event.inputs.package == 'typescript' || github.event.inputs.package == 'both' }}
+    runs-on: ubuntu-latest
+    environment: npm
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        working-directory: typescript
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        working-directory: typescript
+        run: pnpm exec tsc -p tsconfig.json --noEmit
+
+      - name: Test
+        working-directory: typescript
+        run: pnpm test
+
+      - name: Build
+        working-directory: typescript
+        run: pnpm build
+
+      - name: Pack
+        working-directory: typescript
+        run: pnpm pack
+
+      - name: Verify tarball contents (no leaks)
+        working-directory: typescript
+        run: |
+          TGZ=$(ls runinfra-sdk-*.tgz)
+          echo "=== Tarball: $TGZ ==="
+          tar -tf "$TGZ"
+          echo "=== Validation ==="
+          if tar -tf "$TGZ" | grep -qE '\.(map|env|test\.ts)$'; then
+            echo 'FAIL: forbidden file pattern in tarball'
+            exit 1
+          fi
+          # Verify minimum expected files
+          for f in package/dist/index.js package/dist/index.d.ts package/README.md package/CHANGELOG.md package/LICENSE package/package.json; do
+            tar -tf "$TGZ" | grep -q "^${f}$" || (echo "FAIL: missing required file: $f" && exit 1)
+          done
+
+      - name: Install npm trusted publishing CLI
+        run: |
+          npm install -g npm@11.5.1
+          npm --version
+
+      - name: Publish to npm
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        working-directory: typescript
+        env:
+          # actions/setup-node@v4 with registry-url auto-injects a placeholder
+          # NODE_AUTH_TOKEN. We use OIDC Trusted Publishing instead — unset it
+          # so npm CLI uses the OIDC exchange and generates a fresh registry
+          # token at publish time (along with a provenance attestation).
+          NODE_AUTH_TOKEN: ""
+        run: npm publish runinfra-sdk-*.tgz --access public --provenance
+
+      - name: Dry-run summary
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        working-directory: typescript
+        run: |
+          echo 'Dry run — would have published:'
+          ls -la runinfra-sdk-*.tgz
+
+  publish-pypi:
+    name: Publish Python SDK
+    if: ${{ github.event.inputs.package == 'python' || github.event.inputs.package == 'both' }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build + test tools
+        run: python -m pip install --upgrade build pytest twine
+
+      - name: Test
+        working-directory: python
+        run: |
+          python -m pip install -e .
+          python -m pytest tests/ -v
+
+      - name: Build sdist + wheel
+        working-directory: python
+        run: python -m build
+
+      - name: Verify build artifacts (no leaks)
+        working-directory: python
+        run: |
+          ls -la dist/
+          test -n "$(ls dist/runinfra-*.whl 2>/dev/null)" || (echo 'no wheel' && exit 1)
+          test -n "$(ls dist/runinfra-*.tar.gz 2>/dev/null)" || (echo 'no sdist' && exit 1)
+          # No sourcemaps, no env files in wheel
+          if python -m zipfile -l dist/runinfra-*.whl | grep -qE '\.(map|env|pyc)$'; then
+            echo 'FAIL: sourcemap/.env/.pyc files in wheel!'
+            exit 1
+          fi
+          twine check dist/*
+
+      - name: Publish to PyPI
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist
+
+      - name: Dry-run summary
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        working-directory: python
+        run: |
+          echo 'Dry run — would have published:'
+          ls -la dist/
