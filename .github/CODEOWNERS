@@ -1,0 +1,20 @@
+# Code owners for runinfra-sdk
+
+# Default — owner reviews every PR
+* @jaberjaber23
+
+# Workflows + publish pipeline — extra scrutiny
+/.github/workflows/      @jaberjaber23
+/.github/dependabot.yml  @jaberjaber23
+/.github/CODEOWNERS      @jaberjaber23
+
+# Packaging metadata — version bumps + license + classifier
+/typescript/package.json @jaberjaber23
+/python/pyproject.toml   @jaberjaber23
+/python/MANIFEST.in      @jaberjaber23
+/LICENSE                 @jaberjaber23
+/typescript/LICENSE      @jaberjaber23
+/python/LICENSE          @jaberjaber23
+
+# Security policy
+/SECURITY.md             @jaberjaber23

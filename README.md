@@ -1,5 +1,11 @@
 # RunInfra SDK
 
+[![npm](https://img.shields.io/npm/v/%40runinfra%2Fsdk.svg?logo=npm&label=%40runinfra%2Fsdk)](https://www.npmjs.com/package/@runinfra/sdk)
+[![PyPI](https://img.shields.io/pypi/v/runinfra.svg?logo=pypi&label=runinfra)](https://pypi.org/project/runinfra/)
+[![CI](https://github.com/RightNow-AI/runinfra-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RightNow-AI/runinfra-sdk/actions/workflows/ci.yml)
+[![SLSA provenance](https://img.shields.io/badge/SLSA-provenance-7eb35e?logo=sigstore)](https://docs.npmjs.com/about-package-provenance-statements)
+[![License](https://img.shields.io/badge/license-Proprietary-blue.svg)](./LICENSE)
+
 Official client SDKs for [RunInfra](https://runinfra.ai), the optimized
 inference platform for serving open-source models on the GPU and serving
 backend that fits your workload.
@@ -83,8 +89,14 @@ Verify the PyPI release:
 
 ## Issues + contributing
 
-Open an issue or pull request against this repo. For RunInfra service
-issues (deployments, billing, account), email `support@runinfra.ai`.
+Open an issue or pull request against this repo. See
+[`CONTRIBUTING.md`](./CONTRIBUTING.md) for the workflow + style rules.
+
+For **security issues**, do NOT open a GitHub issue — see
+[`SECURITY.md`](./SECURITY.md) for disclosure process.
+
+For RunInfra service issues (deployments, billing, account), email
+`support@runinfra.ai`.
 
 ---
 

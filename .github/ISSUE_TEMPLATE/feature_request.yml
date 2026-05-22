@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest a new SDK method, option, or improvement.
+title: "[feat]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        - "@runinfra/sdk (TypeScript / JavaScript)"
+        - "runinfra (Python)"
+        - "Both"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to accomplish that the SDK doesn't support today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like the SDK to expose this?
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you've tried or other designs you considered.

@@ -1,0 +1,74 @@
+name: Bug report
+description: Something in the SDK is not behaving as documented.
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **For security issues, do NOT use this form** —
+        email `security@runinfra.ai` instead (see `SECURITY.md`).
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        - "@runinfra/sdk (TypeScript / JavaScript)"
+        - "runinfra (Python)"
+        - "Both"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: SDK version
+      placeholder: "0.1.1"
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime version
+      description: Node.js version (TS) or Python version (Py)
+      placeholder: "Node 22.14.0 / Python 3.11.5"
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened
+      description: What did you expect, and what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Smallest code snippet that triggers the issue. Do NOT include real API keys.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output (if any)
+      description: Stack trace or error message. Redact any secrets.
+      render: shell
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have searched existing issues for duplicates.
+          required: true
+        - label: I have redacted any API keys, customer data, or other secrets from this report.
+          required: true
+        - label: I understand this is a public issue.
+          required: true
