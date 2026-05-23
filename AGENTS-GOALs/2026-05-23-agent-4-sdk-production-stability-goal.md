@@ -562,3 +562,37 @@ Current blockers remain:
 - This proves deterministic SDK stream-fault handling, not live multimodal GA readiness.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Local Retry-Safety Canary Coverage
+
+Added deterministic local retry-policy coverage for installed TypeScript and Python SDK packages:
+
+- New strict matrix rows: `retry.safety.get.local`, `retry.safety.post.requires_idempotency.local`, `retry.safety.post.with_idempotency.local`, `retry.safety.stream.no_retry.local`, `retry.safety.audio_binary.no_retry.local`, and `retry.safety.audio_multipart.no_retry.local`.
+- TypeScript child canary uses local fake `fetch` responses and a local base URL to prove safe GET retries, non-idempotent JSON POSTs do not retry, idempotent JSON POSTs do retry with `Idempotency-Key`, and streaming, binary TTS, and multipart ASR requests are sent once even with idempotency.
+- Python child canary mirrors the same policy through an injected local transport and queued fake responses.
+- Runner readiness marks these `.local` rows as ready without env because they prove SDK retry behavior, not deployed model behavior.
+- TS/Python tests assert runner, child canaries, and docs stay in parity for all six rows.
+- `LIVE-CANARIES.md` documents the local rows separately from live idempotency replay and live network rows.
+
+Fresh local verification:
+
+- Targeted local retry-safety tests passed: TS 1 test, Python 1 test.
+- Python canary syntax passed.
+- Source canary report passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- TS typecheck passed.
+- TS tests passed, 125 tests.
+- Python tests passed, 112 tests plus 105 subtests.
+- Workflow policy and version sync passed for `0.1.4`.
+- TS build and `pnpm --dir typescript pack` passed; npm tarball contents remained limited to changelog, dist, license, package.json, and README.
+- Python wheel/sdist build, Python package verifier, and `twine check` passed.
+- npm package verifier and clean artifact install/import for both npm and Python passed.
+- Artifact canary report passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- Strict preflight remains intentionally blocked: 19 ready rows and 26 blocked rows because no scoped live canary env/fixtures are present in this shell.
+- `git diff --check` passed with CRLF warnings only.
+- Second-opinion review found no Critical, Important, or Minor issues.
+
+Current blockers remain:
+
+- This proves deterministic SDK retry-safety behavior, not live multimodal GA readiness.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.

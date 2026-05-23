@@ -413,6 +413,35 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("do not call the production gateway");
   });
 
+  it("keeps child canaries in parity for local retry safety coverage", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const rows = [
+      "retry.safety.get.local",
+      "retry.safety.post.requires_idempotency.local",
+      "retry.safety.post.with_idempotency.local",
+      "retry.safety.stream.no_retry.local",
+      "retry.safety.audio_binary.no_retry.local",
+      "retry.safety.audio_multipart.no_retry.local",
+    ];
+
+    for (const row of rows) {
+      expect(runner).toContain(`"${row}"`);
+      expect(typescriptCanary).toContain(`record("${row}"`);
+      expect(pythonCanary).toContain(`"${row}"`);
+      expect(liveCanaries).toContain(row);
+    }
+
+    expect(typescriptCanary).toContain("localRetryClient");
+    expect(typescriptCanary).toContain("assertRetryCallCount");
+    expect(pythonCanary).toContain("local_retry_client");
+    expect(pythonCanary).toContain("assert_retry_call_count");
+    expect(liveCanaries).toContain("Local retry-safety rows");
+    expect(liveCanaries).toContain("do not call the production gateway");
+  });
+
   it("documents public-repo production promotion without stale monorepo commands", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 

@@ -110,6 +110,12 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `error.model.not_found`
 - `error.request.invalid_options`
 - `error.body.unsupported_parameter`
+- `retry.safety.get.local`
+- `retry.safety.post.requires_idempotency.local`
+- `retry.safety.post.with_idempotency.local`
+- `retry.safety.stream.no_retry.local`
+- `retry.safety.audio_binary.no_retry.local`
+- `retry.safety.audio_multipart.no_retry.local`
 - `webhooks.delivery_surface.absent`
 - `webhooks.verify_signature.local`
 - `webhooks.construct_event.local`
@@ -172,6 +178,11 @@ deterministic speech fixture and requires the normalized transcript to include
 `RUNINFRA_ASR_EXPECTED_TEXT`; silence fixtures are not valid GA proof.
 Voice pipeline rows also require deterministic speech audio and expected text;
 generated silence is not accepted as GA proof.
+Local retry-safety rows do not call the production gateway; they run against
+deterministic local HTTP responses from the installed SDK package. They prove
+safe GET requests retry transient failures, charge-bearing JSON POSTs retry only
+with an idempotency key, and streaming, binary TTS, and multipart ASR requests
+are sent once even when an idempotency key is present.
 Webhook signature rows use installed package artifacts and deterministic local
 payloads because they are verification helpers, not live delivery endpoints.
 

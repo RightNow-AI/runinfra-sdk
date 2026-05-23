@@ -25,6 +25,7 @@ from runinfra import (  # noqa: E402
     PermissionDeniedError,
     RunInfra,
     RunInfraConnectionError,
+    RunInfraError,
     RunInfraResponse,
     RunInfraStreamParseError,
     RunInfraTimeoutError,
@@ -491,6 +492,75 @@ def responses_stalled_chunks() -> Iterable[bytes]:
     raise TimeoutError("stream read timed out")
 
 
+def local_retry_response(payload: Dict[str, Any], status: int, request_id: str) -> RunInfraResponse:
+    return RunInfraResponse(
+        status,
+        {"content-type": "application/json", "x-request-id": request_id},
+        json.dumps(payload).encode("utf-8"),
+    )
+
+
+def local_retry_failure(request_id: str) -> RunInfraResponse:
+    return local_retry_response(
+        {"error": {"message": "transient local retry probe", "type": "api_error"}},
+        503,
+        request_id,
+    )
+
+
+class LocalRetryTransport:
+    def __init__(self, responses: Iterable[RunInfraResponse]) -> None:
+        self.responses = list(responses)
+        self.calls: List[Any] = []
+
+    def __call__(self, request: Any) -> RunInfraResponse:
+        self.calls.append(request)
+        if not self.responses:
+            raise RuntimeError("local retry canary exhausted fake responses")
+        return self.responses.pop(0)
+
+
+def local_retry_client(responses: Iterable[RunInfraResponse]) -> Dict[str, Any]:
+    transport = LocalRetryTransport(responses)
+    return {
+        "client": RunInfra(
+            api_key="sk-ri-live-canary-local",
+            base_url="http://localhost:1/v1",
+            max_retries=1,
+            retry_base_seconds=0,
+            timeout_seconds=1,
+            transport=transport,
+        ),
+        "calls": transport.calls,
+    }
+
+
+def assert_retry_call_count(calls: List[Any], expected: int, label: str) -> Dict[str, Any]:
+    if len(calls) != expected:
+        raise AssertionError(f"{label} expected {expected} local calls, got {len(calls)}")
+    return {"attempts": len(calls)}
+
+
+def assert_idempotency_header(calls: List[Any], expected: str, label: str) -> None:
+    for index, call in enumerate(calls, start=1):
+        if call.headers.get("Idempotency-Key") != expected:
+            raise AssertionError(f"{label} call {index} expected idempotency header")
+
+
+def assert_retryable_error(error: BaseException, label: str) -> Dict[str, Any]:
+    if not isinstance(error, RunInfraError) or getattr(error, "status", None) != 503:
+        raise AssertionError(
+            f"{label} expected local 503 RunInfraError, got {getattr(error, 'status', None) or error.__class__.__name__}"
+        )
+    request_id = getattr(error, "request_id", None)
+    assert_request_id(request_id, label)
+    return {
+        "errorStatus": getattr(error, "status", None),
+        "errorType": getattr(error, "type", None),
+        "requestId": request_id,
+    }
+
+
 def is_chat_terminal_event(event: Dict[str, Any]) -> bool:
     choices = event.get("choices")
     return isinstance(choices, list) and any(
@@ -701,6 +771,12 @@ def main() -> int:
     record("error.model.not_found", ["RUNINFRA_API_KEY"], lambda: _model_not_found(client()))
     record("error.request.invalid_options", [], _invalid_request_options)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
+    record("retry.safety.get.local", [], _retry_safety_get_local)
+    record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
+    record("retry.safety.post.with_idempotency.local", [], _retry_safety_post_with_idempotency_local)
+    record("retry.safety.stream.no_retry.local", [], _retry_safety_stream_no_retry_local)
+    record("retry.safety.audio_binary.no_retry.local", [], _retry_safety_audio_binary_no_retry_local)
+    record("retry.safety.audio_multipart.no_retry.local", [], _retry_safety_audio_multipart_no_retry_local)
     record("webhooks.delivery_surface.absent", [], _webhooks_delivery_surface_absent)
     record("webhooks.verify_signature.local", [], _webhooks_verify_signature_local)
     record("webhooks.construct_event.local", [], _webhooks_construct_event_local)
@@ -1275,6 +1351,136 @@ def _unsupported_body_parameter(client: RunInfra, model: str) -> Dict[str, Any]:
     except BaseException as error:  # noqa: BLE001
         return assert_clear_unsupported_parameter_error(error, "unsupported body parameter")
     raise AssertionError("unsupported body parameter unexpectedly succeeded")
+
+
+def _retry_safety_get_local() -> Dict[str, Any]:
+    local = local_retry_client([
+        local_retry_failure("req-local-retry-get-first"),
+        local_retry_response({"object": "list", "data": []}, 200, "req-local-retry-get-second"),
+    ])
+    response = local["client"].models.list(request_options={"max_retries": 1, "retry_base_seconds": 0})
+    assert_request_id(response.get("_request_id"), "retry.safety.get.local")
+    return {
+        **assert_retry_call_count(local["calls"], 2, "retry.safety.get.local"),
+        "requestId": response.get("_request_id"),
+    }
+
+
+def _retry_safety_post_requires_idempotency_local() -> Dict[str, Any]:
+    local = local_retry_client([local_retry_failure("req-local-retry-post-no-idempotency")])
+    try:
+        local["client"].responses.create(
+            model="runinfra-local-retry-model",
+            input="local retry canary",
+            request_options={"max_retries": 1, "retry_base_seconds": 0},
+        )
+    except BaseException as error:  # noqa: BLE001
+        return {
+            **assert_retry_call_count(local["calls"], 1, "retry.safety.post.requires_idempotency.local"),
+            **assert_retryable_error(error, "retry.safety.post.requires_idempotency.local"),
+        }
+    raise AssertionError("non-idempotent POST unexpectedly retried into success")
+
+
+def _retry_safety_post_with_idempotency_local() -> Dict[str, Any]:
+    local = local_retry_client([
+        local_retry_failure("req-local-retry-post-idempotency-first"),
+        local_retry_response(
+            {"id": "resp-local-retry", "status": "completed", "output": []},
+            200,
+            "req-local-retry-post-idempotency-second",
+        ),
+    ])
+    response = local["client"].responses.create(
+        model="runinfra-local-retry-model",
+        input="local retry canary",
+        request_options={
+            "idempotency_key": "idem-local-json-retry",
+            "max_retries": 1,
+            "retry_base_seconds": 0,
+        },
+    )
+    assert_idempotency_header(local["calls"], "idem-local-json-retry", "retry.safety.post.with_idempotency.local")
+    assert_request_id(response.get("_request_id"), "retry.safety.post.with_idempotency.local")
+    return {
+        **assert_retry_call_count(local["calls"], 2, "retry.safety.post.with_idempotency.local"),
+        "requestId": response.get("_request_id"),
+        "idempotencyHeader": "present",
+    }
+
+
+def _retry_safety_stream_no_retry_local() -> Dict[str, Any]:
+    local = local_retry_client([local_retry_failure("req-local-retry-stream-no-retry")])
+    try:
+        local["client"].chat.completions.create(
+            model="runinfra-local-retry-model",
+            messages=[{"role": "user", "content": "local retry canary"}],
+            stream=True,
+            request_options={
+                "idempotency_key": "idem-local-stream-no-retry",
+                "max_retries": 1,
+                "retry_base_seconds": 0,
+            },
+        )
+    except BaseException as error:  # noqa: BLE001
+        assert_idempotency_header(local["calls"], "idem-local-stream-no-retry", "retry.safety.stream.no_retry.local")
+        return {
+            **assert_retry_call_count(local["calls"], 1, "retry.safety.stream.no_retry.local"),
+            **assert_retryable_error(error, "retry.safety.stream.no_retry.local"),
+        }
+    raise AssertionError("streaming POST unexpectedly retried into success")
+
+
+def _retry_safety_audio_binary_no_retry_local() -> Dict[str, Any]:
+    local = local_retry_client([local_retry_failure("req-local-retry-audio-binary-no-retry")])
+    try:
+        local["client"].audio.speech.create(
+            model="runinfra-local-retry-model",
+            input="local retry canary",
+            voice="alloy",
+            request_options={
+                "idempotency_key": "idem-local-audio-binary-no-retry",
+                "max_retries": 1,
+                "retry_base_seconds": 0,
+            },
+        )
+    except BaseException as error:  # noqa: BLE001
+        assert_idempotency_header(
+            local["calls"],
+            "idem-local-audio-binary-no-retry",
+            "retry.safety.audio_binary.no_retry.local",
+        )
+        return {
+            **assert_retry_call_count(local["calls"], 1, "retry.safety.audio_binary.no_retry.local"),
+            **assert_retryable_error(error, "retry.safety.audio_binary.no_retry.local"),
+        }
+    raise AssertionError("binary audio POST unexpectedly retried into success")
+
+
+def _retry_safety_audio_multipart_no_retry_local() -> Dict[str, Any]:
+    local = local_retry_client([local_retry_failure("req-local-retry-audio-multipart-no-retry")])
+    try:
+        local["client"].audio.transcriptions.create(
+            model="runinfra-local-retry-model",
+            file=b"RIFF",
+            filename="local-retry.wav",
+            request_options={
+                "idempotency_key": "idem-local-audio-multipart-no-retry",
+                "max_retries": 1,
+                "retry_base_seconds": 0,
+            },
+        )
+    except BaseException as error:  # noqa: BLE001
+        assert_idempotency_header(
+            local["calls"],
+            "idem-local-audio-multipart-no-retry",
+            "retry.safety.audio_multipart.no_retry.local",
+        )
+        return {
+            **assert_retry_call_count(local["calls"], 1, "retry.safety.audio_multipart.no_retry.local"),
+            **assert_retryable_error(error, "retry.safety.audio_multipart.no_retry.local"),
+        }
+    raise AssertionError("multipart audio POST unexpectedly retried into success")
 
 
 def _webhooks_delivery_surface_absent() -> Dict[str, str]:

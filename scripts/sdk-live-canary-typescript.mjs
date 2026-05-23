@@ -478,6 +478,7 @@ const {
   RUNINFRA_SDK_VERSION,
   RunInfra,
   RunInfraConnectionError,
+  RunInfraError,
   RunInfraStreamParseError,
   RunInfraTimeoutError,
   constructWebhookEvent,
@@ -593,6 +594,80 @@ async function expectStreamError(stream, errorClass, errorType, label, options =
       await iterator.return().catch(() => undefined);
     }
   }
+}
+
+function localRetryJsonResponse(payload, status, requestId) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "x-request-id": requestId,
+    },
+  });
+}
+
+function localRetryFailure(requestId) {
+  return localRetryJsonResponse(
+    { error: { message: "transient local retry probe", type: "api_error" } },
+    503,
+    requestId,
+  );
+}
+
+function localRetryClient(responses) {
+  const calls = [];
+  const queued = [...responses];
+  return {
+    calls,
+    client: client({
+      apiKey: "sk-ri-live-canary-local",
+      baseURL: "http://localhost:1/v1",
+      maxRetries: 1,
+      retryBaseMs: 0,
+      timeoutMs: 1000,
+      fetch: async (url, init = {}) => {
+        calls.push({ url: String(url), method: init.method, headers: init.headers });
+        const response = queued.shift();
+        if (!response) throw new Error("local retry canary exhausted fake responses");
+        return response;
+      },
+    }),
+  };
+}
+
+function headerValue(headers, name) {
+  const lower = name.toLowerCase();
+  if (headers instanceof Headers) return headers.get(name);
+  if (headers && typeof headers === "object") {
+    for (const [key, value] of Object.entries(headers)) {
+      if (key.toLowerCase() === lower) return String(value);
+    }
+  }
+  return undefined;
+}
+
+function assertRetryCallCount(calls, expected, label) {
+  if (calls.length !== expected) {
+    throw new Error(`${label} expected ${expected} local calls, got ${calls.length}`);
+  }
+  return { attempts: calls.length };
+}
+
+function assertIdempotencyHeader(calls, expected, label) {
+  for (const [index, call] of calls.entries()) {
+    const value = headerValue(call.headers, "Idempotency-Key");
+    if (value !== expected) {
+      throw new Error(`${label} call ${index + 1} expected idempotency header`);
+    }
+  }
+}
+
+function assertRetryableError(error, label) {
+  if (!(error instanceof RunInfraError) || error.status !== 503) {
+    throw new Error(`${label} expected local 503 RunInfraError, got ${error?.status ?? error?.name ?? typeof error}`);
+  }
+  assertRequestId(error.requestId, label);
+  return { errorStatus: error.status, errorType: error.type, requestId: error.requestId };
 }
 
 function speechVoicePayload() {
@@ -1276,6 +1351,105 @@ await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_
     return assertClearUnsupportedParameterError(error, "unsupported body parameter");
   }
   throw new Error("unsupported body parameter unexpectedly succeeded");
+});
+
+await record("retry.safety.get.local", [], async () => {
+  const { client: local, calls } = localRetryClient([
+    localRetryFailure("req-local-retry-get-first"),
+    localRetryJsonResponse({ object: "list", data: [] }, 200, "req-local-retry-get-second"),
+  ]);
+  const response = await local.models.list({ maxRetries: 1, retryBaseMs: 0 });
+  assertRequestId(response._request_id, "retry.safety.get.local");
+  return { ...assertRetryCallCount(calls, 2, "retry.safety.get.local"), requestId: response._request_id };
+});
+
+await record("retry.safety.post.requires_idempotency.local", [], async () => {
+  const { client: local, calls } = localRetryClient([localRetryFailure("req-local-retry-post-no-idempotency")]);
+  try {
+    await local.responses.create(
+      { model: "runinfra-local-retry-model", input: "local retry canary" },
+      { maxRetries: 1, retryBaseMs: 0 },
+    );
+  } catch (error) {
+    const evidence = assertRetryableError(error, "retry.safety.post.requires_idempotency.local");
+    return { ...assertRetryCallCount(calls, 1, "retry.safety.post.requires_idempotency.local"), ...evidence };
+  }
+  throw new Error("non-idempotent POST unexpectedly retried into success");
+});
+
+await record("retry.safety.post.with_idempotency.local", [], async () => {
+  const { client: local, calls } = localRetryClient([
+    localRetryFailure("req-local-retry-post-idempotency-first"),
+    localRetryJsonResponse({ id: "resp-local-retry", status: "completed", output: [] }, 200, "req-local-retry-post-idempotency-second"),
+  ]);
+  const response = await local.responses.create(
+    { model: "runinfra-local-retry-model", input: "local retry canary" },
+    { idempotencyKey: "idem-local-json-retry", maxRetries: 1, retryBaseMs: 0 },
+  );
+  assertIdempotencyHeader(calls, "idem-local-json-retry", "retry.safety.post.with_idempotency.local");
+  assertRequestId(response._request_id, "retry.safety.post.with_idempotency.local");
+  return {
+    ...assertRetryCallCount(calls, 2, "retry.safety.post.with_idempotency.local"),
+    requestId: response._request_id,
+    idempotencyHeader: "present",
+  };
+});
+
+await record("retry.safety.stream.no_retry.local", [], async () => {
+  const { client: local, calls } = localRetryClient([localRetryFailure("req-local-retry-stream-no-retry")]);
+  try {
+    await local.chat.completions.create(
+      {
+        model: "runinfra-local-retry-model",
+        messages: [{ role: "user", content: "local retry canary" }],
+        stream: true,
+      },
+      { idempotencyKey: "idem-local-stream-no-retry", maxRetries: 1, retryBaseMs: 0 },
+    );
+  } catch (error) {
+    assertIdempotencyHeader(calls, "idem-local-stream-no-retry", "retry.safety.stream.no_retry.local");
+    const evidence = assertRetryableError(error, "retry.safety.stream.no_retry.local");
+    return { ...assertRetryCallCount(calls, 1, "retry.safety.stream.no_retry.local"), ...evidence };
+  }
+  throw new Error("streaming POST unexpectedly retried into success");
+});
+
+await record("retry.safety.audio_binary.no_retry.local", [], async () => {
+  const { client: local, calls } = localRetryClient([localRetryFailure("req-local-retry-audio-binary-no-retry")]);
+  try {
+    await local.audio.speech.create(
+      {
+        model: "runinfra-local-retry-model",
+        input: "local retry canary",
+        voice: "alloy",
+      },
+      { idempotencyKey: "idem-local-audio-binary-no-retry", maxRetries: 1, retryBaseMs: 0 },
+    );
+  } catch (error) {
+    assertIdempotencyHeader(calls, "idem-local-audio-binary-no-retry", "retry.safety.audio_binary.no_retry.local");
+    const evidence = assertRetryableError(error, "retry.safety.audio_binary.no_retry.local");
+    return { ...assertRetryCallCount(calls, 1, "retry.safety.audio_binary.no_retry.local"), ...evidence };
+  }
+  throw new Error("binary audio POST unexpectedly retried into success");
+});
+
+await record("retry.safety.audio_multipart.no_retry.local", [], async () => {
+  const { client: local, calls } = localRetryClient([localRetryFailure("req-local-retry-audio-multipart-no-retry")]);
+  try {
+    await local.audio.transcriptions.create(
+      {
+        model: "runinfra-local-retry-model",
+        file: new Blob([new Uint8Array([82, 73, 70, 70])], { type: "audio/wav" }),
+        filename: "local-retry.wav",
+      },
+      { idempotencyKey: "idem-local-audio-multipart-no-retry", maxRetries: 1, retryBaseMs: 0 },
+    );
+  } catch (error) {
+    assertIdempotencyHeader(calls, "idem-local-audio-multipart-no-retry", "retry.safety.audio_multipart.no_retry.local");
+    const evidence = assertRetryableError(error, "retry.safety.audio_multipart.no_retry.local");
+    return { ...assertRetryCallCount(calls, 1, "retry.safety.audio_multipart.no_retry.local"), ...evidence };
+  }
+  throw new Error("multipart audio POST unexpectedly retried into success");
 });
 
 await record("webhooks.delivery_surface.absent", [], async () => {

@@ -333,6 +333,33 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Local streaming fault rows", live_canaries)
         self.assertIn("do not call the production gateway", live_canaries)
 
+    def test_child_canaries_cover_local_retry_safety_rows(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        rows = (
+            "retry.safety.get.local",
+            "retry.safety.post.requires_idempotency.local",
+            "retry.safety.post.with_idempotency.local",
+            "retry.safety.stream.no_retry.local",
+            "retry.safety.audio_binary.no_retry.local",
+            "retry.safety.audio_multipart.no_retry.local",
+        )
+
+        for row in rows:
+            self.assertIn(f'"{row}"', runner)
+            self.assertIn(f'record("{row}"', typescript_canary)
+            self.assertIn(f'"{row}"', python_canary)
+            self.assertIn(row, live_canaries)
+
+        self.assertIn("localRetryClient", typescript_canary)
+        self.assertIn("assertRetryCallCount", typescript_canary)
+        self.assertIn("local_retry_client", python_canary)
+        self.assertIn("assert_retry_call_count", python_canary)
+        self.assertIn("Local retry-safety rows", live_canaries)
+        self.assertIn("do not call the production gateway", live_canaries)
+
     def test_python_live_canary_validates_slow_consumer_delay_before_opening_stream(self):
         canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
         spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
