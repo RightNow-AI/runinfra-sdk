@@ -489,3 +489,42 @@ Current blockers remain:
 - This adds live-gated chat stream-options proof but does not make strict live multimodal canaries green without production canary env/fixtures.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Responses Adapter Contract Documentation
+
+Closed the documented contract mismatch for `/v1/responses`:
+
+- Verified the RunPipe gateway source routes `POST /v1/responses` through `responsesRequestToChatCompletion`, `postWorkspaceChatCompletion`, and `chatResponseToResponsesResponse`, so the public SDK must describe it as an adapter instead of a full stateful Responses implementation.
+- TypeScript and Python READMEs now state that RunInfra `/v1/responses` is a chat-completions compatibility adapter. They document supported `input` and `instructions` conversion, chat-completions forwarding, Responses-style rewrapping, and the lack of full Responses state, include, reasoning, tool, conversation-item, or background-job semantics.
+- TypeScript public source now documents `ResponsesCreateRequest` as the compatibility-adapter request shape.
+- Python `_Responses.create()` now has a docstring with the same adapter limitation.
+- `LIVE-CANARIES.md` now says Responses canary rows prove the adapter envelope or semantic stream events, not full stateful Responses API semantics.
+- TS/Python tests assert the docs and source stay aligned with the adapter contract.
+
+Fresh local verification:
+
+- Targeted TS/Python tests failed first on missing adapter docs/source wording.
+- Targeted TS test passed: `pnpm --dir typescript test --run -t "OpenAI-compatible parameter subset"`.
+- Targeted Python test passed: `python -m pytest python\tests\test_runinfra_sdk.py -q -k openai_parameter_subset`.
+- `pnpm --dir typescript install --frozen-lockfile` passed with the existing esbuild ignored-build-script warning.
+- `python -m pip install -r python\requirements-dev.txt` passed with pinned tooling already installed.
+- Workflow policy and version sync passed for `0.1.4`.
+- TS typecheck passed.
+- TS tests passed, 123 tests.
+- Python tests passed, 110 tests plus 105 subtests.
+- Python package/canary syntax passed.
+- TS build and `pnpm --dir typescript pack` passed; npm tarball contents remained limited to changelog, dist, license, package.json, and README.
+- Python wheel/sdist build passed.
+- npm package verifier, Python package verifier, and `twine check` passed.
+- Clean artifact install/import passed for both npm and Python.
+- Source and artifact canary parity passed: TypeScript 7 passed/26 skipped, Python 7 passed/26 skipped, expected rows 33.
+- Strict preflight remains intentionally blocked: 7 ready rows and 26 blocked rows because no scoped live canary env/fixtures are present in this shell.
+- `git diff --check` passed with CRLF warnings only.
+- Code scanning refresh: 0 open alerts, 0 high/critical. Dependabot refresh: 3 open medium alerts, 0 high/critical.
+- Final second-opinion review reported no blockers. CodeRabbit CLI was not installed, so the available subagent review path was used.
+
+Current blockers remain:
+
+- This closes the Responses adapter contract-doc gap but does not make strict live multimodal canaries green without production canary env/fixtures.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.

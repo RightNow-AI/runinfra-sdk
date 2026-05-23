@@ -1135,6 +1135,11 @@ class _Responses:
         self._requester = requester
 
     def create(self, **kwargs: Any) -> Union[ResponsesCreateResponse, RunInfraStream]:
+        """Create through RunInfra's Responses compatibility adapter.
+
+        The gateway maps supported fields onto chat completions and rewraps
+        the result; this is not a full stateful OpenAI Responses implementation.
+        """
         request_options = kwargs.pop("request_options", None)
         kwargs = {**kwargs, "model": _validated_model(kwargs.get("model"))}
         _validate_responses_input(kwargs.get("input"))

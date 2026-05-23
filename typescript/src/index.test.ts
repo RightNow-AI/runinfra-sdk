@@ -182,6 +182,7 @@ describe("RunInfra TypeScript SDK", () => {
   it("documents the OpenAI-compatible parameter subset and local response-shape guards", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
     const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
     expect(readme).toContain("## OpenAI-compatible parameter scope");
     expect(readme).toContain("Live-gated native SDK subset");
@@ -205,6 +206,14 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
     expect(liveCanaries).toContain("error.model.not_found");
     expect(liveCanaries).toContain("error.body.unsupported_parameter");
+    expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
+    expect(readme).toContain("forwards the supported request through the chat-completions serving path");
+    expect(readme).toContain(
+      "does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics",
+    );
+    expect(liveCanaries).toContain("Responses rows prove the compatibility adapter");
+    expect(source).toContain("Responses compatibility adapter");
+    expect(source).toContain("not a full stateful OpenAI Responses implementation");
   });
 
   it("keeps child canaries in parity for chat stream options usage coverage", () => {

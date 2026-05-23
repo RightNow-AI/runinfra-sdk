@@ -122,6 +122,10 @@ terminal events. Cancellation streaming rows consume a prefix and then close
 early to cover consumer cancellation. TypeScript cancellation rows break out of
 `for await`, and Python cancellation rows close the active iterator, so both
 languages release local stream resources after partial consumption.
+Responses rows prove the compatibility adapter returns the documented envelope
+or semantic stream events after the gateway forwards supported request fields
+through the chat-completions serving path. They do not prove full stateful
+Responses API semantics.
 Slow-consumer streaming rows drain real chat and Responses SSE streams while
 pausing after each event; reports record only request IDs, event counts, and a
 redacted delay marker. The pause budget is bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`,

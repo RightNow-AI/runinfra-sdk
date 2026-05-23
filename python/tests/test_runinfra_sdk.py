@@ -153,6 +153,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
     def test_readme_documents_openai_parameter_subset_and_response_shape_guards(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
         live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        source = Path(__file__).resolve().parents[1].joinpath("runinfra", "__init__.py").read_text()
 
         self.assertIn("## OpenAI-compatible parameter scope", readme)
         self.assertIn("Live-gated native SDK subset", readme)
@@ -176,6 +177,15 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx", readme)
         self.assertIn("error.model.not_found", live_canaries)
         self.assertIn("error.body.unsupported_parameter", live_canaries)
+        self.assertIn("RunInfra `/v1/responses` is a chat-completions compatibility adapter.", readme)
+        self.assertIn("forwards the supported request through the chat-completions serving path", readme)
+        self.assertIn(
+            "does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics",
+            readme,
+        )
+        self.assertIn("Responses rows prove the compatibility adapter", live_canaries)
+        self.assertIn("Responses compatibility adapter", source)
+        self.assertIn("not a full stateful OpenAI Responses implementation", source)
 
     def test_child_canaries_cover_chat_stream_options_usage_chunks(self):
         runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()

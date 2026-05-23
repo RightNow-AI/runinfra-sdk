@@ -80,6 +80,11 @@ export interface ChatCompletionsCreate {
   ): Promise<ChatCompletionResponse | RunInfraStream<ChatCompletionStreamEvent>>;
 }
 
+/**
+ * Request shape for the current RunInfra Responses compatibility adapter.
+ * The gateway maps supported fields onto chat completions and rewraps the
+ * result; this is not a full stateful OpenAI Responses implementation.
+ */
 export interface ResponsesCreateRequest extends Record<string, unknown> {
   model: string;
   input: string | Array<Record<string, unknown>>;
