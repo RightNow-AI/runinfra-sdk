@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const RUNINFRA_SDK_VERSION = "0.1.1";
+export const RUNINFRA_SDK_VERSION = "0.1.2";
 const MAX_AUTOMATIC_RETRY_AFTER_MS = 60_000;
 
 export interface RunInfraOptions {
@@ -1215,7 +1215,7 @@ export class RunInfra {
   /**
    * Audio surfaces (text-to-speech + speech-to-text).
    *
-   * @experimental As of v0.1.1, these methods have NOT been verified end-to-end
+   * @experimental As of v0.1.2, these methods have NOT been verified end-to-end
    * against a live deployed pipeline in our canary suite. The HTTP envelope
    * matches the OpenAI Audio API contract and the request/response shapes are
    * stable, but you should test against your own deployed model before using
@@ -1238,7 +1238,7 @@ export class RunInfra {
   /**
    * Image generation surface.
    *
-   * @experimental As of v0.1.1, this method has NOT been verified end-to-end
+   * @experimental As of v0.1.2, this method has NOT been verified end-to-end
    * against a live deployed pipeline in our canary suite. The HTTP envelope
    * matches the OpenAI Images API contract, but you should test against your
    * own deployed model before using in production. Live-canary verification

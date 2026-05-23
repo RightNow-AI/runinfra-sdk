@@ -10,7 +10,7 @@ Requires Python 3.9 or newer.
 pip install runinfra
 ```
 
-## Modality status (v0.1.1)
+## Modality status (v0.1.2)
 
 This SDK is in **beta**. The surfaces below have different verification levels:
 

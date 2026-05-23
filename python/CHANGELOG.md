@@ -3,6 +3,18 @@
 All notable changes to the `runinfra` Python SDK are documented here. This
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-05-23
+
+### Changed
+- Hardened CI and publish gates with exact npm tarball and Python wheel/sdist
+  content verification.
+- Added version-sync and workflow-policy checks to prevent stale SDK releases
+  and long-lived registry-token regressions.
+- Updated public docs to match the shipped voice pipeline helper: experimental,
+  pipeline-scoped, and not yet live-canary verified.
+- Switched Python license metadata to the non-deprecated `license` and
+  `license-files` form.
+
 ## [0.1.1] - 2026-05-23
 
 ### Changed

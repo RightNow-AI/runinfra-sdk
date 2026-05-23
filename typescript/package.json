@@ -1,6 +1,6 @@
 {
   "name": "@runinfra/sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "RunInfra SDK for optimized inference deployments (beta; LLM + embeddings tested, image/audio surfaces experimental)",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://runinfra.ai/docs/tools-sdks/runinfra-sdk",
