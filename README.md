@@ -102,6 +102,11 @@ Verify registry install/import for an exact release:
 node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>
 ```
 
+Check strict live-canary readiness without exposing env values:
+```bash
+node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
+```
+
 Verify the PyPI release:
 - Go to https://pypi.org/project/runinfra/ -> Releases -> click a version ->
   see the Trusted Publisher chain.

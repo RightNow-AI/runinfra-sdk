@@ -10,8 +10,15 @@ Run from the repository root after building the TypeScript SDK:
 pnpm --dir typescript build
 pnpm --dir typescript pack
 python -m build python
+node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
 ```
+
+`--preflight` is a no-network readiness check. It writes the same redacted
+environment status plus row-by-row missing inputs, then fails in strict mode
+when required model IDs, fixture paths, expected transcripts, or idempotency
+opt-in are absent. Use it before provisioning live canary resources so missing
+GA inputs are explicit without exposing values.
 
 Without `--strict`, missing model credentials are reported as skipped rows.
 With `--strict`, any skipped or failed row exits non-zero. Use strict mode for

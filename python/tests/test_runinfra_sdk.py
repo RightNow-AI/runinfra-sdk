@@ -206,6 +206,10 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("python scripts/verify-python-package.py python/dist", readme)
         self.assertIn("node scripts/verify-clean-installs.mjs --package both --mode artifact", readme)
         self.assertIn(
+            "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json",
+            readme,
+        )
+        self.assertIn(
             "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json",
             readme,
         )
@@ -218,7 +222,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>",
             readme,
         )
-        self.assertIn("Run the strict live canary matrix against the exact production gateway", readme)
+        self.assertIn("Run the strict preflight first", readme)
+        self.assertIn("Then run the strict live canary matrix against the exact production gateway", readme)
         self.assertIn("Do not use npm or PyPI tokens", readme)
         self.assertNotIn("pnpm verify:sdk-release", readme)
         self.assertNotIn("pnpm test:sdk-canary:live", readme)

@@ -309,6 +309,7 @@ python -m build python
 python scripts/verify-python-package.py python/dist
 python -m twine check python/dist/*
 node scripts/verify-clean-installs.mjs --package both --mode artifact
+node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
 ```
 
@@ -330,7 +331,9 @@ successful publish; for manual post-publish verification:
 node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>
 ```
 
-Run the strict live canary matrix against the exact production gateway,
+Run the strict preflight first; it fails without required model IDs, fixtures,
+expected transcripts, and idempotency opt-in while keeping values redacted.
+Then run the strict live canary matrix against the exact production gateway,
 workspace key, pipeline key, and deployed models that will serve customers. See
 the root `LIVE-CANARIES.md` for required env vars, strict TS/Python row parity,
 full-stream terminal-event checks, idempotency replay-evidence requirements,

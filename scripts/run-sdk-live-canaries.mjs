@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 
 const args = process.argv.slice(2);
 const strict = args.includes("--strict");
+const preflight = args.includes("--preflight");
 const reportPath = optionValue("--report");
 const packageSource = optionValue("--package-source") ?? "artifact";
 const tempDir = resolve(".canary-tmp", `${Date.now()}-${process.pid}`);
@@ -47,6 +48,203 @@ function optionValue(name) {
 if (!["artifact", "source"].includes(packageSource)) {
   console.error(`Unsupported package source "${packageSource}". Use --package-source artifact or --package-source source.`);
   process.exit(2);
+}
+
+function env(name) {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
+function firstEnv(...names) {
+  for (const name of names) {
+    const value = env(name);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function redactedEnv(names) {
+  return Object.fromEntries(names.map((name) => [name, env(name) ? "set_redacted" : "missing"]));
+}
+
+const relevantEnv = [
+  "RUNINFRA_API_KEY",
+  "RUNINFRA_BASE_URL",
+  "RUNINFRA_CANARY_TIMEOUT_SECONDS",
+  "RUNINFRA_LLM_MODEL",
+  "RUNINFRA_EMBEDDING_MODEL",
+  "RUNINFRA_EMBEDDING_DIMENSIONS",
+  "RUNINFRA_IMAGE_MODEL",
+  "RUNINFRA_TTS_MODEL",
+  "RUNINFRA_TTS_VOICE",
+  "RUNINFRA_TTS_REF_AUDIO",
+  "RUNINFRA_TTS_REF_TEXT",
+  "RUNINFRA_TTS_TASK_TYPE",
+  "RUNINFRA_TTS_RESPONSE_FORMAT",
+  "RUNINFRA_ASR_MODEL",
+  "RUNINFRA_ASR_LANGUAGE",
+  "RUNINFRA_ASR_FIXTURE_PATH",
+  "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE",
+  "RUNINFRA_ASR_EXPECTED_TEXT",
+  "RUNINFRA_PIPELINE_API_KEY",
+  "TEST_PIPELINE_ID",
+  "RUNINFRA_VOICE_PIPELINE_ID",
+  "RUNINFRA_VOICE_PIPELINE_API_KEY",
+  "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH",
+  "RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE",
+  "RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT",
+  "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY",
+  "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD",
+];
+
+function missingEnv(names) {
+  return names.filter((name) => !env(name));
+}
+
+function positiveIntegerRequirement(name) {
+  const value = env(name);
+  if (!value) return [name];
+  return /^[1-9][0-9]*$/u.test(value) ? [] : [`${name} positive integer`];
+}
+
+function readableNonEmptyFileRequirement(name) {
+  const value = env(name);
+  if (!value) return [name];
+  try {
+    if (statSync(resolve(value)).size > 0) return [];
+  } catch {
+    // Redact the actual path; callers only need to know which readiness input is unusable.
+  }
+  return [`${name} readable non-empty file`];
+}
+
+function firstReadableNonEmptyFileRequirement(label, ...names) {
+  const value = firstEnv(...names);
+  if (!value) return [label];
+  try {
+    if (statSync(resolve(value)).size > 0) return [];
+  } catch {
+    // Redact the actual path.
+  }
+  return [`${label} readable non-empty file`];
+}
+
+function speechRequirements() {
+  const missing = missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_TTS_MODEL"]);
+  if (!env("RUNINFRA_TTS_VOICE") && !(env("RUNINFRA_TTS_REF_AUDIO") && env("RUNINFRA_TTS_REF_TEXT"))) {
+    missing.push("RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT");
+  }
+  return missing;
+}
+
+function voiceRequirements() {
+  return [
+    ...(!firstEnv("RUNINFRA_VOICE_PIPELINE_API_KEY", "RUNINFRA_PIPELINE_API_KEY", "RUNINFRA_API_KEY")
+      ? ["RUNINFRA_VOICE_PIPELINE_API_KEY or RUNINFRA_PIPELINE_API_KEY or RUNINFRA_API_KEY"]
+      : []),
+    ...(!firstEnv("RUNINFRA_VOICE_PIPELINE_ID", "TEST_PIPELINE_ID")
+      ? ["RUNINFRA_VOICE_PIPELINE_ID or TEST_PIPELINE_ID"]
+      : []),
+    ...firstReadableNonEmptyFileRequirement(
+      "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH or RUNINFRA_ASR_FIXTURE_PATH",
+      "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH",
+      "RUNINFRA_ASR_FIXTURE_PATH",
+    ),
+    ...(!firstEnv("RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT", "RUNINFRA_ASR_EXPECTED_TEXT")
+      ? ["RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT or RUNINFRA_ASR_EXPECTED_TEXT"]
+      : []),
+  ];
+}
+
+const rowReadinessRequirements = [
+  ["models.list", () => missingEnv(["RUNINFRA_API_KEY"])],
+  ["models.retrieve.llm", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["chat.completions.create", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["openai.params.chat.completions", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["chat.completions.stream.final", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["chat.completions.stream.cancel", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["responses.create", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["openai.params.responses", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["responses.stream.final", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["responses.stream.cancel", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["embeddings.create", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])],
+  ["openai.params.embeddings", () => [
+    ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"]),
+    ...positiveIntegerRequirement("RUNINFRA_EMBEDDING_DIMENSIONS"),
+  ]],
+  ["images.generate", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"])],
+  ["audio.speech.create", speechRequirements],
+  ["audio.transcriptions.create", () => [
+    ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL", "RUNINFRA_ASR_EXPECTED_TEXT"]),
+    ...readableNonEmptyFileRequirement("RUNINFRA_ASR_FIXTURE_PATH"),
+  ]],
+  ["voice.pipeline.create", voiceRequirements],
+  ["error.auth.invalid_key", () => []],
+  ["error.request.invalid_options", () => []],
+  ["error.body.unsupported_parameter", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["webhooks.create.unsupported", () => []],
+  ["webhooks.list.unsupported", () => []],
+  ["webhooks.verify_signature.local", () => []],
+  ["webhooks.construct_event.local", () => []],
+  ["idempotency.replay.responses", () => [
+    ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"]),
+    ...(env("RUNINFRA_CANARY_ENABLE_IDEMPOTENCY") === "1" ? [] : ["RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1"]),
+  ]],
+];
+
+function buildReadiness() {
+  const rows = rowReadinessRequirements.map(([name, requirements]) => {
+    const missing = requirements();
+    return {
+      name,
+      status: missing.length ? "blocked" : "ready",
+      missing,
+    };
+  });
+  const missing = [...new Set(rows.flatMap((row) => row.missing))].sort();
+  return {
+    status: missing.length ? "blocked" : "ready",
+    env: redactedEnv(relevantEnv),
+    missing,
+    summary: {
+      ready: rows.filter((row) => row.status === "ready").length,
+      blocked: rows.filter((row) => row.status === "blocked").length,
+    },
+    rows,
+  };
+}
+
+function writeReport(report) {
+  if (!reportPath) return;
+  const absolute = resolve(reportPath);
+  mkdirSync(dirname(absolute), { recursive: true });
+  writeFileSync(absolute, `${JSON.stringify(report, null, 2)}\n`);
+}
+
+if (preflight) {
+  const readiness = buildReadiness();
+  const combined = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    strict,
+    packageSource,
+    expectedRows,
+    readiness,
+    parity: {
+      status: "not_run",
+      errors: [],
+    },
+    reports: [],
+  };
+  try {
+    assertReportDoesNotLeak(combined);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+  writeReport(combined);
+  console.log(JSON.stringify({ readiness: readiness.status, summary: readiness.summary }, null, 2));
+  process.exit(strict && readiness.status !== "ready" ? 1 : 0);
 }
 
 function newestMatching(dir, pattern, label) {

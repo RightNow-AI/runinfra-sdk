@@ -7,19 +7,20 @@ Branch/PR: `hardening/sdk-ga-canary-gates`, PR `RightNow-AI/runinfra-sdk#9`
 
 ## Goal
 
-Move TS/Python SDKs from secure beta to production-grade GA. Done means clean npm/PyPI installs, live API contract match, strict artifact canaries, protected PR merge, OIDC/provenance release, and no leakage of secrets, source maps, internal source, private config, local paths, caches, or fixtures.
+Move TS/Python SDKs from secure beta to production-grade GA. Done means clean npm/PyPI installs, live contract match, strict artifact canaries, protected PR merge, OIDC/provenance release, and no leakage of secrets, source maps, internal source, private config, local paths, caches, or fixtures.
 
 Agent 4 owns SDK hardening, package safety, live contract proof, and release evidence. Read state first, patch narrowly, test artifacts, get review for risky changes, and never claim production-ready with skipped or unverified canaries.
 
 ## Verified State
 
-- Local `main` is ahead of `origin/main` by 6 commits; PR #9 contains the SDK GA canary/security work.
+- Local `main` is ahead of `origin/main` by 8 commits; PR #9 contains the SDK GA canary/security work.
 - PR checks are green: TS SDK, Python SDK, CodeQL/default code scanning, package/build/test gates.
 - Branch protection is active: merge is blocked by `REVIEW_REQUIRED`; current auth user cannot self-approve.
 - Code scanning showed 0 open alerts and 0 open high/critical alerts. Default branch still has 3 moderate Dependabot alerts.
 - Current RunPipe canary env proves gateway/auth/request-id/models-list shape only. It lacks live model IDs/audio fixtures, so strict GA is incomplete.
 - `/models` returns a valid object with empty `data`; shape proof only, not model coverage.
-- Registry install/import gate is enforced after real publish. Local proof: `node scripts/verify-clean-installs.mjs --package both --mode registry --version 0.1.3 --registry-attempts 1` passed for npm/PyPI 0.1.3.
+- Registry install/import gate is enforced after real publish. Local proof: `verify-clean-installs --mode registry --version 0.1.3` passed for npm/PyPI 0.1.3.
+- Strict preflight writes redacted readiness reports without live calls; fake-key proof showed blocked readiness, 0 child reports, and no key leak.
 
 ## Production Bar
 
@@ -27,7 +28,7 @@ Agent 4 owns SDK hardening, package safety, live contract proof, and release evi
 - SDKs cover/document chat, responses, embeddings, images, TTS, ASR, voice pipeline, streaming, errors, idempotency, request IDs, retries, and fail-closed webhooks.
 - OpenAI-compatible calls prove supported parameters and clear unsupported errors without hiding auth, credit, rate-limit, model, or deployment failures.
 - Strict artifact canaries pass with no required skips for LLM, responses, embeddings, image, TTS, ASR, voice, streaming final/cancel, idempotency replay, error shape, and install/import.
-- Package scans prove no source maps, `.env`, `.npmrc`, secrets, local paths, private config, caches, fixtures, or internal files leak.
+- Package scans prove no source maps, `.env`, `.npmrc`, secrets, local paths, private config, caches, fixtures, or internal files.
 
 ## Remaining Blockers
 
@@ -43,4 +44,4 @@ Inspect git/PR/checks before claims. Fix only GA-linked contract, security, pack
 
 ## Next Checkpoint
 
-Collect strict production canary env/fixtures, then rerun artifact canaries until every required SDK path is proven. If env stays incomplete, improve redacted preflight/readiness reporting without exposing values.
+Collect strict production canary env/fixtures, then rerun preflight and artifact canaries until every required SDK path is proven.

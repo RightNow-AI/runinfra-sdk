@@ -202,6 +202,7 @@ Before GA promotion, also run:
 ```
 pnpm --dir typescript build
 node scripts/verify-clean-installs.mjs --package both --mode artifact
+node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
 ```
 

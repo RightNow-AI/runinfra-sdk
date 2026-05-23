@@ -1,7 +1,10 @@
 // @vitest-environment node
 
 import { createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
   AuthenticationError,
@@ -216,15 +219,125 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz");
     expect(readme).toContain("python scripts/verify-python-package.py python/dist");
     expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode artifact");
+    expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
     expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>");
     expect(readme).toContain("A real publish must also prove registry install/import");
     expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>");
-    expect(readme).toContain("Run the strict live canary matrix against the exact production gateway");
+    expect(readme).toContain("Run the strict preflight first");
+    expect(readme).toContain("Then run the strict live canary matrix against the exact production gateway");
     expect(readme).toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");
     expect(readme).not.toContain("pnpm test:sdk-canary:live");
     expect(readme).not.toContain("RUNINFRA_SDK_CI_TOKEN");
+  });
+
+  it("writes a redacted strict live-canary preflight report without running live calls", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
+    const reportPath = join(tmp, "readiness.json");
+    try {
+      const fakeKey = "sk-ri-preflight-secret-1234567890";
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: fakeKey,
+          RUNINFRA_LLM_MODEL: "llm-preflight-model",
+          RUNINFRA_EMBEDDING_MODEL: "",
+          RUNINFRA_IMAGE_MODEL: "",
+          RUNINFRA_TTS_MODEL: "",
+          RUNINFRA_ASR_MODEL: "",
+          RUNINFRA_ASR_FIXTURE_PATH: "",
+          RUNINFRA_ASR_EXPECTED_TEXT: "",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        expectedRows?: string[];
+        readiness?: {
+          status?: string;
+          env?: Record<string, string>;
+          missing?: string[];
+          rows?: Array<{ name: string; status: string; missing?: string[] }>;
+        };
+        reports?: unknown[];
+      };
+      expect(report.reports).toEqual([]);
+      expect(report.readiness?.status).toBe("blocked");
+      expect(report.readiness?.rows?.map((row) => row.name)).toEqual(report.expectedRows);
+      expect(report.readiness?.env?.RUNINFRA_API_KEY).toBe("set_redacted");
+      expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
+      expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_MODEL");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "audio.transcriptions.create")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_ASR_MODEL",
+        "RUNINFRA_ASR_FIXTURE_PATH",
+        "RUNINFRA_ASR_EXPECTED_TEXT",
+      ]));
+      expect(JSON.stringify(report)).not.toContain(fakeKey);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks strict live-canary preflight on invalid positive-integer readiness inputs", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
+    const reportPath = join(tmp, "readiness.json");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "sk-ri-preflight-secret-1234567890",
+          RUNINFRA_LLM_MODEL: "llm-preflight-model",
+          RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
+          RUNINFRA_EMBEDDING_DIMENSIONS: "not-a-positive-integer",
+          RUNINFRA_IMAGE_MODEL: "image-preflight-model",
+          RUNINFRA_TTS_MODEL: "tts-preflight-model",
+          RUNINFRA_TTS_VOICE: "voice-preflight",
+          RUNINFRA_ASR_MODEL: "asr-preflight-model",
+          RUNINFRA_ASR_FIXTURE_PATH: __filename,
+          RUNINFRA_ASR_EXPECTED_TEXT: "hello",
+          TEST_PIPELINE_ID: "pipeline-preflight",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "1",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          missing?: string[];
+          rows?: Array<{ name: string; status: string; missing?: string[] }>;
+        };
+      };
+      expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.embeddings")?.missing,
+      ).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("calls pipeline-scoped OpenAI-compatible chat completions", async () => {
