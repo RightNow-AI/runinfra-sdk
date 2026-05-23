@@ -10,7 +10,7 @@ Requires Node.js 18 or newer.
 npm install @runinfra/sdk
 ```
 
-## Modality status (v0.1.3)
+## Modality status (v0.1.4)
 
 This SDK is in **beta**. The surfaces below have different verification levels:
 
@@ -21,7 +21,7 @@ This SDK is in **beta**. The surfaces below have different verification levels:
 | Images | `client.images.generate` | **Experimental**, not live-canary verified |
 | Audio (TTS) | `client.audio.speech.create` | **Experimental**, not live-canary verified |
 | Audio (ASR) | `client.audio.transcriptions.create` | **Experimental**, not live-canary verified |
-| Webhooks | `client.webhooks.*` | Local verification helpers only; remote delivery not shipped |
+| Webhooks | `client.webhooks.verifySignature`, `client.webhooks.constructEvent`, `verifyWebhookSignature`, `constructWebhookEvent` | Local verification helpers only; remote delivery not shipped |
 | Voice pipeline | `client.voice.pipeline.create` | **Experimental**, pipeline-scoped route, not live-canary verified |
 
 Experimental surfaces match their documented gateway contracts, but we have
@@ -231,7 +231,7 @@ await client.responses.create(
 
 ## Typed errors
 
-The SDK exposes `AuthenticationError`, `PermissionDeniedError`, `RateLimitError`, `InsufficientCreditsError`, `DeploymentError`, `ModelNotFoundError`, `RunInfraTimeoutError`, `RunInfraConnectionError`, `RunInfraStreamParseError`, and `UnsupportedOperationError`.
+The SDK exposes `AuthenticationError`, `PermissionDeniedError`, `RateLimitError`, `InsufficientCreditsError`, `DeploymentError`, `ModelNotFoundError`, `RunInfraTimeoutError`, `RunInfraConnectionError`, and `RunInfraStreamParseError`. `UnsupportedOperationError` remains exported for compatibility with older v0.1.x code, but current public helpers do not raise it.
 `RateLimitError` includes `retryAfterMs` when the gateway returns `Retry-After`.
 `RunInfraStreamParseError` includes `requestId` when a malformed SSE frame came from a traced gateway response.
 `RunInfraTimeoutError` also covers stalled streaming reads, stalled non-streaming JSON body reads, and stalled binary audio `arrayBuffer()` / `blob()` reads after headers arrive, and includes `requestId` when the response was traced.
@@ -252,7 +252,7 @@ Successful JSON object responses include `_request_id` when the gateway returns 
 
 ## Webhook verification
 
-Public webhook delivery routes are not shipped yet, but the SDK includes local verification helpers for signed RunInfra webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
+Public webhook delivery routes are not shipped yet, so webhook delivery create/list methods are not part of the GA public SDK surface. The SDK includes local verification helpers for signed RunInfra webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
 
 ```ts
 import {
@@ -348,4 +348,4 @@ and redacted report rules. GA still requires live coverage for LLM, embeddings,
 image, TTS, ASR, and voice pipeline surfaces, plus explicit evidence that the
 smoke keys and temporary canary resources were removed.
 
-Co-located voice pipelines are available through the native `client.voice.pipeline.create()` helper on pipeline-scoped keys. The helper posts binary audio to the pipeline-scoped `/pipeline` route and returns the JSON transcript / response envelope. Public webhook create/list calls are intentionally unavailable until their gateway routes are verified, and the SDK throws `UnsupportedOperationError` locally for those webhook capabilities without making a request.
+Co-located voice pipelines are available through the native `client.voice.pipeline.create()` helper on pipeline-scoped keys. The helper posts binary audio to the pipeline-scoped `/pipeline` route and returns the JSON transcript / response envelope. Public webhook delivery create/list calls are intentionally unavailable until their gateway routes are verified, and they are not exposed on the SDK webhook namespace.

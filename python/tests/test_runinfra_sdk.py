@@ -33,7 +33,6 @@ from runinfra import (
     RunInfraStreamParseError,
     RunInfraTimeoutError,
     TranscriptionResponse,
-    UnsupportedOperationError,
     WebhookVerificationError,
     construct_webhook_event,
 )
@@ -107,10 +106,18 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
     def test_readme_documents_full_webhook_verification_helper_surface(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        changelog = Path(__file__).resolve().parents[1].joinpath("CHANGELOG.md").read_text()
 
         self.assertIn("construct_webhook_event", readme)
         self.assertIn("verify_webhook_signature", readme)
         self.assertIn("WebhookVerificationError", readme)
+        self.assertIn("webhook delivery create/list methods are not part of the GA public SDK surface", readme)
+        self.assertNotIn("client.webhooks.create", readme)
+        self.assertNotIn("client.webhooks.list", readme)
+        self.assertIn("`UnsupportedOperationError` remains exported for compatibility", readme)
+        self.assertIn("## [0.1.4]", changelog)
+        self.assertIn("Removed unshipped webhook delivery `create` / `list` methods", changelog)
+        self.assertIn("`webhooks.delivery_surface.absent`", changelog)
 
     def test_readme_documents_non_blank_idempotency_key_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -181,6 +188,22 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn('record("error.model.not_found"', python_canary)
         self.assertIn("runinfra-sdk-canary-missing-model", python_canary)
 
+    def test_webhook_delivery_methods_are_absent_from_artifact_and_canary_public_surface(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        clean_install_verifier = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-clean-installs.mjs").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        for text in (runner, typescript_canary, python_canary, clean_install_verifier, live_canaries):
+            self.assertIn("webhooks.delivery_surface.absent", text)
+            self.assertNotIn("webhooks.create.unsupported", text)
+            self.assertNotIn("webhooks.list.unsupported", text)
+        self.assertIn('typeof client.webhooks.create !== "undefined"', clean_install_verifier)
+        self.assertIn('typeof client.webhooks.list !== "undefined"', clean_install_verifier)
+        self.assertIn('hasattr(client.webhooks, "create")', clean_install_verifier)
+        self.assertIn('hasattr(client.webhooks, "list")', clean_install_verifier)
+
     def test_readme_documents_local_request_payload_validation_before_sending(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
@@ -216,7 +239,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
         self.assertIn("## Async Python runtimes", readme)
-        self.assertIn("`RunInfra` is intentionally sync-only in v0.1.3", readme)
+        self.assertIn("`RunInfra` is intentionally sync-only in v0.1.4", readme)
         self.assertIn("does not block the event loop", readme)
         self.assertIn("`AsyncRunInfra` client yet", readme)
 
@@ -1957,12 +1980,14 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertTrue(chunks.closed)
 
-    def test_unsupported_webhooks_fail_locally(self):
+    def test_unshipped_webhook_delivery_helpers_are_not_public_runtime_surface(self):
         transport = RecordingTransport()
         client = RunInfra(api_key="sk-ri-test", transport=transport)
 
-        with self.assertRaises(UnsupportedOperationError):
-            client.webhooks.create()
+        self.assertFalse(hasattr(client.webhooks, "create"))
+        self.assertFalse(hasattr(client.webhooks, "list"))
+        self.assertTrue(callable(client.webhooks.verify_signature))
+        self.assertTrue(callable(client.webhooks.construct_event))
         self.assertEqual(transport.calls, [])
 
     def test_construct_webhook_event_verifies_exact_raw_body(self):

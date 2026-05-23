@@ -100,8 +100,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `error.model.not_found`
 - `error.request.invalid_options`
 - `error.body.unsupported_parameter`
-- `webhooks.create.unsupported`
-- `webhooks.list.unsupported`
+- `webhooks.delivery_surface.absent`
 - `webhooks.verify_signature.local`
 - `webhooks.construct_event.local`
 - `webhooks.verify_signature.export`
@@ -130,8 +129,10 @@ behavior; it requires the transcript match and, for `verbose_json`, at least one
 verbose response field.
 The model-not-found row performs a live `models.retrieve()` lookup for the
 deterministic missing model id `runinfra-sdk-canary-missing-model` and requires
-a traced `model_not_found` 404 error. Unsupported SDK request options and
-webhook delivery rows must fail closed without sending a network request.
+a traced `model_not_found` 404 error. Unsupported SDK request options must
+fail closed without sending a network request. The webhook delivery-surface row
+asserts unshipped create/list methods are absent while local signature helpers
+remain callable.
 Webhook verification rows exercise both client-attached helpers and top-level
 package exports. The unsupported body-parameter row sends a real OpenAI-style
 request with a RunInfra probe parameter and requires a clear traced 400/422

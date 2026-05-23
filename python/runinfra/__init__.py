@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optio
 JsonDict = Dict[str, Any]
 Transport = Callable[["RunInfraRequest"], "RunInfraResponse"]
 ResponseBody = Union[bytes, Iterable[bytes]]
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 _MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 60.0
 _WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH = 8192
 
@@ -1248,7 +1248,7 @@ class _Transcriptions:
 class _Audio:
     """Audio surfaces (text-to-speech + speech-to-text).
 
-    [EXPERIMENTAL] As of v0.1.3, these methods have NOT been verified end-to-end
+    [EXPERIMENTAL] As of v0.1.4, these methods have NOT been verified end-to-end
     against a live deployed pipeline in the canary suite. The HTTP envelope
     matches the OpenAI Audio API contract and the request/response shapes are
     stable, but you should test against your own deployed model before using
@@ -1283,7 +1283,7 @@ class _Models:
 class _Images:
     """Image generation surface.
 
-    [EXPERIMENTAL] As of v0.1.3, this method has NOT been verified end-to-end
+    [EXPERIMENTAL] As of v0.1.4, this method has NOT been verified end-to-end
     against a live deployed pipeline in the canary suite. The HTTP envelope
     matches the OpenAI Images API contract, but you should test against your
     own deployed model before using in production. Live-canary verification
@@ -1315,16 +1315,6 @@ class _Webhooks:
 
     def construct_event(self, **kwargs: Any) -> Any:
         return construct_webhook_event(**kwargs)
-
-    def create(self, **_kwargs: Any) -> Any:
-        raise UnsupportedOperationError(
-            "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped."
-        )
-
-    def list(self) -> Any:
-        raise UnsupportedOperationError(
-            "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped."
-        )
 
 
 class _VoicePipeline:

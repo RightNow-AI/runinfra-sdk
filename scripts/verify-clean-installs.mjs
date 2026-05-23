@@ -19,6 +19,7 @@ const registryRetryDelayMs = parsePositiveInteger(
   optionValue("--registry-retry-delay-ms") ?? "10000",
   "--registry-retry-delay-ms",
 );
+const webhookDeliverySurfaceRow = "webhooks.delivery_surface.absent";
 
 if (!["artifact", "registry"].includes(mode)) {
   fail(`Unsupported mode "${mode}". Use --mode artifact or --mode registry.`);
@@ -167,7 +168,7 @@ function verifyNpm(workspace) {
       ];
   runRegistryInstall(npm.command, [...npm.prefixArgs, ...installArgs], npmDir, "npm");
   run(process.execPath, ["--input-type=module", "-e", `
-import { RUNINFRA_SDK_VERSION, RunInfra, UnsupportedOperationError } from "@runinfra/sdk";
+import { RUNINFRA_SDK_VERSION, RunInfra } from "@runinfra/sdk";
 if (RUNINFRA_SDK_VERSION !== "${version}") {
   throw new Error(\`unexpected npm SDK version: \${RUNINFRA_SDK_VERSION}\`);
 }
@@ -176,6 +177,7 @@ const client = new RunInfra({
   baseURL: "http://localhost:1/v1",
   maxRetries: 0,
 });
+const webhookDeliverySurfaceRow = "${webhookDeliverySurfaceRow}";
 if (typeof client.chat.completions.create !== "function") throw new Error("chat.completions.create missing");
 if (typeof client.responses.create !== "function") throw new Error("responses.create missing");
 if (typeof client.embeddings.create !== "function") throw new Error("embeddings.create missing");
@@ -183,22 +185,11 @@ if (typeof client.images.generate !== "function") throw new Error("images.genera
 if (typeof client.audio.speech.create !== "function") throw new Error("audio.speech.create missing");
 if (typeof client.audio.transcriptions.create !== "function") throw new Error("audio.transcriptions.create missing");
 if (typeof client.voice.pipeline.create !== "function") throw new Error("voice.pipeline.create missing");
-let rejected = false;
-try {
-  await client.webhooks.create({});
-} catch (error) {
-  if (!(error instanceof UnsupportedOperationError)) throw error;
-  rejected = true;
-}
-if (!rejected) throw new Error("webhooks.create did not fail closed");
-rejected = false;
-try {
-  await client.webhooks.list();
-} catch (error) {
-  if (!(error instanceof UnsupportedOperationError)) throw error;
-  rejected = true;
-}
-if (!rejected) throw new Error("webhooks.list did not fail closed");
+if (typeof client.webhooks.create !== "undefined") throw new Error("webhooks.create must not be public");
+if (typeof client.webhooks.list !== "undefined") throw new Error("webhooks.list must not be public");
+if (typeof client.webhooks.verifySignature !== "function") throw new Error("webhooks.verifySignature missing");
+if (typeof client.webhooks.constructEvent !== "function") throw new Error("webhooks.constructEvent missing");
+if (webhookDeliverySurfaceRow !== "webhooks.delivery_surface.absent") throw new Error("webhook delivery surface row mismatch");
 console.log("Verified npm clean install/import");
 `], npmDir);
 }
@@ -222,10 +213,11 @@ function verifyPython(workspace) {
       ];
   runRegistryInstall(python, installArgs, pythonDir, "PyPI");
   run(python, ["-c", `
-from runinfra import RunInfra, UnsupportedOperationError, __version__
+from runinfra import RunInfra, __version__
 if __version__ != "${version}":
     raise SystemExit(f"unexpected Python SDK version: {__version__}")
 client = RunInfra(api_key="sk-ri-clean-install-test", base_url="http://localhost:1/v1", max_retries=0)
+webhook_delivery_surface_row = "${webhookDeliverySurfaceRow}"
 for label, value in {
     "chat.completions.create": client.chat.completions.create,
     "responses.create": client.responses.create,
@@ -237,18 +229,16 @@ for label, value in {
 }.items():
     if not callable(value):
         raise SystemExit(f"{label} missing")
-try:
-    client.webhooks.create()
-except UnsupportedOperationError:
-    pass
-else:
-    raise SystemExit("webhooks.create did not fail closed")
-try:
-    client.webhooks.list()
-except UnsupportedOperationError:
-    pass
-else:
-    raise SystemExit("webhooks.list did not fail closed")
+if hasattr(client.webhooks, "create"):
+    raise SystemExit("webhooks.create must not be public")
+if hasattr(client.webhooks, "list"):
+    raise SystemExit("webhooks.list must not be public")
+if not callable(client.webhooks.verify_signature):
+    raise SystemExit("webhooks.verify_signature missing")
+if not callable(client.webhooks.construct_event):
+    raise SystemExit("webhooks.construct_event missing")
+if webhook_delivery_surface_row != "webhooks.delivery_surface.absent":
+    raise SystemExit("webhook delivery surface row mismatch")
 print("Verified Python clean install/import")
 `], pythonDir);
 }

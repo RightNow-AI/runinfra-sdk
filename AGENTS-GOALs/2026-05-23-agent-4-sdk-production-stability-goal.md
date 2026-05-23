@@ -25,7 +25,7 @@ Agent 4 owns SDK hardening, package safety, live contract proof, and release evi
 ## Production Bar
 
 - Registry consumer installs verify imports and versions for npm and PyPI.
-- SDKs cover/document chat, responses, embeddings, images, TTS, ASR, voice pipeline, streaming, errors, idempotency, request IDs, retries, and fail-closed webhooks.
+- SDKs cover/document chat, responses, embeddings, images, TTS, ASR, voice pipeline, streaming, errors, idempotency, request IDs, retries, local webhook verification helpers, and absent unshipped webhook delivery methods.
 - OpenAI-compatible calls prove supported parameters and clear unsupported errors without hiding auth, credit, rate-limit, model, or deployment failures.
 - Strict artifact canaries pass with no required skips for LLM, responses, embeddings, image, TTS, ASR, voice, streaming final/cancel, idempotency replay, error shape, and install/import.
 - Package scans prove no source maps, `.env`, `.npmrc`, secrets, local paths, private config, caches, fixtures, or internal files.
@@ -36,7 +36,7 @@ Agent 4 owns SDK hardening, package safety, live contract proof, and release evi
 2. Strict canary env is missing model IDs, embedding dimensions, image/TTS/ASR/voice coverage, audio fixtures, expected transcripts, and idempotency enablement.
 3. Advanced OpenAI proof still needs tools/schema outputs, stream options, image/audio variants, embedding dimensions/base64, and model-specific options.
 4. Python GA choice remains open: ship `AsyncRunInfra` or document sync-only as intentional.
-5. Webhook delivery create/list stays fail-closed until real delivery endpoints exist.
+5. Webhook delivery create/list stays out of the public SDK surface until real delivery endpoints exist.
 
 ## Guardrails
 
@@ -269,5 +269,40 @@ Fresh local verification:
 Current blockers remain:
 
 - This improves live error-mapping coverage but does not prove live multimodal GA readiness.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Webhook Delivery Surface Removal
+
+Removed unshipped webhook delivery dead buttons from the SDK public surface:
+
+- TypeScript `client.webhooks` now exposes only `verifySignature` and `constructEvent`; `create` and `list` are absent from runtime and declarations.
+- Python `client.webhooks` now exposes only `verify_signature` and `construct_event`; `create` and `list` are absent.
+- Strict canary matrix replaced `webhooks.create.unsupported` plus `webhooks.list.unsupported` with one `webhooks.delivery_surface.absent` row.
+- Source/artifact canaries and clean-install checks now prove delivery methods are absent while local signature helpers remain callable.
+- READMEs, changelogs, `LIVE-CANARIES.md`, and `AGENT-NOTES.md` document that delivery create/list is not public SDK surface until real gateway routes ship.
+- Package versions moved to `0.1.4` because `0.1.3` is already published. `0.1.4` was checked as available: npm returned no match for `@runinfra/sdk@0.1.4`, and PyPI latest remains `runinfra 0.1.3`.
+- `UnsupportedOperationError` remains exported only for older v0.1.x compatibility; current public helpers do not raise it.
+
+Fresh local verification:
+
+- Added failing TS/Python tests first; they failed on stale README/canary/runtime create/list public surface.
+- TS typecheck passed.
+- TS tests passed, 117 tests.
+- Python tests passed, 104 tests plus 105 subtests.
+- Python canary and package syntax passed.
+- Workflow policy and version sync passed for `0.1.4`.
+- Fresh npm tarball `runinfra-sdk-0.1.4.tgz` built and passed `verify-npm-package`.
+- Fresh Python wheel/sdist `runinfra-0.1.4` built, passed `verify-python-package`, and passed `twine check`.
+- Clean artifact install/import passed for npm and Python at `0.1.4`.
+- Source canary report passed parity: TypeScript 7 passed/23 skipped, Python 7 passed/23 skipped, expected rows 30.
+- Artifact canary report passed parity with the same 7 passed/23 skipped shape.
+- Strict preflight remains intentionally blocked: 7 ready rows and 23 blocked rows.
+- Runtime artifact checks showed TypeScript and Python webhook delivery methods absent and signature helpers callable.
+- `git diff --check` passed with CRLF warnings only.
+
+Current blockers remain:
+
+- This removes a public dead surface but does not prove live multimodal GA readiness.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.

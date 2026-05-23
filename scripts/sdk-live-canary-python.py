@@ -24,7 +24,6 @@ from runinfra import (  # noqa: E402
     ModelNotFoundError,
     PermissionDeniedError,
     RunInfra,
-    UnsupportedOperationError,
     construct_webhook_event,
     verify_webhook_signature,
 )
@@ -503,8 +502,7 @@ def main() -> int:
     record("error.model.not_found", ["RUNINFRA_API_KEY"], lambda: _model_not_found(client()))
     record("error.request.invalid_options", [], _invalid_request_options)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
-    record("webhooks.create.unsupported", [], _webhooks_create_unsupported)
-    record("webhooks.list.unsupported", [], _webhooks_list_unsupported)
+    record("webhooks.delivery_surface.absent", [], _webhooks_delivery_surface_absent)
     record("webhooks.verify_signature.local", [], _webhooks_verify_signature_local)
     record("webhooks.construct_event.local", [], _webhooks_construct_event_local)
     record("webhooks.verify_signature.export", [], _webhooks_verify_signature_export)
@@ -952,24 +950,13 @@ def _unsupported_body_parameter(client: RunInfra, model: str) -> Dict[str, Any]:
     raise AssertionError("unsupported body parameter unexpectedly succeeded")
 
 
-def _webhooks_create_unsupported() -> Dict[str, Any]:
-    try:
-        _local_client().webhooks.create()
-    except UnsupportedOperationError as error:
-        if error.type != "unsupported_operation":
-            raise AssertionError(f"webhooks.create mapped unexpectedly: {error.status} {error.type}")
-        return {"errorType": error.type, "errorStatus": error.status}
-    raise AssertionError("webhooks.create unexpectedly succeeded")
-
-
-def _webhooks_list_unsupported() -> Dict[str, Any]:
-    try:
-        _local_client().webhooks.list()
-    except UnsupportedOperationError as error:
-        if error.type != "unsupported_operation":
-            raise AssertionError(f"webhooks.list mapped unexpectedly: {error.status} {error.type}")
-        return {"errorType": error.type, "errorStatus": error.status}
-    raise AssertionError("webhooks.list unexpectedly succeeded")
+def _webhooks_delivery_surface_absent() -> Dict[str, str]:
+    webhooks = _local_client().webhooks
+    if hasattr(webhooks, "create") or hasattr(webhooks, "list"):
+        raise AssertionError("unshipped webhook delivery methods are present")
+    if not callable(webhooks.verify_signature) or not callable(webhooks.construct_event):
+        raise AssertionError("webhook verification helpers are missing")
+    return {"deliveryMethods": "absent", "verificationHelpers": "present"}
 
 
 def _webhook_fixture() -> Dict[str, Any]:

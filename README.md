@@ -65,14 +65,14 @@ print(response["choices"][0]["message"]["content"])
 
 See each package's own README + CHANGELOG for surface-level docs.
 
-## Modality status (v0.1.3)
+## Modality status (v0.1.4)
 
 | Surface | Status |
 |---|---|
 | Chat completions, Responses, Embeddings | Beta, contract-tested |
 | Images, Audio TTS/ASR | **Experimental**, not live-canary verified |
 | Voice pipeline | **Experimental**, pipeline-scoped route, not live-canary verified |
-| Webhook delivery | Not shipped. Local verification helpers are available in both SDKs |
+| Webhook delivery | Not shipped. Local verification helpers are available in both SDKs; create/list methods are not public SDK surface |
 
 See per-package READMEs and CHANGELOG for the path to v1.0.0 GA.
 The strict multimodal GA canary contract is documented in

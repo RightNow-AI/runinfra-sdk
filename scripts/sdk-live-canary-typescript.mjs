@@ -389,7 +389,6 @@ const {
   PermissionDeniedError,
   RUNINFRA_SDK_VERSION,
   RunInfra,
-  UnsupportedOperationError,
   constructWebhookEvent,
   verifyWebhookSignature,
 } = sdkModule;
@@ -974,28 +973,15 @@ await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_
   throw new Error("unsupported body parameter unexpectedly succeeded");
 });
 
-await record("webhooks.create.unsupported", [], async () => {
-  try {
-    await client({ apiKey: apiKey ?? "sk-ri-live-canary-local", baseURL: "http://localhost:1/v1" }).webhooks.create({});
-  } catch (error) {
-    if (!(error instanceof UnsupportedOperationError) || error.type !== "unsupported_operation") {
-      throw new Error(`webhooks.create mapped unexpectedly: ${error?.status} ${error?.type}`);
-    }
-    return { errorType: error.type, errorStatus: error.status };
+await record("webhooks.delivery_surface.absent", [], async () => {
+  const webhooks = client({ apiKey: apiKey ?? "sk-ri-live-canary-local", baseURL: "http://localhost:1/v1" }).webhooks;
+  if ("create" in webhooks || "list" in webhooks) {
+    throw new Error("unshipped webhook delivery methods are present");
   }
-  throw new Error("webhooks.create unexpectedly succeeded");
-});
-
-await record("webhooks.list.unsupported", [], async () => {
-  try {
-    await client({ apiKey: apiKey ?? "sk-ri-live-canary-local", baseURL: "http://localhost:1/v1" }).webhooks.list();
-  } catch (error) {
-    if (!(error instanceof UnsupportedOperationError) || error.type !== "unsupported_operation") {
-      throw new Error(`webhooks.list mapped unexpectedly: ${error?.status} ${error?.type}`);
-    }
-    return { errorType: error.type, errorStatus: error.status };
+  if (typeof webhooks.verifySignature !== "function" || typeof webhooks.constructEvent !== "function") {
+    throw new Error("webhook verification helpers are missing");
   }
-  throw new Error("webhooks.list unexpectedly succeeded");
+  return { deliveryMethods: "absent", verificationHelpers: "present" };
 });
 
 function webhookFixture() {

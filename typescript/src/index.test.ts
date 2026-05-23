@@ -16,7 +16,6 @@ import {
   RunInfraStream,
   RunInfraStreamParseError,
   RunInfraTimeoutError,
-  UnsupportedOperationError,
   WebhookVerificationError,
   constructWebhookEvent,
   type RunInfraOptions,
@@ -119,10 +118,18 @@ describe("RunInfra TypeScript SDK", () => {
 
   it("documents the full local webhook verification helper surface", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
 
     expect(readme).toContain("constructWebhookEvent");
     expect(readme).toContain("verifyWebhookSignature");
     expect(readme).toContain("WebhookVerificationError");
+    expect(readme).toContain("webhook delivery create/list methods are not part of the GA public SDK surface");
+    expect(readme).not.toContain("client.webhooks.create");
+    expect(readme).not.toContain("client.webhooks.list");
+    expect(readme).toContain("`UnsupportedOperationError` remains exported for compatibility");
+    expect(changelog).toContain("## [0.1.4]");
+    expect(changelog).toContain("Removed unshipped webhook delivery `create` / `list` methods");
+    expect(changelog).toContain("`webhooks.delivery_surface.absent`");
   });
 
   it("documents non-blank idempotency key requirements", () => {
@@ -197,6 +204,24 @@ describe("RunInfra TypeScript SDK", () => {
     expect(pythonCanary).toContain("ModelNotFoundError");
     expect(pythonCanary).toContain('record("error.model.not_found"');
     expect(pythonCanary).toContain("runinfra-sdk-canary-missing-model");
+  });
+
+  it("keeps unshipped webhook delivery methods out of artifact and canary public surface", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const cleanInstallVerifier = readFileSync(new URL("../../scripts/verify-clean-installs.mjs", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    for (const text of [runner, typescriptCanary, pythonCanary, cleanInstallVerifier, liveCanaries]) {
+      expect(text).toContain("webhooks.delivery_surface.absent");
+      expect(text).not.toContain("webhooks.create.unsupported");
+      expect(text).not.toContain("webhooks.list.unsupported");
+    }
+    expect(cleanInstallVerifier).toContain('typeof client.webhooks.create !== "undefined"');
+    expect(cleanInstallVerifier).toContain('typeof client.webhooks.list !== "undefined"');
+    expect(cleanInstallVerifier).toContain('hasattr(client.webhooks, "create")');
+    expect(cleanInstallVerifier).toContain('hasattr(client.webhooks, "list")');
   });
 
   it("keeps child canaries in parity for audio OpenAI parameter coverage", () => {
@@ -408,9 +433,12 @@ describe("RunInfra TypeScript SDK", () => {
       expect(report.readiness?.status).toBe("blocked");
       expect(report.readiness?.rows?.map((row) => row.name)).toEqual(report.expectedRows);
       expect(report.expectedRows).toEqual(expect.arrayContaining([
+        "webhooks.delivery_surface.absent",
         "webhooks.verify_signature.export",
         "webhooks.construct_event.export",
       ]));
+      expect(report.expectedRows).not.toContain("webhooks.create.unsupported");
+      expect(report.expectedRows).not.toContain("webhooks.list.unsupported");
       expect(report.readiness?.env?.RUNINFRA_API_KEY).toBe("set_redacted");
       expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
       expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_MODEL");
@@ -2500,16 +2528,20 @@ describe("RunInfra TypeScript SDK", () => {
     expect(new Uint8Array(body as ArrayBuffer)).toEqual(new Uint8Array([1, 2, 3]));
   });
 
-  it("fails unsupported webhook helpers locally without a network call", async () => {
+  it("does not expose unshipped webhook delivery helpers on the public runtime surface", () => {
     const fetcher = vi.fn();
     const client = new RunInfra({
       apiKey: "sk-ri-test",
       fetch: fetcher,
     });
+    const webhooks = client.webhooks as Record<string, unknown>;
 
-    await expect(client.webhooks.create()).rejects.toBeInstanceOf(
-      UnsupportedOperationError,
-    );
+    expect("create" in webhooks).toBe(false);
+    expect("list" in webhooks).toBe(false);
+    expect(Object.hasOwn(webhooks, "create")).toBe(false);
+    expect(Object.hasOwn(webhooks, "list")).toBe(false);
+    expect(typeof client.webhooks.verifySignature).toBe("function");
+    expect(typeof client.webhooks.constructEvent).toBe("function");
     expect(fetcher).not.toHaveBeenCalled();
   });
 

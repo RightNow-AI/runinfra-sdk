@@ -19,17 +19,22 @@ constraints around OIDC trusted publishing and registry policy.
 > - **v0.1.3** — hardened browser runtime guards, avoided URL normalization
 >   regex backtracking, pinned CI build tooling, SHA-pinned workflow actions,
 >   and made real publish dispatch require an exact version confirmation.
-> - **v0.2.0+** — same path as 0.1.3.
+> - **v0.1.4 candidate** — removes unshipped webhook delivery create/list
+>   methods from the public SDK surface and proves their absence in canaries.
+> - **v0.2.0+** — same protected OIDC path.
 >
 > Both registries' Trusted Publisher rules have been migrated to point at
 > THIS repo. The old rules pointing at `RunInfra-Landing` were removed.
 
 ## What ships
 
-| Registry | Package | Source dir | Latest |
+| Registry | Package | Source dir | Current source version |
 |---|---|---|---|
-| npm | `@runinfra/sdk` | `typescript/` | `0.1.3` |
-| PyPI | `runinfra` | `python/` | `0.1.3` |
+| npm | `@runinfra/sdk` | `typescript/` | `0.1.4` |
+| PyPI | `runinfra` | `python/` | `0.1.4` |
+
+Registry latest remains `0.1.3` until the protected trusted-publish workflow
+publishes `0.1.4` from `main`.
 
 Customer install:
 ```
@@ -116,10 +121,10 @@ and have admin bypass disabled. Main branch protection also enforces admins.
 | `client.audio.speech.create` | **Experimental** — same |
 | `client.audio.transcriptions.create` | **Experimental** — same |
 | `client.webhooks.verifySignature` / `.constructEvent` | Works locally |
-| `client.webhooks.create` / `.list` | Throws `UnsupportedOperationError` — delivery not shipped |
+| Webhook delivery create/list | Not shipped and not exposed on the public SDK surface |
 | `client.voice.pipeline.create` | **Experimental** - posts binary audio to the pipeline-scoped `/pipeline` route, not live-canary verified |
 
-Python remains sync-only in v0.1.3. Keep FastAPI/async users pointed at worker
+Python remains sync-only in v0.1.4. Keep FastAPI/async users pointed at worker
 threads, queues, or background jobs until `AsyncRunInfra` ships with matching
 unit, streaming, live-canary, and clean-install coverage.
 
