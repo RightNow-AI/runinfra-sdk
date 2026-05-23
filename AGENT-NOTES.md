@@ -158,9 +158,12 @@ runinfra-sdk/
 │   └── LICENSE
 └── .github/workflows/
     ├── ci.yml            — type-check + test + build + tarball-leak scan on PR
-    ├── codeql.yml        — pinned CodeQL scan for TypeScript and Python
     └── publish.yml       — manual workflow_dispatch publish via OIDC
 ```
+
+CodeQL is intentionally enforced by GitHub default setup and protected checks.
+Do not add `.github/workflows/codeql.yml` while default setup is enabled;
+GitHub rejects advanced uploads in that configuration.
 
 LICENSE files exist in 3 places (root + typescript/ + python/). They are
 identical proprietary source-available terms. Customers see them via:
@@ -182,7 +185,8 @@ identical proprietary source-available terms. Customers see them via:
 
 3. Commit + push + PR + merge to `main`.
 
-4. Wait for `ci.yml` and `codeql.yml` to pass green on `main`.
+4. Wait for `ci.yml` and the GitHub default CodeQL `Analyze (...)` checks to
+   pass green on `main`.
 
 5. Trigger publish:
    ```
@@ -240,18 +244,17 @@ some things are now obsolete in the new repo context:
 
 | Old (monorepo `RunInfra-Landing`) | New (this repo `runinfra-sdk`) |
 |---|---|
-| Workflow: `.github/workflows/sdk-publish.yml` | `.github/workflows/publish.yml` + `.github/workflows/ci.yml` |
+| Workflow: `.github/workflows/sdk-publish.yml` | `.github/workflows/publish.yml` + `.github/workflows/ci.yml` + GitHub default CodeQL checks |
 | Bypass flag: `RUNINFRA_SDK_BYPASS_LIVE_CANARY` + `bypass_live_canary` input | None. The simplified workflow doesn't run the strict gate scripts. |
-| Gate scripts: `scripts/verify-sdk-*.mjs` + `scripts/publish-sdk-artifacts.mjs` | None. CI runs `pnpm test` + tarball-leak grep instead. |
+| Gate scripts: `scripts/verify-sdk-*.mjs` + `scripts/publish-sdk-artifacts.mjs` | Package gates are local scripts in `scripts/`; strict live canaries run through `scripts/run-sdk-live-canaries.mjs`. |
 | Source paths: `sdks/typescript/`, `sdks/python/` | `typescript/`, `python/` (root-level) |
-| Workflow has 5-modality live canary gate | Workflow does basic test + build + publish |
+| Workflow has 5-modality live canary gate | CI/publish run package gates; GA still requires strict live canary reports before promotion. |
 | Repo URLs in metadata: `RunInfra-Landing` | `runinfra-sdk` |
 | Publish requires bypass workflow input | Publish only requires `package=both/typescript/python` + `dry_run=false` |
 
-The strict gates from the monorepo are not yet replicated here. When you
-need to retire the implicit "beta" status (i.e., bump to 1.0.0), the gate
-scripts will need to be ported over OR the project will need to define a
-new set of gates appropriate to a public OSS-ish repo.
+The strict package gates are replicated here, but GA still requires complete
+production live-canary reports for every supported public SDK surface before
+retiring the implicit beta status.
 
 ## Things future agents must NOT do
 

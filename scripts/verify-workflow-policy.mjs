@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const publish = readFileSync(".github/workflows/publish.yml", "utf8");
 const ci = readFileSync(".github/workflows/ci.yml", "utf8");
-const codeql = readFileSync(".github/workflows/codeql.yml", "utf8");
+const hasCustomCodeqlWorkflow = existsSync(".github/workflows/codeql.yml");
 
 function jobBlock(workflow, jobName) {
   const start = workflow.indexOf(`  ${jobName}:`);
@@ -15,7 +15,7 @@ function jobBlock(workflow, jobName) {
 
 const publishNpmJob = jobBlock(publish, "publish-npm");
 const publishPypiJob = jobBlock(publish, "publish-pypi");
-const workflows = `${publish}\n${ci}\n${codeql}`;
+const workflows = `${publish}\n${ci}`;
 const usesValues = Array.from(
   workflows.matchAll(/^\s*-?\s*uses:\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/gmu),
 ).map(([, doubleQuoted, singleQuoted, unquoted]) => doubleQuoted ?? singleQuoted ?? unquoted);
@@ -38,8 +38,6 @@ const expectedActionRevisions = [
   "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405",
   "pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
   "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b",
-  "github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa",
-  "github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa",
 ];
 
 const checks = [
@@ -56,25 +54,8 @@ const checks = [
     ok: /id-token:\s*write/u.test(publish),
   },
   {
-    label: "CodeQL workflow scans TypeScript and Python",
-    ok:
-      /javascript-typescript/u.test(codeql) &&
-      /python/u.test(codeql) &&
-      /github\/codeql-action\/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa/u.test(codeql) &&
-      /github\/codeql-action\/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa/u.test(codeql),
-  },
-  {
-    label: "CodeQL workflow can upload security events",
-    ok:
-      /security-events:\s*write/u.test(codeql) &&
-      /contents:\s*read/u.test(codeql),
-  },
-  {
-    label: "CodeQL workflow runs on main pushes, PRs, and schedule",
-    ok:
-      /pull_request:[\s\S]*?branches:\s*\[main\]/u.test(codeql) &&
-      /push:[\s\S]*?branches:\s*\[main\]/u.test(codeql) &&
-      /schedule:/u.test(codeql),
+    label: "repository relies on GitHub default CodeQL setup",
+    ok: !hasCustomCodeqlWorkflow,
   },
   {
     label: "npm publish keeps setup-node registry-url unset",

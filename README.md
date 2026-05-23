@@ -3,7 +3,6 @@
 [![npm](https://img.shields.io/npm/v/%40runinfra%2Fsdk.svg?logo=npm&label=%40runinfra%2Fsdk)](https://www.npmjs.com/package/@runinfra/sdk)
 [![PyPI](https://img.shields.io/pypi/v/runinfra.svg?logo=pypi&label=runinfra)](https://pypi.org/project/runinfra/)
 [![CI](https://github.com/RightNow-AI/runinfra-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RightNow-AI/runinfra-sdk/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/RightNow-AI/runinfra-sdk/actions/workflows/codeql.yml/badge.svg)](https://github.com/RightNow-AI/runinfra-sdk/actions/workflows/codeql.yml)
 [![SLSA provenance](https://img.shields.io/badge/SLSA-provenance-7eb35e?logo=sigstore)](https://docs.npmjs.com/about-package-provenance-statements)
 [![License](https://img.shields.io/badge/license-Proprietary-blue.svg)](./LICENSE)
 
@@ -89,6 +88,9 @@ licensing inquiries, contact `licensing@runinfra.ai`.
 Each release published from this repo via GitHub Actions OIDC trusted
 publishing carries a Sigstore-backed provenance attestation linking it to a
 specific CI run.
+
+Code scanning runs through GitHub default CodeQL setup and protected branch
+checks. Do not add an advanced CodeQL workflow unless default setup is disabled.
 
 Verify the npm package:
 ```bash
