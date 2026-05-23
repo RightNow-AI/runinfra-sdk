@@ -180,9 +180,33 @@ if (!["artifact", "source"].includes(packageSource)) {
   process.exit(2);
 }
 
-function env(name) {
+const canonicalEnvAliases = new Map([
+  ["RUNINFRA_LLM_MODEL", ["TEST_MODEL"]],
+  ["RUNINFRA_EMBEDDING_MODEL", ["TEST_EMBEDDING_MODEL"]],
+  ["RUNINFRA_IMAGE_MODEL", ["TEST_IMAGE_MODEL"]],
+  ["RUNINFRA_TTS_MODEL", ["TEST_TTS_MODEL"]],
+  ["RUNINFRA_TTS_VOICE", ["TEST_TTS_VOICE"]],
+  ["RUNINFRA_TTS_REF_AUDIO", ["TEST_TTS_REF_AUDIO"]],
+  ["RUNINFRA_TTS_REF_TEXT", ["TEST_TTS_REF_TEXT"]],
+  ["RUNINFRA_TTS_TASK_TYPE", ["TEST_TTS_TASK_TYPE"]],
+  ["RUNINFRA_ASR_MODEL", ["TEST_ASR_MODEL"]],
+  ["RUNINFRA_ASR_FIXTURE_PATH", ["TEST_ASR_FILE"]],
+  ["RUNINFRA_VOICE_PIPELINE_ID", ["TEST_PIPELINE_ID"]],
+]);
+
+function rawEnv(name) {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
+}
+
+function env(name) {
+  const value = rawEnv(name);
+  if (value) return value;
+  for (const alias of canonicalEnvAliases.get(name) ?? []) {
+    const aliasValue = rawEnv(alias);
+    if (aliasValue) return aliasValue;
+  }
+  return undefined;
 }
 
 function firstEnv(...names) {
@@ -195,6 +219,16 @@ function firstEnv(...names) {
 
 function redactedEnv(names) {
   return Object.fromEntries(names.map((name) => [name, env(name) ? "set_redacted" : "missing"]));
+}
+
+function redactedEnvAliases(names) {
+  const aliases = {};
+  for (const name of names) {
+    if (rawEnv(name)) continue;
+    const setAliases = (canonicalEnvAliases.get(name) ?? []).filter((alias) => rawEnv(alias)).sort();
+    if (setAliases.length) aliases[name] = setAliases;
+  }
+  return aliases;
 }
 
 const relevantEnv = [
@@ -221,7 +255,6 @@ const relevantEnv = [
   "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE",
   "RUNINFRA_ASR_EXPECTED_TEXT",
   "RUNINFRA_PIPELINE_API_KEY",
-  "TEST_PIPELINE_ID",
   "RUNINFRA_VOICE_PIPELINE_ID",
   "RUNINFRA_VOICE_PIPELINE_API_KEY",
   "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH",
@@ -422,6 +455,7 @@ function buildReadiness() {
   return {
     status: missing.length ? "blocked" : "ready",
     env: redactedEnv(relevantEnv),
+    aliases: redactedEnvAliases(relevantEnv),
     missing,
     summary: {
       ready: rows.filter((row) => row.status === "ready").length,
@@ -783,10 +817,25 @@ function installArtifactCanaryPackages() {
 function run(label, command, commandArgs, envOverrides = {}) {
   const result = spawnSync(command, commandArgs, {
     stdio: "inherit",
-    env: { ...process.env, ...envOverrides },
+    env: { ...process.env, ...canonicalEnvOverrides(), ...envOverrides },
     shell: false,
   });
   return { label, status: result.status ?? 1 };
+}
+
+function canonicalEnvOverrides(names = relevantEnv) {
+  const overrides = {};
+  for (const name of names) {
+    if (rawEnv(name)) continue;
+    for (const alias of canonicalEnvAliases.get(name) ?? []) {
+      const value = rawEnv(alias);
+      if (value) {
+        overrides[name] = value;
+        break;
+      }
+    }
+  }
+  return overrides;
 }
 
 mkdirSync(tempDir, { recursive: true });

@@ -631,3 +631,43 @@ Current blockers remain:
 - This closes the public-surface coverage gate but does not make strict live multimodal canaries green.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-24 Agent 4 Checkpoint: RunPipe Env Aliases And Model Catalog Readiness
+
+Added two live-readiness hardening changes:
+
+- Parent live-canary runner now accepts legacy RunPipe `.env.sdk-live.local` aliases and forwards them to child canaries as canonical `RUNINFRA_*` env names. Reports list only alias names used, not values.
+- `models.list` now fails closed when any configured `RUNINFRA_*_MODEL` canary env value is absent from the live `/v1/models` catalog. Reports still record only request ID and item count, not configured or missing model IDs.
+- Second-opinion review found stale `TEST_PIPELINE_ID` could still appear as a redacted env field when canonical `RUNINFRA_VOICE_PIPELINE_ID` won. Fixed by keeping `TEST_PIPELINE_ID` as an accepted alias but removing it from parent and child report env lists.
+
+Fresh local verification:
+
+- Added failing TS/Python parity tests first; they failed on missing catalog enforcement, then passed after the patch.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test` passed, 130 tests.
+- `python -m pytest python\tests -q` passed, 114 tests plus 105 subtests.
+- `python -m py_compile scripts\sdk-live-canary-python.py scripts\verify-python-package.py` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 mapped surfaces, 45 rows, and 0 uncovered surfaces.
+- `node scripts\run-sdk-live-canaries.mjs --package-source source --report artifacts\sdk\live-canary-source-no-env.json` passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- `pnpm --dir typescript build` and `pnpm --dir typescript pack` passed; npm tarball contents remained limited to changelog, dist, license, package.json, and README.
+- `python -m build python`, `python scripts\verify-python-package.py python\dist`, and `python -m twine check python\dist\*` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `node scripts\verify-clean-installs.mjs --package both --mode artifact` passed.
+- `node scripts\run-sdk-live-canaries.mjs --package-source artifact --report artifacts\sdk\live-canary-artifact-no-env.json` passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- `git diff --check` passed with CRLF warnings only.
+- After the review fix, targeted TS alias/catalog tests passed, targeted Python catalog/surface tests passed, full TS tests passed at 130 tests, full Python tests passed at 114 tests plus 105 subtests, artifact scanners passed, `twine check` passed, clean artifact installs passed, and artifact no-env canaries passed again at TypeScript 19 passed/26 skipped and Python 19 passed/26 skipped.
+
+RunPipe live env evidence:
+
+- Strict preflight using `RunPipe\.env.sdk-live.local` remains blocked: 34 ready rows, 11 blocked rows, 16 missing input groups. Alias names used were `RUNINFRA_LLM_MODEL<=TEST_MODEL`, `RUNINFRA_TTS_TASK_TYPE<=TEST_TTS_TASK_TYPE`, and `RUNINFRA_VOICE_PIPELINE_ID<=TEST_PIPELINE_ID`.
+- Updated strict preflight and source reports no longer include `TEST_PIPELINE_ID` as an env field; it appears only as the alias name used for `RUNINFRA_VOICE_PIPELINE_ID`.
+- Source canary using the same RunPipe env exited non-zero as expected: TypeScript 20 passed/14 failed/11 skipped, Python 20 passed/14 failed/11 skipped.
+- The failed live rows include `models.list`, `models.retrieve.llm`, chat, Responses, streaming, and unsupported-parameter rows. This confirms the SDK now fails readiness when the configured model is not listed by the live catalog.
+- The redacted live report passed the shared forbidden-content scanner and did not contain any long values from the RunPipe env file.
+
+Current blockers remain:
+
+- This proves the catalog readiness gate, not live multimodal GA.
+- The scoped canary workspace still lacks active verified deployments/catalog entries for the configured model, so live LLM/chat/Responses rows fail.
+- Strict live canaries still need deployed and catalog-listed LLM, embeddings, image, TTS, ASR, and voice resources plus deterministic fixtures and idempotency replay evidence.
+- PR #9 still needs non-author approval before protected merge.

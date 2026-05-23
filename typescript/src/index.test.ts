@@ -258,6 +258,23 @@ describe("RunInfra TypeScript SDK", () => {
     expect(pythonCanary).toContain("runinfra-sdk-canary-missing-model");
   });
 
+  it("fails models.list live canaries when configured model ids are absent from the catalog", () => {
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    expect(typescriptCanary).toContain("configuredCanaryModelIds");
+    expect(typescriptCanary).toContain("assertConfiguredModelsListed(response.data)");
+    expect(typescriptCanary).toContain("models.list did not include");
+    expect(typescriptCanary).not.toContain("missing.join");
+    expect(pythonCanary).toContain("configured_canary_model_ids");
+    expect(pythonCanary).toContain('assert_configured_models_listed(response["data"])');
+    expect(pythonCanary).toContain("models.list did not include");
+    expect(pythonCanary).not.toContain("join(missing");
+    expect(liveCanaries).toContain("`models.list` must\ninclude every configured canary model ID");
+    expect(liveCanaries).toContain("Reports record\nonly the item count");
+  });
+
   it("keeps unshipped webhook delivery methods out of artifact and canary public surface", () => {
     const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
@@ -814,6 +831,115 @@ describe("RunInfra TypeScript SDK", () => {
         "RUNINFRA_IMAGE_RESPONSE_FORMAT",
       ]));
       expect(JSON.stringify(report)).not.toContain(fakeKey);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts RunPipe sdk-live TEST aliases in strict preflight without leaking values", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-aliases-"));
+    const reportPath = join(tmp, "readiness.json");
+    try {
+      const fakeKey = "sk-ri-preflight-secret-1234567890";
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: fakeKey,
+          TEST_MODEL: "llm-alias-model",
+          TEST_EMBEDDING_MODEL: "embedding-alias-model",
+          RUNINFRA_EMBEDDING_DIMENSIONS: "384",
+          TEST_IMAGE_MODEL: "image-alias-model",
+          RUNINFRA_IMAGE_SIZE: "1024x1024",
+          RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
+          TEST_TTS_MODEL: "tts-alias-model",
+          TEST_TTS_VOICE: "alloy",
+          RUNINFRA_TTS_RESPONSE_FORMAT: "mp3",
+          TEST_ASR_MODEL: "asr-alias-model",
+          TEST_ASR_FILE: __filename,
+          RUNINFRA_ASR_EXPECTED_TEXT: "hello",
+          RUNINFRA_ASR_LANGUAGE: "en",
+          RUNINFRA_ASR_RESPONSE_FORMAT: "json",
+          TEST_PIPELINE_ID: "pipeline-alias",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "1",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          status?: string;
+          env?: Record<string, string>;
+          missing?: string[];
+          rows?: Array<{ name: string; status: string; missing?: string[] }>;
+          aliases?: Record<string, string[]>;
+        };
+      };
+      expect(report.readiness?.status).toBe("ready");
+      expect(report.readiness?.missing).toEqual([]);
+      expect(report.readiness?.rows?.every((row) => row.status === "ready")).toBe(true);
+      expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
+      expect(report.readiness?.env?.RUNINFRA_ASR_FIXTURE_PATH).toBe("set_redacted");
+      expect(report.readiness?.env?.TEST_PIPELINE_ID).toBeUndefined();
+      expect(report.readiness?.aliases?.RUNINFRA_LLM_MODEL).toContain("TEST_MODEL");
+      expect(report.readiness?.aliases?.RUNINFRA_VOICE_PIPELINE_ID).toContain("TEST_PIPELINE_ID");
+      expect(JSON.stringify(report)).not.toContain(fakeKey);
+      expect(JSON.stringify(report)).not.toContain("llm-alias-model");
+      expect(JSON.stringify(report)).not.toContain("pipeline-alias");
+      expect(JSON.stringify(report)).not.toContain(__filename);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report stale TEST aliases when canonical live-canary env wins", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-canonical-"));
+    const reportPath = join(tmp, "readiness.json");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_LLM_MODEL: "canonical-model",
+          TEST_MODEL: "stale-alias-model",
+          RUNINFRA_VOICE_PIPELINE_ID: "canonical-pipeline",
+          TEST_PIPELINE_ID: "stale-pipeline-alias",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          env?: Record<string, string>;
+          aliases?: Record<string, string[]>;
+        };
+      };
+      expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
+      expect(report.readiness?.env?.RUNINFRA_VOICE_PIPELINE_ID).toBe("set_redacted");
+      expect(report.readiness?.env?.TEST_PIPELINE_ID).toBeUndefined();
+      expect(report.readiness?.aliases?.RUNINFRA_LLM_MODEL).toBeUndefined();
+      expect(report.readiness?.aliases?.RUNINFRA_VOICE_PIPELINE_ID).toBeUndefined();
+      expect(JSON.stringify(report)).not.toContain("canonical-model");
+      expect(JSON.stringify(report)).not.toContain("stale-alias-model");
+      expect(JSON.stringify(report)).not.toContain("canonical-pipeline");
+      expect(JSON.stringify(report)).not.toContain("stale-pipeline-alias");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

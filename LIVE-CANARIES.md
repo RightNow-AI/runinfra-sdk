@@ -69,6 +69,14 @@ development diagnostics.
 | `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1` | Explicit opt-in for repeated idempotency replay test |
 | `RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD` | Optional comma-separated response field paths that prove the second idempotent response was replayed |
 
+The parent runner also accepts legacy RunPipe `.env.sdk-live.local` aliases and
+forwards them to child canaries as canonical `RUNINFRA_*` names without writing
+their values to reports. Supported aliases are `TEST_MODEL`,
+`TEST_EMBEDDING_MODEL`, `TEST_IMAGE_MODEL`, `TEST_TTS_MODEL`,
+`TEST_TTS_VOICE`, `TEST_TTS_REF_AUDIO`, `TEST_TTS_REF_TEXT`,
+`TEST_TTS_TASK_TYPE`, `TEST_ASR_MODEL`, `TEST_ASR_FILE`, and
+`TEST_PIPELINE_ID`. Reports list only which alias names were used.
+
 The native SDK live rows intentionally verify only the OpenAI-compatible
 parameter subset that keeps response shapes stable for the SDK typed helpers.
 Advanced OpenAI parameters that change response envelopes or require
@@ -129,6 +137,10 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `webhooks.verify_signature.export`
 - `webhooks.construct_event.export`
 - `idempotency.replay.responses`
+
+When any `RUNINFRA_*_MODEL` canary variable is configured, `models.list` must
+include every configured canary model ID before the row can pass. Reports record
+only the item count and request ID, not the configured or missing model IDs.
 
 Network success rows assert `x-request-id` exposure and the relevant
 OpenAI-compatible envelope fields: models list object plus data array, chat

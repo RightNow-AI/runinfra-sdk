@@ -223,6 +223,28 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn('record("error.model.not_found"', python_canary)
         self.assertIn("runinfra-sdk-canary-missing-model", python_canary)
 
+    def test_models_list_canary_fails_when_configured_model_is_absent_from_catalog(self):
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        self.assertIn("configuredCanaryModelIds", typescript_canary)
+        self.assertIn("assertConfiguredModelsListed(response.data)", typescript_canary)
+        self.assertIn("models.list did not include", typescript_canary)
+        self.assertNotIn("missing.join", typescript_canary)
+        self.assertIn("configured_canary_model_ids", python_canary)
+        self.assertIn('assert_configured_models_listed(response["data"])', python_canary)
+        self.assertIn("models.list did not include", python_canary)
+        self.assertNotIn("join(missing", python_canary)
+        self.assertIn("`models.list` must\ninclude every configured canary model ID", live_canaries)
+        self.assertIn("Reports record\nonly the item count", live_canaries)
+        typescript_report_env = typescript_canary.split("const relevantEnv = [", 1)[1].split("];", 1)[0]
+        python_report_env = python_canary.split("relevant_env = [", 1)[1].split("]", 1)[0]
+        self.assertNotIn('"TEST_PIPELINE_ID"', typescript_report_env)
+        self.assertNotIn('"TEST_PIPELINE_ID"', python_report_env)
+        self.assertIn('firstEnv("RUNINFRA_VOICE_PIPELINE_ID", "TEST_PIPELINE_ID")', typescript_canary)
+        self.assertIn('first_env("RUNINFRA_VOICE_PIPELINE_ID", "TEST_PIPELINE_ID")', python_canary)
+
     def test_webhook_delivery_methods_are_absent_from_artifact_and_canary_public_surface(self):
         runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
         typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
@@ -380,6 +402,9 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("RunInfraStream[Symbol.asyncIterator]", runner)
         self.assertIn("RunInfraStream.__iter__", runner)
         self.assertIn("surfaceCoverageFailureReport", runner)
+        self.assertIn("canonicalEnvAliases", runner)
+        self.assertIn("TEST_MODEL", runner)
+        self.assertIn("TEST_ASR_FILE", runner)
 
     def test_python_live_canary_validates_slow_consumer_delay_before_opening_stream(self):
         canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")

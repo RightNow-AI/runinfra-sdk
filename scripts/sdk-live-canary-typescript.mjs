@@ -454,7 +454,6 @@ const relevantEnv = [
   "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE",
   "RUNINFRA_ASR_EXPECTED_TEXT",
   "RUNINFRA_PIPELINE_API_KEY",
-  "TEST_PIPELINE_ID",
   "RUNINFRA_VOICE_PIPELINE_ID",
   "RUNINFRA_VOICE_PIPELINE_API_KEY",
   "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH",
@@ -496,6 +495,30 @@ const pipelineId = firstEnv("RUNINFRA_VOICE_PIPELINE_ID", "TEST_PIPELINE_ID");
 const pipelineApiKey = firstEnv("RUNINFRA_VOICE_PIPELINE_API_KEY", "RUNINFRA_PIPELINE_API_KEY", "RUNINFRA_API_KEY");
 const missingModelId = "runinfra-sdk-canary-missing-model";
 const ttsResponseFormats = ["mp3", "opus", "aac", "flac", "wav", "pcm"];
+
+function configuredCanaryModelIds() {
+  return [
+    llmModel,
+    embeddingModel,
+    imageModel,
+    ttsModel,
+    asrModel,
+  ].filter((value, index, values) => value && values.indexOf(value) === index);
+}
+
+function assertConfiguredModelsListed(models) {
+  const expected = configuredCanaryModelIds();
+  if (!expected.length) return;
+  const listed = new Set(
+    models
+      .map((model) => (model && typeof model.id === "string" ? model.id : undefined))
+      .filter(Boolean),
+  );
+  const missingCount = expected.filter((modelId) => !listed.has(modelId)).length;
+  if (missingCount) {
+    throw new Error(`models.list did not include ${missingCount} configured canary model(s)`);
+  }
+}
 
 function client(options = {}) {
   return new RunInfra({
@@ -819,6 +842,7 @@ await record("models.list", ["RUNINFRA_API_KEY"], async () => {
   const response = await client().models.list();
   assertObject(response, "models.list response");
   assertJsonArray(response.data, "models.list data");
+  assertConfiguredModelsListed(response.data);
   assertRequestId(response._request_id, "models.list");
   return { requestId: response._request_id, itemCount: response.data.length };
 });

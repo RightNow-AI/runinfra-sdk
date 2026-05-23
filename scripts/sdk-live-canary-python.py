@@ -656,7 +656,6 @@ def main() -> int:
         "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE",
         "RUNINFRA_ASR_EXPECTED_TEXT",
         "RUNINFRA_PIPELINE_API_KEY",
-        "TEST_PIPELINE_ID",
         "RUNINFRA_VOICE_PIPELINE_ID",
         "RUNINFRA_VOICE_PIPELINE_API_KEY",
         "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH",
@@ -812,8 +811,38 @@ def _models_list(client: RunInfra) -> Dict[str, Any]:
     response = client.models.list()
     assert_object(response, "models.list response")
     assert_json_array(response.get("data"), "models.list data")
+    assert_configured_models_listed(response["data"])
     assert_request_id(response.get("_request_id"), "models.list")
     return {"requestId": response.get("_request_id"), "itemCount": len(response["data"])}
+
+
+def configured_canary_model_ids() -> List[str]:
+    values = [
+        env("RUNINFRA_LLM_MODEL"),
+        env("RUNINFRA_EMBEDDING_MODEL"),
+        env("RUNINFRA_IMAGE_MODEL"),
+        env("RUNINFRA_TTS_MODEL"),
+        env("RUNINFRA_ASR_MODEL"),
+    ]
+    output: List[str] = []
+    for value in values:
+        if value and value not in output:
+            output.append(value)
+    return output
+
+
+def assert_configured_models_listed(models: Any) -> None:
+    expected = configured_canary_model_ids()
+    if not expected:
+        return
+    listed = {
+        entry.get("id")
+        for entry in models
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+    }
+    missing_count = sum(1 for model_id in expected if model_id not in listed)
+    if missing_count:
+        raise AssertionError(f"models.list did not include {missing_count} configured canary model(s)")
 
 
 def _model_retrieve(client: RunInfra, model: str) -> Dict[str, Any]:
