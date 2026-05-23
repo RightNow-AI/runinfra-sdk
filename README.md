@@ -97,6 +97,11 @@ Verify the npm package:
 npm view @runinfra/sdk@latest dist.attestations
 ```
 
+Verify registry install/import for an exact release:
+```bash
+node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>
+```
+
 Verify the PyPI release:
 - Go to https://pypi.org/project/runinfra/ -> Releases -> click a version ->
   see the Trusted Publisher chain.
