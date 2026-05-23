@@ -169,9 +169,12 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("`openai.params.responses`");
     expect(readme).toContain("`openai.params.embeddings`");
     expect(readme).toContain("`openai.params.images`");
+    expect(readme).toContain("`openai.params.audio.speech`");
     expect(readme).toContain("`openai.params.audio.transcriptions`");
     expect(liveCanaries).toContain("openai.params.images");
+    expect(liveCanaries).toContain("openai.params.audio.speech");
     expect(liveCanaries).toContain("openai.params.audio.transcriptions");
+    expect(liveCanaries).toContain("RUNINFRA_TTS_RESPONSE_FORMAT");
     expect(liveCanaries).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
     expect(liveCanaries).toContain("Optional for the base ASR row; required for the OpenAI ASR parameter row");
     expect(readme).toContain("dimension control");
@@ -181,13 +184,24 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("error.body.unsupported_parameter");
   });
 
-  it("keeps child canaries in parity for ASR OpenAI parameter coverage", () => {
+  it("keeps child canaries in parity for audio OpenAI parameter coverage", () => {
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
     const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
 
+    expect(typescriptCanary).toContain('record("openai.params.audio.speech"');
+    expect(typescriptCanary).toContain("RUNINFRA_TTS_RESPONSE_FORMAT");
+    expect(typescriptCanary).toContain('["mp3", "opus", "aac", "flac", "wav", "pcm"]');
+    expect(typescriptCanary).toContain("speechRequest(input, options = {})");
+    expect(typescriptCanary).toContain("options.responseFormat");
+    expect(typescriptCanary).toContain('responseFormat: "set_redacted"');
     expect(typescriptCanary).toContain('record("openai.params.audio.transcriptions"');
     expect(typescriptCanary).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
     expect(typescriptCanary).toContain("response_format: responseFormat");
+    expect(pythonCanary).toContain('"openai.params.audio.speech"');
+    expect(pythonCanary).toContain("RUNINFRA_TTS_RESPONSE_FORMAT");
+    expect(pythonCanary).toContain('{"mp3", "opus", "aac", "flac", "wav", "pcm"}');
+    expect(pythonCanary).toContain("response_format: Optional[str] = None");
+    expect(pythonCanary).toContain('"responseFormat": "set_redacted"');
     expect(pythonCanary).toContain('"openai.params.audio.transcriptions"');
     expect(pythonCanary).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
     expect(pythonCanary).toContain("response_format=response_format");
@@ -382,6 +396,48 @@ describe("RunInfra TypeScript SDK", () => {
         "RUNINFRA_TTS_MODEL",
         "RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT",
       ]));
+      expect(report.expectedRows).toContain("openai.params.audio.speech");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.audio.speech")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_TTS_MODEL",
+        "RUNINFRA_TTS_RESPONSE_FORMAT",
+        "RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT",
+      ]));
+
+      const invalidFormatReportPath = join(tmp, "invalid-tts-format.json");
+      const invalidFormatResult = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        invalidFormatReportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: fakeKey,
+          RUNINFRA_LLM_MODEL: "llm-preflight-model",
+          RUNINFRA_TTS_MODEL: "tts-preflight-model",
+          RUNINFRA_TTS_VOICE: "voice-preflight",
+          RUNINFRA_TTS_RESPONSE_FORMAT: "json",
+          RUNINFRA_ASR_MODEL: "",
+          RUNINFRA_ASR_FIXTURE_PATH: "",
+          RUNINFRA_ASR_EXPECTED_TEXT: "",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "",
+        },
+      });
+      expect(invalidFormatResult.status).toBe(1);
+      const invalidFormatReport = JSON.parse(readFileSync(invalidFormatReportPath, "utf8")) as {
+        readiness?: { rows?: Array<{ name: string; missing?: string[] }> };
+      };
+      expect(
+        invalidFormatReport.readiness?.rows?.find((row) => row.name === "openai.params.audio.speech")?.missing,
+      ).toContain("RUNINFRA_TTS_RESPONSE_FORMAT mp3, opus, aac, flac, wav, or pcm");
+      expect(JSON.stringify(invalidFormatReport)).not.toContain("json");
       expect(report.expectedRows).toContain("openai.params.images");
       expect(
         report.readiness?.rows?.find((row) => row.name === "openai.params.images")?.missing,

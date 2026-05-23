@@ -27,6 +27,7 @@ const expectedRows = [
   "images.generate",
   "openai.params.images",
   "audio.speech.create",
+  "openai.params.audio.speech",
   "audio.speech.binary_interfaces",
   "audio.transcriptions.create",
   "openai.params.audio.transcriptions",
@@ -104,6 +105,7 @@ const relevantEnv = [
   "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY",
   "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD",
 ];
+const ttsResponseFormats = ["mp3", "opus", "aac", "flac", "wav", "pcm"];
 
 function missingEnv(names) {
   return names.filter((name) => !env(name));
@@ -159,6 +161,14 @@ function speechRequirements() {
   return missing;
 }
 
+function ttsResponseFormatRequirement() {
+  const value = env("RUNINFRA_TTS_RESPONSE_FORMAT");
+  if (!value) return ["RUNINFRA_TTS_RESPONSE_FORMAT"];
+  return ttsResponseFormats.includes(value)
+    ? []
+    : ["RUNINFRA_TTS_RESPONSE_FORMAT mp3, opus, aac, flac, wav, or pcm"];
+}
+
 function imageResponseFormatRequirement() {
   const value = env("RUNINFRA_IMAGE_RESPONSE_FORMAT");
   if (!value) return ["RUNINFRA_IMAGE_RESPONSE_FORMAT"];
@@ -212,6 +222,10 @@ const rowReadinessRequirements = [
     ...imageResponseFormatRequirement(),
   ]],
   ["audio.speech.create", speechRequirements],
+  ["openai.params.audio.speech", () => [
+    ...speechRequirements(),
+    ...ttsResponseFormatRequirement(),
+  ]],
   ["audio.speech.binary_interfaces", speechRequirements],
   ["audio.transcriptions.create", () => [
     ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL", "RUNINFRA_ASR_EXPECTED_TEXT"]),

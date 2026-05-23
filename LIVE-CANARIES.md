@@ -46,7 +46,7 @@ development diagnostics.
 | `RUNINFRA_TTS_REF_AUDIO` | Reference-audio URL/string, if the deployment uses voice cloning |
 | `RUNINFRA_TTS_REF_TEXT` | Reference transcript for `RUNINFRA_TTS_REF_AUDIO` |
 | `RUNINFRA_TTS_TASK_TYPE` | Optional TTS task type, defaults to `Base` |
-| `RUNINFRA_TTS_RESPONSE_FORMAT` | Optional TTS output format |
+| `RUNINFRA_TTS_RESPONSE_FORMAT` | Optional for base TTS rows; required for the OpenAI TTS parameter row. Must be `mp3`, `opus`, `aac`, `flac`, `wav`, or `pcm` |
 | `RUNINFRA_ASR_MODEL` | Model for ASR row |
 | `RUNINFRA_ASR_LANGUAGE` | Optional for the base ASR row; required for the OpenAI ASR parameter row |
 | `RUNINFRA_ASR_RESPONSE_FORMAT` | `json` or `verbose_json` for the OpenAI ASR parameter row |
@@ -91,6 +91,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `images.generate`
 - `openai.params.images`
 - `audio.speech.create`
+- `openai.params.audio.speech`
 - `audio.speech.binary_interfaces`
 - `audio.transcriptions.create`
 - `openai.params.audio.transcriptions`
@@ -119,10 +120,13 @@ OpenAI parameter rows prove chat
 sampling and metadata pass-through, Responses instructions, metadata,
 temperature, output-token controls, embeddings `encoding_format: "float"` plus
 `dimensions`, exact image `response_format` output matching while sending an
-explicit image `size` to the backend, and ASR `language`, fixed `prompt`, plus
-`response_format` request handling. The ASR parameter row does not claim the
-language hint changed model behavior; it requires the transcript match and, for
-`verbose_json`, at least one verbose response field.
+explicit image `size` to the backend, TTS `response_format` request handling
+with a non-JSON binary audio response, and ASR `language`, fixed `prompt`, plus
+`response_format` request handling. The TTS parameter row does not claim exact
+codec or content-type matching because deployments expose model-specific output
+formats. The ASR parameter row does not claim the language hint changed model
+behavior; it requires the transcript match and, for `verbose_json`, at least one
+verbose response field.
 Unsupported SDK request options and webhook delivery rows must fail closed
 without sending a network request. Webhook verification rows exercise both
 client-attached helpers and top-level package exports. The unsupported

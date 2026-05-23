@@ -402,6 +402,7 @@ const ttsModel = env("RUNINFRA_TTS_MODEL");
 const asrModel = env("RUNINFRA_ASR_MODEL");
 const pipelineId = firstEnv("RUNINFRA_VOICE_PIPELINE_ID", "TEST_PIPELINE_ID");
 const pipelineApiKey = firstEnv("RUNINFRA_VOICE_PIPELINE_API_KEY", "RUNINFRA_PIPELINE_API_KEY", "RUNINFRA_API_KEY");
+const ttsResponseFormats = ["mp3", "opus", "aac", "flac", "wav", "pcm"];
 
 function client(options = {}) {
   return new RunInfra({
@@ -444,19 +445,30 @@ function asrResponseFormat() {
   return responseFormat;
 }
 
+function ttsResponseFormat() {
+  const responseFormat = env("RUNINFRA_TTS_RESPONSE_FORMAT");
+  if (!responseFormat) {
+    throw new Error("RUNINFRA_TTS_RESPONSE_FORMAT missing");
+  }
+  if (!ttsResponseFormats.includes(responseFormat)) {
+    throw new Error("RUNINFRA_TTS_RESPONSE_FORMAT must be mp3, opus, aac, flac, wav, or pcm");
+  }
+  return responseFormat;
+}
+
 function speechRequirements() {
   const missing = ["RUNINFRA_API_KEY", "RUNINFRA_TTS_MODEL"].filter((name) => !env(name));
   if (!speechVoicePayload()) missing.push("RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT");
   return missing;
 }
 
-function speechRequest(input) {
+function speechRequest(input, options = {}) {
   const request = {
     model: ttsModel,
     input,
     ...speechVoicePayload(),
   };
-  if (env("RUNINFRA_TTS_RESPONSE_FORMAT")) request.response_format = env("RUNINFRA_TTS_RESPONSE_FORMAT");
+  if (options.responseFormat) request.response_format = options.responseFormat;
   return request;
 }
 
@@ -753,6 +765,28 @@ await record("audio.speech.create", speechRequirements, async () => {
   assertAudioContentType(response.contentType, "audio.speech.create");
   assertRequestId(response.requestId, "audio.speech.create");
   return { requestId: response.requestId, contentType: response.contentType, byteLength: bytes.length };
+});
+
+await record("openai.params.audio.speech", () => [
+  ...speechRequirements(),
+  ...(env("RUNINFRA_TTS_RESPONSE_FORMAT") ? [] : ["RUNINFRA_TTS_RESPONSE_FORMAT"]),
+], async () => {
+  const responseFormat = ttsResponseFormat();
+  const request = speechRequest("RunInfra SDK TTS parameter canary.", { responseFormat });
+  if (request.response_format !== responseFormat) {
+    throw new Error("TTS parameter request did not include response_format");
+  }
+  const response = await client().audio.speech.create(request);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length === 0) throw new Error("TTS params response was empty");
+  assertAudioContentType(response.contentType, "openai.params.audio.speech");
+  assertRequestId(response.requestId, "openai.params.audio.speech");
+  return {
+    requestId: response.requestId,
+    responseFormat: "set_redacted",
+    contentType: response.contentType,
+    byteLength: bytes.length,
+  };
 });
 
 await record("audio.speech.binary_interfaces", speechRequirements, async () => {

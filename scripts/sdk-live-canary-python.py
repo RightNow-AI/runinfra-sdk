@@ -28,6 +28,8 @@ from runinfra import (  # noqa: E402
     verify_webhook_signature,
 )
 
+TTS_RESPONSE_FORMATS = {"mp3", "opus", "aac", "flac", "wav", "pcm"}
+
 
 def env(name: str) -> Optional[str]:
     value = os.environ.get(name, "").strip()
@@ -402,7 +404,6 @@ def main() -> int:
         "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY",
         "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD",
     ]
-
     api_key = env("RUNINFRA_API_KEY")
     base_url = env("RUNINFRA_BASE_URL") or "https://api.runinfra.ai/v1"
     llm_model = env("RUNINFRA_LLM_MODEL")
@@ -469,6 +470,14 @@ def main() -> int:
         lambda: _images_params(client(), image_model),
     )
     record("audio.speech.create", lambda: _speech_requirements(), lambda: _speech_create(client(), tts_model))
+    record(
+        "openai.params.audio.speech",
+        lambda: [
+            *_speech_requirements(),
+            *(["RUNINFRA_TTS_RESPONSE_FORMAT"] if not env("RUNINFRA_TTS_RESPONSE_FORMAT") else []),
+        ],
+        lambda: _speech_params(client(), tts_model),
+    )
     record("audio.speech.binary_interfaces", lambda: _speech_requirements(), lambda: _speech_binary_interfaces(client(), tts_model))
     record(
         "audio.transcriptions.create",
@@ -721,6 +730,15 @@ def _asr_response_format() -> str:
     return response_format
 
 
+def _tts_response_format() -> str:
+    response_format = env("RUNINFRA_TTS_RESPONSE_FORMAT")
+    if not response_format:
+        raise AssertionError("RUNINFRA_TTS_RESPONSE_FORMAT missing")
+    if response_format not in TTS_RESPONSE_FORMATS:
+        raise AssertionError("RUNINFRA_TTS_RESPONSE_FORMAT must be mp3, opus, aac, flac, wav, or pcm")
+    return response_format
+
+
 def _images_params(client: RunInfra, model: str) -> Dict[str, Any]:
     response_format = _image_response_format()
     response = client.images.generate(
@@ -744,14 +762,14 @@ def _speech_requirements() -> List[str]:
     return missing_items
 
 
-def _speech_request(model: str, input_text: str) -> Dict[str, Any]:
+def _speech_request(model: str, input_text: str, response_format: Optional[str] = None) -> Dict[str, Any]:
     request: Dict[str, Any] = {
         "model": model,
         "input": input_text,
         **(speech_voice_payload() or {}),
     }
-    if env("RUNINFRA_TTS_RESPONSE_FORMAT"):
-        request["response_format"] = env("RUNINFRA_TTS_RESPONSE_FORMAT")
+    if response_format:
+        request["response_format"] = response_format
     return request
 
 
@@ -763,6 +781,24 @@ def _speech_create(client: RunInfra, model: str) -> Dict[str, Any]:
     assert_audio_content_type(response.content_type, "audio.speech.create")
     assert_request_id(response.request_id, "audio.speech.create")
     return {"requestId": response.request_id, "contentType": response.content_type, "byteLength": len(response.content)}
+
+
+def _speech_params(client: RunInfra, model: str) -> Dict[str, Any]:
+    response_format = _tts_response_format()
+    request = _speech_request(model, "RunInfra SDK TTS parameter canary.", response_format=response_format)
+    if request.get("response_format") != response_format:
+        raise AssertionError("TTS parameter request did not include response_format")
+    response = client.audio.speech.create(**request)
+    if not response.content:
+        raise AssertionError("TTS params response was empty")
+    assert_audio_content_type(response.content_type, "openai.params.audio.speech")
+    assert_request_id(response.request_id, "openai.params.audio.speech")
+    return {
+        "requestId": response.request_id,
+        "responseFormat": "set_redacted",
+        "contentType": response.content_type,
+        "byteLength": len(response.content),
+    }
 
 
 def _speech_binary_interfaces(client: RunInfra, model: str) -> Dict[str, Any]:

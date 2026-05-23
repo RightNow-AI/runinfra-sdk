@@ -124,8 +124,11 @@ pass before GA. These rows will be treated as verified only after the strict liv
 `openai.params.chat.completions`, `openai.params.responses`, and
 `openai.params.embeddings`, plus the live-gated `openai.params.images` row for
 exact output-format coverage while sending an explicit image size to the
-backend, and the live-gated `openai.params.audio.transcriptions` row for ASR
-`language`, `prompt`, and `response_format` request coverage.
+backend, the live-gated `openai.params.audio.speech` row for TTS
+`response_format` request coverage with binary audio output using `mp3`,
+`opus`, `aac`, `flac`, `wav`, or `pcm`, and the live-gated
+`openai.params.audio.transcriptions` row for ASR `language`, `prompt`, and
+`response_format` request coverage.
 
 Live-gated native SDK subset:
 

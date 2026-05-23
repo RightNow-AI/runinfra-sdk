@@ -172,3 +172,32 @@ Current blockers remain:
 
 - This does not prove live ASR parameter support until `RUNINFRA_ASR_MODEL`, `RUNINFRA_ASR_LANGUAGE`, `RUNINFRA_ASR_RESPONSE_FORMAT`, `RUNINFRA_ASR_FIXTURE_PATH`, and `RUNINFRA_ASR_EXPECTED_TEXT` are supplied for a deployed ASR backend.
 - Strict live canaries still require scoped production canary env and fixtures for the broader multimodal matrix.
+
+## 2026-05-23 Agent 4 Checkpoint: TTS OpenAI Parameter Canary Coverage
+
+Added a strict TTS parameter row for OpenAI-compatible audio speech coverage:
+
+- New row: `openai.params.audio.speech`.
+- Strict readiness now requires `RUNINFRA_TTS_RESPONSE_FORMAT` for this parameter-specific row.
+- The response format is allowlisted to OpenAI speech values: `mp3`, `opus`, `aac`, `flac`, `wav`, or `pcm`.
+- TypeScript and Python canaries now send `response_format` only in the dedicated parameter row, so base `audio.speech.create` and `audio.speech.binary_interfaces` remain isolated baseline TTS proof.
+- The parameter row requires a non-empty non-JSON binary audio response and request ID exposure.
+- Canary reports record `responseFormat: set_redacted`, request ID, content type, and byte length; they do not write the requested response-format value, prompt text beyond static canary code, or audio bytes.
+- Docs now describe the row as live-gated TTS `response_format` request coverage without claiming exact codec or content-type matching.
+
+Fresh local verification:
+
+- Added failing TS/Python docs, child-canary parity, and strict preflight assertions first; they failed on the missing TTS parameter row.
+- TS tests passed, 114 tests.
+- Python tests passed, 101 tests plus 88 subtests.
+- TS typecheck and build passed.
+- Workflow policy, version sync, Python canary syntax, and `git diff --check` passed.
+- Source canary report passed parity: TypeScript 8 passed/22 skipped, Python 8 passed/22 skipped, expected rows 30.
+- Strict preflight remains intentionally blocked: 8 ready rows and 22 blocked rows.
+- Review found two important issues: TTS response format needed an OpenAI allowlist, and the parameter row needed isolation from base TTS rows. Both were fixed.
+- Security review found the same indirect leak risk through response format/content type; allowlisting plus redacted response-format evidence addresses it.
+
+Current blockers remain:
+
+- This does not prove live TTS parameter support until `RUNINFRA_TTS_MODEL`, valid voice/reference inputs, and a valid `RUNINFRA_TTS_RESPONSE_FORMAT` are supplied for a deployed TTS backend.
+- Strict live canaries still require scoped production canary env and fixtures for the broader multimodal matrix.
