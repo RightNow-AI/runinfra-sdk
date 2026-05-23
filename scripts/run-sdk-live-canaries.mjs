@@ -107,6 +107,20 @@ function positiveIntegerRequirement(name) {
   return /^[1-9][0-9]*$/u.test(value) ? [] : [`${name} positive integer`];
 }
 
+function optionalPositiveNumberRequirement(name) {
+  const value = env(name);
+  if (!value) return [];
+  const parsed = Number(value);
+  if (
+    !/^(?:[1-9][0-9]*|0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*\.[0-9]+)$/u.test(value) ||
+    !Number.isFinite(parsed) ||
+    parsed <= 0
+  ) {
+    return [`${name} positive finite number`];
+  }
+  return [];
+}
+
 function readableNonEmptyFileRequirement(name) {
   const value = env(name);
   if (!value) return [name];
@@ -193,15 +207,16 @@ const rowReadinessRequirements = [
 ];
 
 function buildReadiness() {
+  const globalMissing = optionalPositiveNumberRequirement("RUNINFRA_CANARY_TIMEOUT_SECONDS");
   const rows = rowReadinessRequirements.map(([name, requirements]) => {
-    const missing = requirements();
+    const missing = [...globalMissing, ...requirements()];
     return {
       name,
       status: missing.length ? "blocked" : "ready",
       missing,
     };
   });
-  const missing = [...new Set(rows.flatMap((row) => row.missing))].sort();
+  const missing = [...new Set([...globalMissing, ...rows.flatMap((row) => row.missing)])].sort();
   return {
     status: missing.length ? "blocked" : "ready",
     env: redactedEnv(relevantEnv),

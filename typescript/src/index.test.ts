@@ -232,6 +232,62 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).not.toContain("RUNINFRA_SDK_CI_TOKEN");
   });
 
+  it("fails workflow policy when either publish job loses OIDC permission", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+
+    for (const jobName of ["publish-npm", "publish-pypi"]) {
+      const mutatedPublish = publish.replace(
+        new RegExp(`(\\n  ${jobName}:[\\s\\S]*?\\n    permissions:[\\s\\S]*?\\n      id-token:\\s*)write`, "u"),
+        "$1none",
+      );
+      expect(mutatedPublish).not.toBe(publish);
+
+      const checks = evaluateWorkflowPolicy({
+        publish: mutatedPublish,
+        ci,
+        hasCustomCodeqlWorkflow: false,
+      });
+
+      expect(checks.find((check) => check.label === "publish jobs request OIDC id-token permission")?.ok)
+        .toBe(false);
+    }
+    expect(
+      readFileSync(new URL("../../scripts/verify-workflow-policy.mjs", import.meta.url), "utf8"),
+    ).not.toContain("RUNINFRA_WORKFLOW_POLICY");
+  });
+
+  it("pins registry clean-install checks to canonical npm and PyPI indexes", async () => {
+    const { canonicalRegistryInstallEnv, npmRegistryInstallArgs, pythonRegistryInstallArgs } =
+      await import("../../scripts/clean-install-policy.mjs");
+    const env = canonicalRegistryInstallEnv({
+      npm_config_registry: "http://127.0.0.1:9/",
+      NPM_CONFIG_REGISTRY: "http://127.0.0.1:9/",
+      PIP_INDEX_URL: "http://127.0.0.1:9/simple",
+      PIP_EXTRA_INDEX_URL: "http://127.0.0.1:9/extra",
+      PIP_NO_INDEX: "1",
+      PIP_FIND_LINKS: "file:///tmp/packages",
+    });
+
+    expect(npmRegistryInstallArgs("0.1.3")).toContain("--registry=https://registry.npmjs.org/");
+    expect(pythonRegistryInstallArgs("0.1.3")).toEqual([
+      "-m",
+      "pip",
+      "install",
+      "--index-url",
+      "https://pypi.org/simple",
+      "--no-deps",
+      "runinfra==0.1.3",
+    ]);
+    expect(env.npm_config_registry).toBe("https://registry.npmjs.org/");
+    expect(env.NPM_CONFIG_REGISTRY).toBe("https://registry.npmjs.org/");
+    expect(env.PIP_INDEX_URL).toBe("https://pypi.org/simple");
+    expect(env.PIP_EXTRA_INDEX_URL).toBe("");
+    expect("PIP_NO_INDEX" in env).toBe(false);
+    expect("PIP_FIND_LINKS" in env).toBe(false);
+  });
+
   it("writes a redacted strict live-canary preflight report without running live calls", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
     const reportPath = join(tmp, "readiness.json");
@@ -337,6 +393,53 @@ describe("RunInfra TypeScript SDK", () => {
       ).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks strict live-canary preflight on invalid timeout readiness inputs", () => {
+    for (const timeout of ["not-a-positive-number", "1".repeat(400)]) {
+      const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
+      const reportPath = join(tmp, "readiness.json");
+      try {
+        const result = spawnSync(process.execPath, [
+          "../scripts/run-sdk-live-canaries.mjs",
+          "--preflight",
+          "--strict",
+          "--package-source",
+          "source",
+          "--report",
+          reportPath,
+        ], {
+          cwd: new URL("..", import.meta.url),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            RUNINFRA_API_KEY: "sk-ri-preflight-secret-1234567890",
+            RUNINFRA_CANARY_TIMEOUT_SECONDS: timeout,
+            RUNINFRA_LLM_MODEL: "llm-preflight-model",
+            RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
+            RUNINFRA_EMBEDDING_DIMENSIONS: "128",
+            RUNINFRA_IMAGE_MODEL: "image-preflight-model",
+            RUNINFRA_TTS_MODEL: "tts-preflight-model",
+            RUNINFRA_TTS_VOICE: "voice-preflight",
+            RUNINFRA_ASR_MODEL: "asr-preflight-model",
+            RUNINFRA_ASR_FIXTURE_PATH: __filename,
+            RUNINFRA_ASR_EXPECTED_TEXT: "hello",
+            TEST_PIPELINE_ID: "pipeline-preflight",
+            RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "1",
+          },
+        });
+
+        expect(result.status).toBe(1);
+        const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+          readiness?: {
+            missing?: string[];
+          };
+        };
+        expect(report.readiness?.missing).toContain("RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number");
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
     }
   });
 

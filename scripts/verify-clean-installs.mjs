@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { canonicalRegistryInstallEnv, npmRegistryInstallArgs, pythonRegistryInstallArgs } from "./clean-install-policy.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -76,14 +77,16 @@ function sleepMs(delayMs) {
 }
 
 function run(command, commandArgs, cwd, options = {}) {
+  const childEnv = {
+    ...process.env,
+    npm_config_audit: "false",
+    npm_config_fund: "false",
+    PIP_DISABLE_PIP_VERSION_CHECK: "1",
+  };
+  const env = mode === "registry" ? canonicalRegistryInstallEnv(childEnv) : childEnv;
   const result = spawnSync(command, commandArgs, {
     cwd,
-    env: {
-      ...process.env,
-      npm_config_audit: "false",
-      npm_config_fund: "false",
-      PIP_DISABLE_PIP_VERSION_CHECK: "1",
-    },
+    env,
     stdio: "inherit",
   });
   if (result.error || result.status !== 0) {
@@ -152,15 +155,17 @@ function verifyNpm(workspace) {
     : resolve(optionValue("--npm-tarball") ?? newestMatching("typescript", /^runinfra-sdk-.+\.tgz$/u, "npm"));
 
   const npm = npmCommand();
-  runRegistryInstall(npm.command, [
-    ...npm.prefixArgs,
-    "install",
-    "--ignore-scripts",
-    "--no-audit",
-    "--no-fund",
-    "--package-lock=false",
-    installSpec,
-  ], npmDir, "npm");
+  const installArgs = mode === "registry"
+    ? npmRegistryInstallArgs(version)
+    : [
+        "install",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--package-lock=false",
+        installSpec,
+      ];
+  runRegistryInstall(npm.command, [...npm.prefixArgs, ...installArgs], npmDir, "npm");
   run(process.execPath, ["--input-type=module", "-e", `
 import { RUNINFRA_SDK_VERSION, RunInfra, UnsupportedOperationError } from "@runinfra/sdk";
 if (RUNINFRA_SDK_VERSION !== "${version}") {
@@ -206,7 +211,7 @@ function verifyPython(workspace) {
   run(hostPython, ["-m", "venv", venvDir], pythonDir);
   const python = pythonExecutable(venvDir);
   const installArgs = mode === "registry"
-    ? ["-m", "pip", "install", "--no-deps", `runinfra==${version}`]
+    ? pythonRegistryInstallArgs(version)
     : [
         "-m",
         "pip",

@@ -45,3 +45,27 @@ Inspect git/PR/checks before claims. Fix only GA-linked contract, security, pack
 ## Next Checkpoint
 
 Collect strict production canary env/fixtures, then rerun preflight and artifact canaries until every required SDK path is proven.
+
+## 2026-05-23 Agent 4 Checkpoint
+
+Added release-gate hardening:
+
+- Strict preflight now blocks invalid or non-finite `RUNINFRA_CANARY_TIMEOUT_SECONDS` before live canaries run.
+- Workflow policy now checks npm and PyPI publish jobs separately for OIDC `id-token: write` and environment mapping, while the CLI verifier always reads the real workflow files.
+- Registry clean-install verification now pins npm to `https://registry.npmjs.org/` and PyPI to `https://pypi.org/simple` instead of inheriting alternate indexes; polluted local registry env was tested.
+
+Fresh local verification:
+
+- TS tests passed, 112 tests.
+- Python tests passed, 101 tests plus 88 subtests.
+- TS typecheck/build passed.
+- Workflow policy and version sync passed.
+- Registry install/import passed for npm/PyPI version `0.1.3`.
+- Code scanning open alerts: 0. Open high/critical alerts: 0.
+- Second-opinion review initially blocked on non-finite timeout and redirectable workflow-file env hooks; both were fixed.
+
+Current blockers remain:
+
+- PR #9 is still blocked by `REVIEW_REQUIRED`.
+- Strict preflight is blocked: 6 ready rows, 18 blocked rows, no child reports.
+- Missing live inputs still include API key, model IDs, embedding dimensions, image/TTS/ASR/voice fixtures, expected transcripts, pipeline ID/key, and idempotency opt-in.
