@@ -165,7 +165,21 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn('`encoding_format` values other than `"float"`', readme)
         self.assertIn('`response_format` values other than `"json"` or `"verbose_json"`', readme)
         self.assertIn("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx", readme)
+        self.assertIn("error.model.not_found", live_canaries)
         self.assertIn("error.body.unsupported_parameter", live_canaries)
+
+    def test_child_canaries_cover_live_model_not_found_error_mapping(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+
+        self.assertIn('"error.model.not_found"', runner)
+        self.assertIn("ModelNotFoundError", typescript_canary)
+        self.assertIn('record("error.model.not_found"', typescript_canary)
+        self.assertIn("runinfra-sdk-canary-missing-model", typescript_canary)
+        self.assertIn("ModelNotFoundError", python_canary)
+        self.assertIn('record("error.model.not_found"', python_canary)
+        self.assertIn("runinfra-sdk-canary-missing-model", python_canary)
 
     def test_readme_documents_local_request_payload_validation_before_sending(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()

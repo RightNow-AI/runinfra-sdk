@@ -21,6 +21,7 @@ if os.environ.get("RUNINFRA_CANARY_PYTHON_IMPORT_MODE") != "installed":
 from runinfra import (  # noqa: E402
     __version__,
     AuthenticationError,
+    ModelNotFoundError,
     PermissionDeniedError,
     RunInfra,
     UnsupportedOperationError,
@@ -29,6 +30,7 @@ from runinfra import (  # noqa: E402
 )
 
 TTS_RESPONSE_FORMATS = {"mp3", "opus", "aac", "flac", "wav", "pcm"}
+MISSING_MODEL_ID = "runinfra-sdk-canary-missing-model"
 
 
 def env(name: str) -> Optional[str]:
@@ -498,6 +500,7 @@ def main() -> int:
     )
     record("voice.pipeline.create", lambda: _voice_requirements(pipeline_api_key, pipeline_id), lambda: _voice_pipeline_create(client(api_key=pipeline_api_key, pipeline_id=pipeline_id)))
     record("error.auth.invalid_key", [], lambda: _auth_error(base_url))
+    record("error.model.not_found", ["RUNINFRA_API_KEY"], lambda: _model_not_found(client()))
     record("error.request.invalid_options", [], _invalid_request_options)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
     record("webhooks.create.unsupported", [], _webhooks_create_unsupported)
@@ -903,6 +906,17 @@ def _auth_error(base_url: str) -> Dict[str, Any]:
         assert_request_id(error.request_id, "invalid-key permission error")
         return {"errorType": error.type, "errorStatus": error.status, "requestId": error.request_id}
     raise AssertionError("invalid API key unexpectedly succeeded")
+
+
+def _model_not_found(client: RunInfra) -> Dict[str, Any]:
+    try:
+        client.models.retrieve(MISSING_MODEL_ID)
+    except ModelNotFoundError as error:
+        if error.status != 404 or error.type != "model_not_found":
+            raise AssertionError(f"model-not-found error mapped unexpectedly: {error.status} {error.type}")
+        assert_request_id(error.request_id, "model-not-found error")
+        return {"errorType": error.type, "errorStatus": error.status, "requestId": error.request_id}
+    raise AssertionError("missing model unexpectedly succeeded")
 
 
 def _local_client() -> RunInfra:

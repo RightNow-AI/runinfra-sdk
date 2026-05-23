@@ -181,7 +181,22 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("`encoding_format` values other than `\"float\"`");
     expect(readme).toContain("`response_format` values other than `\"json\"` or `\"verbose_json\"`");
     expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
+    expect(liveCanaries).toContain("error.model.not_found");
     expect(liveCanaries).toContain("error.body.unsupported_parameter");
+  });
+
+  it("keeps child canaries in parity for live model-not-found error mapping", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+
+    expect(runner).toContain('"error.model.not_found"');
+    expect(typescriptCanary).toContain("ModelNotFoundError");
+    expect(typescriptCanary).toContain('record("error.model.not_found"');
+    expect(typescriptCanary).toContain("runinfra-sdk-canary-missing-model");
+    expect(pythonCanary).toContain("ModelNotFoundError");
+    expect(pythonCanary).toContain('record("error.model.not_found"');
+    expect(pythonCanary).toContain("runinfra-sdk-canary-missing-model");
   });
 
   it("keeps child canaries in parity for audio OpenAI parameter coverage", () => {
@@ -399,6 +414,10 @@ describe("RunInfra TypeScript SDK", () => {
       expect(report.readiness?.env?.RUNINFRA_API_KEY).toBe("set_redacted");
       expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
       expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_MODEL");
+      expect(report.expectedRows).toContain("error.model.not_found");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "error.model.not_found")?.missing,
+      ).toEqual([]);
       expect(
         report.readiness?.rows?.find((row) => row.name === "audio.transcriptions.create")?.missing,
       ).toEqual(expect.arrayContaining([

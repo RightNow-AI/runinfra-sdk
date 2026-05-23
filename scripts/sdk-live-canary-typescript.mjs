@@ -385,6 +385,7 @@ function sdkModuleURL() {
 const sdkModule = await import(sdkModuleURL());
 const {
   AuthenticationError,
+  ModelNotFoundError,
   PermissionDeniedError,
   RUNINFRA_SDK_VERSION,
   RunInfra,
@@ -402,6 +403,7 @@ const ttsModel = env("RUNINFRA_TTS_MODEL");
 const asrModel = env("RUNINFRA_ASR_MODEL");
 const pipelineId = firstEnv("RUNINFRA_VOICE_PIPELINE_ID", "TEST_PIPELINE_ID");
 const pipelineApiKey = firstEnv("RUNINFRA_VOICE_PIPELINE_API_KEY", "RUNINFRA_PIPELINE_API_KEY", "RUNINFRA_API_KEY");
+const missingModelId = "runinfra-sdk-canary-missing-model";
 const ttsResponseFormats = ["mp3", "opus", "aac", "flac", "wav", "pcm"];
 
 function client(options = {}) {
@@ -922,6 +924,20 @@ await record("error.auth.invalid_key", [], async () => {
     throw error;
   }
   throw new Error("invalid API key unexpectedly succeeded");
+});
+
+await record("error.model.not_found", ["RUNINFRA_API_KEY"], async () => {
+  try {
+    await client().models.retrieve(missingModelId);
+  } catch (error) {
+    if (!(error instanceof ModelNotFoundError)) throw error;
+    if (error.status !== 404 || error.type !== "model_not_found") {
+      throw new Error(`model-not-found error mapped unexpectedly: ${error.status} ${error.type}`);
+    }
+    assertRequestId(error.requestId, "model-not-found error");
+    return { errorType: error.type, errorStatus: error.status, requestId: error.requestId };
+  }
+  throw new Error("missing model unexpectedly succeeded");
 });
 
 await record("error.request.invalid_options", [], async () => {

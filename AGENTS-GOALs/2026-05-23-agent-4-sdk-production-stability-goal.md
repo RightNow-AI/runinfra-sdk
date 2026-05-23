@@ -238,3 +238,36 @@ Current blockers remain:
 - This scanner checkpoint improves release safety but does not prove live multimodal GA readiness.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Live Model-Not-Found Error Canary Coverage
+
+Added a live endpoint error-mapping row:
+
+- New row: `error.model.not_found`.
+- Parent matrix now expects 31 rows.
+- Strict readiness requires `RUNINFRA_API_KEY` for this row.
+- TypeScript canary calls `models.retrieve("runinfra-sdk-canary-missing-model")` and requires `ModelNotFoundError`, status `404`, type `model_not_found`, and request ID exposure.
+- Python canary mirrors the same missing-model lookup and mapped error assertions.
+- `LIVE-CANARIES.md` documents the row as traced live error-mapping proof, not as broader GA readiness.
+
+Fresh local verification:
+
+- Confirmed no local `.env*`, audio fixtures, or relevant `RUNINFRA_*` canary env values were available in this shell, so strict live canaries could not be made green from local state.
+- Added failing TS/Python tests first; they failed because `error.model.not_found` was absent from the runner, docs, and child canaries.
+- TS tests passed, 116 tests.
+- Python tests passed, 103 tests plus 105 subtests.
+- TS typecheck and build passed.
+- Python canary syntax passed.
+- Workflow policy and version sync passed.
+- Source canary report passed parity: TypeScript 8 passed/23 skipped, Python 8 passed/23 skipped, expected rows 31.
+- Artifact canary report passed parity with the same 8 passed/23 skipped shape.
+- Clean artifact install/import passed for npm and Python.
+- Strict preflight remains intentionally blocked: 8 ready rows and 23 blocked rows. The new `error.model.not_found` row is blocked only on `RUNINFRA_API_KEY`.
+- Fake-key preflight proved the new row becomes ready with an API key present and the fake key is not leaked in the report.
+- Two second-opinion reviews passed with no blockers.
+
+Current blockers remain:
+
+- This improves live error-mapping coverage but does not prove live multimodal GA readiness.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
