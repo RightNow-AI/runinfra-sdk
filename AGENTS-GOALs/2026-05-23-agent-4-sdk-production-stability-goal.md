@@ -69,3 +69,28 @@ Current blockers remain:
 - PR #9 is still blocked by `REVIEW_REQUIRED`.
 - Strict preflight is blocked: 6 ready rows, 18 blocked rows, no child reports.
 - Missing live inputs still include API key, model IDs, embedding dimensions, image/TTS/ASR/voice fixtures, expected transcripts, pipeline ID/key, and idempotency opt-in.
+
+## 2026-05-23 Agent 4 Checkpoint: Webhook Export Canary Coverage
+
+Added release-gate coverage for the top-level webhook helper exports in both SDKs:
+
+- Strict canary matrix now includes `webhooks.verify_signature.export` and `webhooks.construct_event.export`.
+- TypeScript source canary now calls exported `verifyWebhookSignature` and `constructWebhookEvent` directly.
+- Python source canary now calls exported `verify_webhook_signature` and `construct_webhook_event` directly.
+- `LIVE-CANARIES.md` documents that webhook verification rows cover both client-attached helpers and top-level package exports.
+
+Fresh local verification:
+
+- Added failing TS preflight assertion first; it failed because the two export rows were absent.
+- TS tests passed, 112 tests.
+- Python tests passed, 101 tests plus 88 subtests.
+- TS typecheck and build passed.
+- Workflow policy, version sync, Python canary syntax, and `git diff --check` passed.
+- Source canary report passed parity: TypeScript 8 passed/18 skipped, Python 8 passed/18 skipped.
+- Strict preflight remains intentionally blocked but improved to 8 ready rows and 18 blocked rows.
+
+Current blockers remain:
+
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, and idempotency.
+- This checkpoint proves more local public helper surface, not live multimodal GA readiness.

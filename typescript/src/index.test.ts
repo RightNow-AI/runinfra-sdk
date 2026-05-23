@@ -332,6 +332,10 @@ describe("RunInfra TypeScript SDK", () => {
       expect(report.reports).toEqual([]);
       expect(report.readiness?.status).toBe("blocked");
       expect(report.readiness?.rows?.map((row) => row.name)).toEqual(report.expectedRows);
+      expect(report.expectedRows).toEqual(expect.arrayContaining([
+        "webhooks.verify_signature.export",
+        "webhooks.construct_event.export",
+      ]));
       expect(report.readiness?.env?.RUNINFRA_API_KEY).toBe("set_redacted");
       expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
       expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_MODEL");

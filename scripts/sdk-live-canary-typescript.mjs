@@ -370,6 +370,8 @@ const {
   RUNINFRA_SDK_VERSION,
   RunInfra,
   UnsupportedOperationError,
+  constructWebhookEvent,
+  verifyWebhookSignature,
 } = sdkModule;
 
 const apiKey = env("RUNINFRA_API_KEY");
@@ -800,6 +802,31 @@ await record("webhooks.construct_event.local", [], async () => {
     });
   assertObject(event, "webhook event");
   assertString(event.type, "webhook event.type");
+  return { eventType: event.type };
+});
+
+await record("webhooks.verify_signature.export", [], async () => {
+  const fixture = webhookFixture();
+  const verified = verifyWebhookSignature({
+    payload: fixture.payload,
+    signatureHeader: fixture.signatureHeader,
+    secret: fixture.secret,
+    now: fixture.timestamp,
+  });
+  if (verified !== true) throw new Error("exported webhook signature verification did not return true");
+  return { verified };
+});
+
+await record("webhooks.construct_event.export", [], async () => {
+  const fixture = webhookFixture();
+  const event = constructWebhookEvent({
+    payload: fixture.payload,
+    signatureHeader: fixture.signatureHeader,
+    secret: fixture.secret,
+    now: fixture.timestamp,
+  });
+  assertObject(event, "exported webhook event");
+  assertString(event.type, "exported webhook event.type");
   return { eventType: event.type };
 });
 

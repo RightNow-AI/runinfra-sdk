@@ -96,9 +96,11 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `webhooks.list.unsupported`
 - `webhooks.verify_signature.local`
 - `webhooks.construct_event.local`
+- `webhooks.verify_signature.export`
+- `webhooks.construct_event.export`
 - `idempotency.replay.responses`
 
-Each success row asserts `x-request-id` exposure and the relevant
+Network success rows assert `x-request-id` exposure and the relevant
 OpenAI-compatible envelope fields: models list object plus data array, chat
 ids/models/choices/messages, Responses ids/status/output or semantic stream
 event type/status, finite embedding vectors, image URL/base64 outputs, binary
@@ -109,7 +111,8 @@ OpenAI parameter rows prove chat
 sampling and metadata pass-through, Responses instructions, metadata,
 temperature, output-token controls, and embeddings `encoding_format: "float"`
 plus `dimensions`. Unsupported SDK request options and webhook delivery rows
-must fail closed without sending a network request. The unsupported
+must fail closed without sending a network request. Webhook verification rows
+exercise both client-attached helpers and top-level package exports. The unsupported
 body-parameter row sends a real OpenAI-style request with a RunInfra probe
 parameter and requires a clear traced 400/422 invalid-parameter style error
 instead of success, silent ignore, unrelated auth/credits/rate-limit/model

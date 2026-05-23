@@ -35,6 +35,8 @@ const expectedRows = [
   "webhooks.list.unsupported",
   "webhooks.verify_signature.local",
   "webhooks.construct_event.local",
+  "webhooks.verify_signature.export",
+  "webhooks.construct_event.export",
   "idempotency.replay.responses",
 ];
 
@@ -200,6 +202,8 @@ const rowReadinessRequirements = [
   ["webhooks.list.unsupported", () => []],
   ["webhooks.verify_signature.local", () => []],
   ["webhooks.construct_event.local", () => []],
+  ["webhooks.verify_signature.export", () => []],
+  ["webhooks.construct_event.export", () => []],
   ["idempotency.replay.responses", () => [
     ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"]),
     ...(env("RUNINFRA_CANARY_ENABLE_IDEMPOTENCY") === "1" ? [] : ["RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1"]),

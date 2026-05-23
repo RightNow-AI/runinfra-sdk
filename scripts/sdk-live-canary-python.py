@@ -24,6 +24,8 @@ from runinfra import (  # noqa: E402
     PermissionDeniedError,
     RunInfra,
     UnsupportedOperationError,
+    construct_webhook_event,
+    verify_webhook_signature,
 )
 
 
@@ -460,6 +462,8 @@ def main() -> int:
     record("webhooks.list.unsupported", [], _webhooks_list_unsupported)
     record("webhooks.verify_signature.local", [], _webhooks_verify_signature_local)
     record("webhooks.construct_event.local", [], _webhooks_construct_event_local)
+    record("webhooks.verify_signature.export", [], _webhooks_verify_signature_export)
+    record("webhooks.construct_event.export", [], _webhooks_construct_event_export)
     record("idempotency.replay.responses", lambda: _idempotency_requirements(), lambda: _idempotency_replay(client(), llm_model))
 
     summary = {
@@ -848,6 +852,32 @@ def _webhooks_construct_event_local() -> Dict[str, Any]:
     )
     assert_object(event, "webhook event")
     assert_string(event.get("type"), "webhook event.type")
+    return {"eventType": event.get("type")}
+
+
+def _webhooks_verify_signature_export() -> Dict[str, Any]:
+    fixture = _webhook_fixture()
+    verified = verify_webhook_signature(
+        payload=fixture["payload"],
+        signature_header=fixture["signature_header"],
+        secret=fixture["secret"],
+        now=fixture["timestamp"],
+    )
+    if verified is not True:
+        raise AssertionError("exported webhook signature verification did not return True")
+    return {"verified": verified}
+
+
+def _webhooks_construct_event_export() -> Dict[str, Any]:
+    fixture = _webhook_fixture()
+    event = construct_webhook_event(
+        payload=fixture["payload"],
+        signature_header=fixture["signature_header"],
+        secret=fixture["secret"],
+        now=fixture["timestamp"],
+    )
+    assert_object(event, "exported webhook event")
+    assert_string(event.get("type"), "exported webhook event.type")
     return {"eventType": event.get("type")}
 
 
