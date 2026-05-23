@@ -80,7 +80,17 @@ Custom base URLs must not include query strings or fragments.
 
 ## Server-side only
 
-The TypeScript SDK targets Node.js 18 or newer. RunInfra API keys are bearer secrets. Do not initialize this SDK in browser code with a secret API key. The SDK fails closed when it detects a browser runtime; keep calls on a Node.js server route, API service, or backend job. If you are deliberately using a controlled non-public browser-like runtime, pass `dangerouslyAllowBrowser: true` and own that risk.
+The TypeScript SDK targets Node.js 18 or newer. RunInfra API keys are bearer
+secrets. Do not put `RUNINFRA_API_KEY` in browser code and do not initialize
+this SDK in public client bundles with a secret API key. The SDK fails closed
+when it detects a browser runtime; keep calls on a Node.js server route,
+backend proxy, API service, or backend job. Browser apps should call your own
+server first, then your server calls RunInfra with the workspace or
+pipeline-scoped key. Ephemeral browser tokens are not shipped in v0.1.4; do not
+invent a direct browser token flow until it has a separate scoped-token design,
+expiry, audit logging, and live canary coverage. If you are deliberately using
+a controlled non-public browser-like runtime, pass `dangerouslyAllowBrowser:
+true` and own that risk.
 
 Unknown TypeScript client option keys are rejected so typos such as `baseUrl` or `api_key` do not silently change the gateway, authentication, timeout, retry, or runtime-safety behavior. Use `baseURL` for custom server-side gateway URLs.
 

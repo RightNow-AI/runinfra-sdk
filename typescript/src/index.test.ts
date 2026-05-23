@@ -108,6 +108,20 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("Custom base URLs must not include query strings or fragments.");
   });
 
+  it("documents browser API-key protection and backend proxy posture", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const rootReadme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+
+    for (const text of [readme, rootReadme]) {
+      expect(text).toMatch(/Do not put `RUNINFRA_API_KEY` in browser\s+code/u);
+      expect(text).toContain("backend proxy");
+      expect(text).toMatch(/Ephemeral\s+browser tokens are not shipped in v0\.1\.4/u);
+    }
+
+    expect(readme).toMatch(/The SDK fails closed\s+when it detects a browser runtime/u);
+    expect(readme).toMatch(/dangerouslyAllowBrowser:\s+true/u);
+  });
+
   it("documents explicit webhook secret environment guards instead of non-null assertions", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 

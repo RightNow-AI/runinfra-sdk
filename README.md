@@ -78,6 +78,14 @@ See per-package READMEs and CHANGELOG for the path to v1.0.0 GA.
 The strict multimodal GA canary contract is documented in
 [`LIVE-CANARIES.md`](./LIVE-CANARIES.md).
 
+## Browser security
+
+RunInfra API keys are bearer secrets. Do not put `RUNINFRA_API_KEY` in browser
+code. Browser apps should call your server route or backend proxy first, then
+your server calls RunInfra with the workspace or pipeline-scoped key. Ephemeral
+browser tokens are not shipped in v0.1.4; do not build a direct browser token
+flow until scoped tokens, expiry, audit logging, and live canary coverage exist.
+
 ## License
 
 Proprietary, source-available. See [LICENSE](./LICENSE). For commercial

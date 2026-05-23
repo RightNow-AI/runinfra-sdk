@@ -37,6 +37,7 @@ Agent 4 owns SDK hardening, package safety, live contract proof, and release evi
 3. Advanced OpenAI proof still needs tools/schema outputs, stream options, image/audio variants, embedding dimensions/base64, and model-specific options.
 4. Python `RunInfra` is documented as sync-only for v0.1.4; `AsyncRunInfra` stays deferred until it has matching unit, streaming, live-canary, and clean-install coverage.
 5. Webhook delivery create/list stays out of the public SDK surface until real delivery endpoints exist.
+6. Browser clients must use a backend proxy/server route. Ephemeral browser tokens are not shipped in v0.1.4 and direct browser API-key use remains blocked by default.
 
 ## Guardrails
 
@@ -349,5 +350,33 @@ Verified the Python production-ergonomics decision for v0.1.4:
 Current blockers remain:
 
 - This closes the Python async/sync documentation choice for v0.1.4 but does not add an async client.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Browser API-Key Protection Docs
+
+Hardened the public browser-security posture without changing runtime behavior:
+
+- Root `README.md` now says not to put `RUNINFRA_API_KEY` in browser code, and directs browser apps through a server route or backend proxy.
+- TypeScript README now repeats the same production stance, documents that the SDK fails closed in browser runtimes, and keeps `dangerouslyAllowBrowser: true` framed as a controlled non-public runtime escape hatch.
+- Public docs now state that ephemeral browser tokens are not shipped in v0.1.4 and must not be invented until scoped tokens, expiry, audit logging, and live canary coverage exist.
+- TypeScript docs test now asserts the browser API-key, backend proxy, and no-ephemeral-token guidance across both root and package READMEs.
+
+Fresh local verification:
+
+- Added the browser-security docs test first; it failed on missing explicit browser/proxy/token guidance.
+- Targeted browser-security docs test passed after the README updates.
+- TS typecheck passed.
+- TS tests passed, 118 tests.
+- Python tests passed, 104 tests plus 105 subtests.
+- TS build and pack passed; tarball contents remained `CHANGELOG.md`, `dist/index.d.ts`, `dist/index.js`, `LICENSE`, `package.json`, and `README.md`.
+- `verify-npm-package` passed on fresh `runinfra-sdk-0.1.4.tgz`.
+- Clean npm artifact install/import passed for TypeScript `0.1.4`.
+- Workflow policy and version sync passed.
+- `git diff --check` passed with CRLF warnings only.
+
+Current blockers remain:
+
+- This closes the documented browser-default security stance but does not ship ephemeral browser tokens.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
