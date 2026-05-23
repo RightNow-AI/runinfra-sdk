@@ -158,6 +158,7 @@ runinfra-sdk/
 │   └── LICENSE
 └── .github/workflows/
     ├── ci.yml            — type-check + test + build + tarball-leak scan on PR
+    ├── codeql.yml        — pinned CodeQL scan for TypeScript and Python
     └── publish.yml       — manual workflow_dispatch publish via OIDC
 ```
 
@@ -181,7 +182,7 @@ identical proprietary source-available terms. Customers see them via:
 
 3. Commit + push + PR + merge to `main`.
 
-4. Wait for `ci.yml` to pass green on `main`.
+4. Wait for `ci.yml` and `codeql.yml` to pass green on `main`.
 
 5. Trigger publish:
    ```

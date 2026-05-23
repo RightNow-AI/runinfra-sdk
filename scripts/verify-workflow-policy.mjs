@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 const publish = readFileSync(".github/workflows/publish.yml", "utf8");
 const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+const codeql = readFileSync(".github/workflows/codeql.yml", "utf8");
 
 function jobBlock(workflow, jobName) {
   const start = workflow.indexOf(`  ${jobName}:`);
@@ -14,14 +15,31 @@ function jobBlock(workflow, jobName) {
 
 const publishNpmJob = jobBlock(publish, "publish-npm");
 const publishPypiJob = jobBlock(publish, "publish-pypi");
-const workflows = `${publish}\n${ci}`;
-const actionUses = Array.from(workflows.matchAll(/uses:\s+([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)@([^\s#]+)/gu));
+const workflows = `${publish}\n${ci}\n${codeql}`;
+const usesValues = Array.from(
+  workflows.matchAll(/^\s*-?\s*uses:\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/gmu),
+).map(([, doubleQuoted, singleQuoted, unquoted]) => doubleQuoted ?? singleQuoted ?? unquoted);
+const externalActionUses = usesValues.filter((value) =>
+  !value.startsWith("./") &&
+  !value.startsWith("../") &&
+  !value.startsWith("docker://")
+);
+const actionUses = externalActionUses.map((value) => {
+  const atIndex = value.lastIndexOf("@");
+  return {
+    value,
+    action: atIndex === -1 ? value : value.slice(0, atIndex),
+    ref: atIndex === -1 ? "" : value.slice(atIndex + 1),
+  };
+});
 const expectedActionRevisions = [
   "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
   "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
   "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405",
   "pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
   "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b",
+  "github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa",
+  "github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa",
 ];
 
 const checks = [
@@ -36,6 +54,27 @@ const checks = [
   {
     label: "publish jobs request OIDC id-token permission",
     ok: /id-token:\s*write/u.test(publish),
+  },
+  {
+    label: "CodeQL workflow scans TypeScript and Python",
+    ok:
+      /javascript-typescript/u.test(codeql) &&
+      /python/u.test(codeql) &&
+      /github\/codeql-action\/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa/u.test(codeql) &&
+      /github\/codeql-action\/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa/u.test(codeql),
+  },
+  {
+    label: "CodeQL workflow can upload security events",
+    ok:
+      /security-events:\s*write/u.test(codeql) &&
+      /contents:\s*read/u.test(codeql),
+  },
+  {
+    label: "CodeQL workflow runs on main pushes, PRs, and schedule",
+    ok:
+      /pull_request:[\s\S]*?branches:\s*\[main\]/u.test(codeql) &&
+      /push:[\s\S]*?branches:\s*\[main\]/u.test(codeql) &&
+      /schedule:/u.test(codeql),
   },
   {
     label: "npm publish keeps setup-node registry-url unset",
@@ -119,7 +158,7 @@ const checks = [
     label: "workflow actions are SHA pinned",
     ok:
       actionUses.length > 0 &&
-      actionUses.every(([, , ref]) => /^[a-f0-9]{40}$/u.test(ref)),
+      actionUses.every(({ ref }) => /^[a-f0-9]{40}$/u.test(ref)),
   },
   {
     label: "workflows pin expected Node 24 compatible action revisions",
