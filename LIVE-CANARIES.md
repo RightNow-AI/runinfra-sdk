@@ -30,6 +30,7 @@ development diagnostics.
 | `RUNINFRA_CANARY_TIMEOUT_SECONDS` | Optional per-request canary timeout for both SDKs, defaults to 120 |
 | `RUNINFRA_LLM_MODEL` | Model for chat, responses, streaming, and idempotency rows |
 | `RUNINFRA_EMBEDDING_MODEL` | Model for embeddings row |
+| `RUNINFRA_EMBEDDING_DIMENSIONS` | Positive integer embedding dimension count for the OpenAI parameter row |
 | `RUNINFRA_IMAGE_MODEL` | Model for image generation row |
 | `RUNINFRA_TTS_MODEL` | Model for TTS row |
 | `RUNINFRA_TTS_VOICE` | Named TTS voice, if the deployment uses voices |
@@ -50,6 +51,12 @@ development diagnostics.
 | `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1` | Explicit opt-in for repeated idempotency replay test |
 | `RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD` | Optional comma-separated response field paths that prove the second idempotent response was replayed |
 
+The native SDK live rows intentionally verify only the OpenAI-compatible
+parameter subset that keeps response shapes stable for the SDK typed helpers.
+Advanced OpenAI parameters that change response envelopes or require
+model-specific backend support stay out of GA until a strict canary row proves
+them against the deployed model.
+
 The report stores only `set_redacted` or `missing` for environment variables.
 Custom `RUNINFRA_BASE_URL` values are recorded only as `custom_set_redacted`.
 Reports must not contain API keys, registry tokens, local absolute paths,
@@ -62,18 +69,22 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `models.list`
 - `models.retrieve.llm`
 - `chat.completions.create`
+- `openai.params.chat.completions`
 - `chat.completions.stream.final`
 - `chat.completions.stream.cancel`
 - `responses.create`
+- `openai.params.responses`
 - `responses.stream.final`
 - `responses.stream.cancel`
 - `embeddings.create`
+- `openai.params.embeddings`
 - `images.generate`
 - `audio.speech.create`
 - `audio.transcriptions.create`
 - `voice.pipeline.create`
 - `error.auth.invalid_key`
 - `error.request.invalid_options`
+- `error.body.unsupported_parameter`
 - `webhooks.create.unsupported`
 - `webhooks.list.unsupported`
 - `webhooks.verify_signature.local`
@@ -86,10 +97,17 @@ ids/status/output or semantic stream event type/status, finite embedding
 vectors, image URL/base64 outputs, binary non-JSON TTS responses, and string
 ASR transcripts. Final streaming rows drain real SSE streams and require
 terminal events. Cancellation streaming rows consume a prefix and then close
-early to cover consumer cancellation. Unsupported request option and webhook
-delivery rows must fail closed without sending a network request. ASR uploads a
-deterministic speech fixture and requires the normalized transcript to include
-`RUNINFRA_ASR_EXPECTED_TEXT`; silence fixtures are not valid GA proof.
+early to cover consumer cancellation. The OpenAI parameter rows prove chat
+sampling and metadata pass-through, Responses instructions, metadata,
+temperature, output-token controls, and embeddings `encoding_format: "float"`
+plus `dimensions`. Unsupported SDK request options and webhook delivery rows
+must fail closed without sending a network request. The unsupported
+body-parameter row sends a real OpenAI-style request with a RunInfra probe
+parameter and requires a clear traced 400/422 invalid-parameter style error
+instead of success, silent ignore, unrelated auth/credits/rate-limit/model
+errors, 5xx, or transport failure. ASR uploads a deterministic speech fixture
+and requires the normalized transcript to include `RUNINFRA_ASR_EXPECTED_TEXT`;
+silence fixtures are not valid GA proof.
 Voice pipeline rows also require deterministic speech audio and expected text;
 generated silence is not accepted as GA proof.
 Webhook signature rows use installed package artifacts and deterministic local

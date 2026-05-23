@@ -21,9 +21,9 @@ Goal: take the TS and Python SDKs from secure beta to production-grade GA withou
 - Direct push to `main` is blocked by branch protection, as desired.
 - Commit `b1f9c09` fixed the CodeQL default-setup conflict by removing the advanced workflow and documenting GitHub default CodeQL. PR checks went green after push.
 - Merge is still blocked by GitHub `REVIEW_REQUIRED`; current auth user is the PR author, and GitHub rejected self-approval.
-- Current checkpoint hardens GA canaries/runtime: local webhook verify/construct rows, combined report leak guard, Python case-insensitive request IDs, Python incremental UTF-8 SSE decoding, and voice pipeline requiring deterministic speech audio plus expected text instead of silence.
+- Current checkpoint hardens GA canaries/runtime: local webhook rows, report leak guard, Python request IDs/UTF-8 SSE, deterministic voice fixture proof, OpenAI parameter rows, unsupported body-parameter proof, and native response-shape guards for base64 embeddings / non-JSON ASR.
 - Local verification passed: TS typecheck/tests/build/pack/package scan/clean install, Python tests/build/twine/package scan/clean install, version sync, workflow policy, diff check, source/artifact canaries, and second-opinion review.
-- Artifact canary proves 20-row parity with 6 local rows passed and 14 live rows skipped because production env is absent. This is progress, not GA.
+- Canary proves 24-row parity with 6 local rows passed and 18 live rows skipped because prod env is absent. This is progress, not GA.
 - Code scanning API showed 0 open alerts and 0 open high/critical alerts. Default branch still reports 3 moderate Dependabot alerts.
 
 ## Remaining GA Gates
@@ -31,7 +31,7 @@ Goal: take the TS and Python SDKs from secure beta to production-grade GA withou
 - Get non-author approval and merge PR #9 through branch protection.
 - Run strict production artifact canaries with all env present, including ASR and voice fixtures/expected text.
 - Prove images, TTS, ASR, and voice pipeline with deployed model/backend coverage before removing experimental labels.
-- Expand OpenAI-compatible parameter coverage: tools/metadata/response format where supported, embeddings dimensions/encoding, image/audio options, and clear unsupported-parameter behavior.
+- Expand strict-live OpenAI-compatible parameter coverage beyond the verified native subset: tools/schema outputs, stream options, embeddings dimensions/base64, image/audio streaming, and model-specific advanced options.
 - Decide GA Python ergonomics: ship `AsyncRunInfra` or keep sync-only documented as a deliberate GA limitation.
 - Keep webhook delivery create/list fail-closed unless real delivery endpoints ship.
 

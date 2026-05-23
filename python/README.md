@@ -118,6 +118,41 @@ client.
 - `images.generate()`
 - `voice.pipeline.create()`
 
+## OpenAI-compatible parameter scope
+
+The native SDK validates the minimum request fields locally, then forwards
+OpenAI-style JSON or multipart fields that preserve the typed response shape.
+The GA canary matrix now has dedicated rows for the verified subset:
+`openai.params.chat.completions`, `openai.params.responses`, and
+`openai.params.embeddings`.
+
+Verified native SDK subset:
+
+- Chat Completions: `model`, `messages`, `stream`, `temperature`, `top_p`,
+  `max_tokens`, `stop`, `presence_penalty`, `frequency_penalty`, `user`, and
+  `metadata`.
+- Responses: `model`, `input`, `stream`, `instructions`, `temperature`,
+  `max_output_tokens`, and `metadata`.
+- Embeddings: `model`, `input`, `encoding_format="float"`, and `dimensions`
+  when the deployed embedding backend advertises dimension control.
+- Images: `model`, `prompt`, `n`, plus optional `size` and `response_format`
+  when the deployed image backend advertises them.
+- Audio speech: `model`, `input`, `voice` or `ref_audio` plus `ref_text`, and
+  optional `task_type` and `response_format`.
+- Audio transcriptions: `model`, `file`, `filename`, optional `language`, and
+  JSON response formats only.
+
+The native typed helpers do not claim GA support for tool calls, structured
+JSON schema outputs, logprobs, seeds, service tiers, parallel tool calls,
+Responses state/include/reasoning controls, embedding base64 output, image
+streaming or partial images, audio streaming, audio translations, or direct
+browser API-key use until strict live canaries prove those behaviors. Embedding
+`encoding_format` values other than `"float"` and transcription
+`response_format` values other than `"json"` or `"verbose_json"` are rejected
+locally because they would not match the typed native SDK response objects.
+Unsupported OpenAI-style body parameters must fail with a clear traced 4xx
+gateway error before GA.
+
 ## Text to speech
 
 TTS deployments can expose named voices or Base/reference-audio voice cloning.

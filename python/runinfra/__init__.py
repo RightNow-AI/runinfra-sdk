@@ -526,6 +526,19 @@ def _validate_embedding_input(value: Any) -> None:
     raise _invalid_request_option("input must be a non-empty string or array of strings")
 
 
+def _validate_embedding_response_options(options: Mapping[str, Any]) -> None:
+    encoding_format = options.get("encoding_format")
+    if encoding_format is not None and encoding_format != "float":
+        raise _invalid_request_option(
+            "embedding encoding_format must be float for native SDK typed responses"
+        )
+    dimensions = options.get("dimensions")
+    if dimensions is not None and (
+        isinstance(dimensions, bool) or not isinstance(dimensions, int) or dimensions <= 0
+    ):
+        raise _invalid_request_option("embedding dimensions must be a positive integer")
+
+
 def _validated_audio_file(value: Any) -> bytes:
     if not isinstance(value, (bytes, bytearray)):
         raise _invalid_request_option("file must be bytes or bytearray")
@@ -922,6 +935,14 @@ def _validated_multipart_field_value(value: Any) -> str:
     return str(value)
 
 
+def _validate_transcription_response_format(options: Mapping[str, Any]) -> None:
+    response_format = options.get("response_format")
+    if response_format is not None and response_format not in {"json", "verbose_json"}:
+        raise _invalid_request_option(
+            "audio transcription response_format must be json or verbose_json for native SDK typed responses"
+        )
+
+
 def _multipart_body(fields: Mapping[str, str], files: Mapping[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
     boundary = f"runinfra-{uuid.uuid4().hex}"
     chunks: List[bytes] = []
@@ -1145,6 +1166,7 @@ class _Embeddings:
         **kwargs: Any,
     ) -> EmbeddingResponse:
         _validate_embedding_input(input)
+        _validate_embedding_response_options(kwargs)
         return _json_response(self._requester.request(
             "/embeddings",
             json_payload={"model": _validated_model(model), "input": input, **kwargs},
@@ -1205,6 +1227,7 @@ class _Transcriptions:
         request_options: Optional[Mapping[str, Any]] = None,
         **kwargs: Any,
     ) -> TranscriptionResponse:
+        _validate_transcription_response_format(kwargs)
         fields = {
             "model": _validated_model(model),
             **{key: _validated_multipart_field_value(value) for key, value in kwargs.items()},

@@ -75,6 +75,36 @@ def assert_request_id(value: Any, label: str) -> None:
         raise AssertionError(f"{label} did not expose x-request-id")
 
 
+def assert_clear_unsupported_parameter_error(error: BaseException, label: str) -> Dict[str, Any]:
+    status = getattr(error, "status", None)
+    if status not in {400, 422}:
+        raise AssertionError(f"{label} expected a clear 400/422 validation error, got {status or 'unknown'}")
+    error_type = getattr(error, "type", None)
+    allowed_types = {
+        "bad_request",
+        "invalid_request",
+        "invalid_request_error",
+        "invalid_request_options",
+        "unsupported_operation",
+        "unsupported_parameter",
+        "validation_error",
+    }
+    if not isinstance(error_type, str) or error_type not in allowed_types:
+        raise AssertionError(f"{label} expected an invalid-parameter error type, got {error_type or 'unknown'}")
+    request_id = getattr(error, "request_id", None)
+    assert_request_id(request_id, label)
+    return {"errorType": error_type, "errorStatus": status, "requestId": request_id}
+
+
+def required_positive_integer_env(name: str) -> int:
+    value = env(name)
+    if not value:
+        raise AssertionError(f"{name} missing")
+    if not re.fullmatch(r"[1-9][0-9]*", value):
+        raise AssertionError(f"{name} must be a positive integer")
+    return int(value)
+
+
 def assert_chat_completion_envelope(response: Dict[str, Any], label: str) -> None:
     assert_string(response.get("id"), f"{label}.id")
     assert_optional_string(response.get("object"), f"{label}.object")
@@ -327,6 +357,7 @@ def main() -> int:
         "RUNINFRA_CANARY_TIMEOUT_SECONDS",
         "RUNINFRA_LLM_MODEL",
         "RUNINFRA_EMBEDDING_MODEL",
+        "RUNINFRA_EMBEDDING_DIMENSIONS",
         "RUNINFRA_IMAGE_MODEL",
         "RUNINFRA_TTS_MODEL",
         "RUNINFRA_TTS_VOICE",
@@ -396,12 +427,19 @@ def main() -> int:
     record("models.list", ["RUNINFRA_API_KEY"], lambda: _models_list(client()))
     record("models.retrieve.llm", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _model_retrieve(client(), llm_model))
     record("chat.completions.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_create(client(), llm_model))
+    record("openai.params.chat.completions", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_params(client(), llm_model))
     record("chat.completions.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_final(client(), llm_model))
     record("chat.completions.stream.cancel", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_cancel(client(), llm_model))
     record("responses.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_create(client(), llm_model))
+    record("openai.params.responses", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_params(client(), llm_model))
     record("responses.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_stream_final(client(), llm_model))
     record("responses.stream.cancel", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_stream_cancel(client(), llm_model))
     record("embeddings.create", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"], lambda: _embeddings_create(client(), embedding_model))
+    record(
+        "openai.params.embeddings",
+        ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL", "RUNINFRA_EMBEDDING_DIMENSIONS"],
+        lambda: _embeddings_params(client(), embedding_model),
+    )
     record("images.generate", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], lambda: _images_generate(client(), image_model))
     record("audio.speech.create", lambda: _speech_requirements(), lambda: _speech_create(client(), tts_model))
     record(
@@ -412,6 +450,7 @@ def main() -> int:
     record("voice.pipeline.create", lambda: _voice_requirements(pipeline_api_key, pipeline_id), lambda: _voice_pipeline_create(client(api_key=pipeline_api_key, pipeline_id=pipeline_id)))
     record("error.auth.invalid_key", [], lambda: _auth_error(base_url))
     record("error.request.invalid_options", [], _invalid_request_options)
+    record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
     record("webhooks.create.unsupported", [], _webhooks_create_unsupported)
     record("webhooks.list.unsupported", [], _webhooks_list_unsupported)
     record("webhooks.verify_signature.local", [], _webhooks_verify_signature_local)
@@ -474,6 +513,28 @@ def _chat_create(client: RunInfra, model: str) -> Dict[str, Any]:
     return {"requestId": response.get("_request_id")}
 
 
+def _chat_params(client: RunInfra, model: str) -> Dict[str, Any]:
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": "You are a concise SDK compatibility canary."},
+            {"role": "user", "content": "Reply with the single word ok."},
+        ],
+        temperature=0,
+        top_p=1,
+        max_tokens=16,
+        stop=["\n\n"],
+        presence_penalty=0,
+        frequency_penalty=0,
+        user="sdk-canary",
+        metadata={"sdk_canary": "openai_params_chat"},
+    )
+    assert_object(response, "chat params response")
+    assert_chat_completion_envelope(response, "chat params response")
+    assert_request_id(response.get("_request_id"), "openai.params.chat.completions")
+    return {"requestId": response.get("_request_id")}
+
+
 def _chat_stream_final(client: RunInfra, model: str) -> Dict[str, Any]:
     stream = client.chat.completions.create(
         model=model,
@@ -518,6 +579,21 @@ def _responses_create(client: RunInfra, model: str) -> Dict[str, Any]:
     return {"requestId": response.get("_request_id"), "hasOutput": bool(response.get("output_text") or response.get("output"))}
 
 
+def _responses_params(client: RunInfra, model: str) -> Dict[str, Any]:
+    response = client.responses.create(
+        model=model,
+        input="Reply with the single word ok.",
+        instructions="Be concise.",
+        temperature=0,
+        max_output_tokens=16,
+        metadata={"sdk_canary": "openai_params_responses"},
+    )
+    assert_object(response, "responses params response")
+    assert_responses_envelope(response, "responses params response")
+    assert_request_id(response.get("_request_id"), "openai.params.responses")
+    return {"requestId": response.get("_request_id"), "hasOutput": bool(response.get("output_text") or response.get("output"))}
+
+
 def _responses_stream_final(client: RunInfra, model: str) -> Dict[str, Any]:
     stream = client.responses.create(
         model=model,
@@ -552,6 +628,23 @@ def _embeddings_create(client: RunInfra, model: str) -> Dict[str, Any]:
     assert_embeddings_envelope(response, "embeddings response")
     vector = response["data"][0].get("embedding")
     assert_request_id(response.get("_request_id"), "embeddings.create")
+    return {"requestId": response.get("_request_id"), "vectorLength": len(vector)}
+
+
+def _embeddings_params(client: RunInfra, model: str) -> Dict[str, Any]:
+    dimensions = required_positive_integer_env("RUNINFRA_EMBEDDING_DIMENSIONS")
+    response = client.embeddings.create(
+        model=model,
+        input="runinfra sdk openai parameter canary",
+        encoding_format="float",
+        dimensions=dimensions,
+    )
+    assert_object(response, "embeddings params response")
+    assert_embeddings_envelope(response, "embeddings params response")
+    vector = response["data"][0].get("embedding")
+    assert_request_id(response.get("_request_id"), "openai.params.embeddings")
+    if len(vector) != dimensions:
+        raise AssertionError("embeddings params response ignored requested dimensions")
     return {"requestId": response.get("_request_id"), "vectorLength": len(vector)}
 
 
@@ -675,6 +768,19 @@ def _invalid_request_options() -> Dict[str, Any]:
             )
         return {"errorType": getattr(error, "type", None), "errorStatus": getattr(error, "status", None)}
     raise AssertionError("invalid request option unexpectedly succeeded")
+
+
+def _unsupported_body_parameter(client: RunInfra, model: str) -> Dict[str, Any]:
+    try:
+        client.responses.create(
+            model=model,
+            input="Reply with the single word ok.",
+            max_output_tokens=1,
+            runinfra_unsupported_parameter_probe="must_error",
+        )
+    except BaseException as error:  # noqa: BLE001
+        return assert_clear_unsupported_parameter_error(error, "unsupported body parameter")
+    raise AssertionError("unsupported body parameter unexpectedly succeeded")
 
 
 def _webhooks_create_unsupported() -> Dict[str, Any]:

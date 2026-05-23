@@ -141,6 +141,21 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("task_type", readme)
         self.assertNotIn('voice=process.env.RUNINFRA_TTS_VOICE ?? "default"', readme)
 
+    def test_readme_documents_openai_parameter_subset_and_response_shape_guards(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        self.assertIn("## OpenAI-compatible parameter scope", readme)
+        self.assertIn("Verified native SDK subset", readme)
+        self.assertIn("`openai.params.chat.completions`", readme)
+        self.assertIn("`openai.params.responses`", readme)
+        self.assertIn("`openai.params.embeddings`", readme)
+        self.assertIn("dimension control", readme)
+        self.assertIn('`encoding_format` values other than `"float"`', readme)
+        self.assertIn('`response_format` values other than `"json"` or `"verbose_json"`', readme)
+        self.assertIn("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx", readme)
+        self.assertIn("error.body.unsupported_parameter", live_canaries)
+
     def test_readme_documents_local_request_payload_validation_before_sending(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
@@ -370,6 +385,27 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         client.embeddings.create(model="bge-m3", input=["a", "b"])
 
         self.assertEqual(transport.calls[0].url, "https://api.runinfra.ai/v1/embeddings")
+
+    def test_embedding_passes_through_float_format_and_dimensions(self):
+        transport = RecordingTransport(json_response({"data": [{"embedding": [0.1, 0.2], "index": 0}]}))
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        client.embeddings.create(
+            model="bge-m3",
+            input="hello",
+            encoding_format="float",
+            dimensions=256,
+        )
+
+        self.assertEqual(
+            json.loads(transport.calls[0].body.decode("utf-8")),
+            {
+                "model": "bge-m3",
+                "input": "hello",
+                "encoding_format": "float",
+                "dimensions": 256,
+            },
+        )
 
     def test_voice_pipeline_posts_audio_to_verified_pipeline_route(self):
         transport = RecordingTransport(json_response({
@@ -989,6 +1025,41 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                     )
                 self.assertEqual(raised.exception.type, "invalid_request_options")
 
+        self.assertEqual(transport.calls, [])
+
+    def test_native_embedding_rejects_response_shapes_it_cannot_type_before_network(self):
+        transport = RecordingTransport(json_response({}))
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.embeddings.create(model="bge-m3", input="hello", encoding_format="base64")
+        self.assertEqual(raised.exception.type, "invalid_request_options")
+        self.assertEqual(
+            str(raised.exception),
+            "embedding encoding_format must be float for native SDK typed responses",
+        )
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.embeddings.create(model="bge-m3", input="hello", dimensions=0)
+        self.assertEqual(raised.exception.type, "invalid_request_options")
+        self.assertEqual(str(raised.exception), "embedding dimensions must be a positive integer")
+        self.assertEqual(transport.calls, [])
+
+    def test_native_asr_rejects_response_formats_it_cannot_parse_before_network(self):
+        transport = RecordingTransport(json_response({"text": "hello"}))
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.audio.transcriptions.create(
+                model="whisper-large-v3",
+                file=b"abc",
+                response_format="text",
+            )
+        self.assertEqual(raised.exception.type, "invalid_request_options")
+        self.assertEqual(
+            str(raised.exception),
+            "audio transcription response_format must be json or verbose_json for native SDK typed responses",
+        )
         self.assertEqual(transport.calls, [])
 
     def test_typed_errors_and_retries(self):
@@ -1635,8 +1706,12 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn(b'"stream":true', transport.calls[0].body)
 
     def test_streaming_preserves_multibyte_utf8_split_across_chunks(self):
-        payload = 'data: {"choices":[{"delta":{"content":"café"}}]}\n\n'.encode("utf-8")
-        split_at = payload.index("é".encode("utf-8")) + 1
+        payload = (
+            b'data: {"choices":[{"delta":{"content":"caf'
+            + bytes([0xC3, 0xA9])
+            + b'"}}]}\n\n'
+        )
+        split_at = payload.index(bytes([0xC3, 0xA9])) + 1
 
         def chunks():
             yield payload[:split_at]
@@ -1663,7 +1738,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertEqual(
             list(stream),
-            [{"choices": [{"delta": {"content": "café"}}]}],
+            [{"choices": [{"delta": {"content": "caf\u00e9"}}]}],
         )
 
     def test_chat_streaming_marks_transport_request_and_consumes_incremental_chunks(self):

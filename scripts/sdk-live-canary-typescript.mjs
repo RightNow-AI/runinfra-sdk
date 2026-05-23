@@ -93,6 +93,34 @@ function assertRequestId(value, label) {
   }
 }
 
+function assertClearUnsupportedParameterError(error, label) {
+  if (!error || typeof error !== "object") throw error;
+  if (error.status !== 400 && error.status !== 422) {
+    throw new Error(`${label} expected a clear 400/422 validation error, got ${error.status ?? "unknown"}`);
+  }
+  const allowedTypes = new Set([
+    "bad_request",
+    "invalid_request",
+    "invalid_request_error",
+    "invalid_request_options",
+    "unsupported_operation",
+    "unsupported_parameter",
+    "validation_error",
+  ]);
+  if (typeof error.type !== "string" || !allowedTypes.has(error.type)) {
+    throw new Error(`${label} expected an invalid-parameter error type, got ${error.type ?? "unknown"}`);
+  }
+  assertRequestId(error.requestId, label);
+  return { errorType: error.type, errorStatus: error.status, requestId: error.requestId };
+}
+
+function requiredPositiveIntegerEnv(name) {
+  const value = env(name);
+  if (!value) throw new Error(`${name} missing`);
+  if (!/^[1-9][0-9]*$/u.test(value)) throw new Error(`${name} must be a positive integer`);
+  return Number(value);
+}
+
 function assertChatCompletionEnvelope(response, label) {
   assertString(response.id, `${label}.id`);
   assertOptionalString(response.object, `${label}.object`);
@@ -299,6 +327,7 @@ const relevantEnv = [
   "RUNINFRA_CANARY_TIMEOUT_SECONDS",
   "RUNINFRA_LLM_MODEL",
   "RUNINFRA_EMBEDDING_MODEL",
+  "RUNINFRA_EMBEDDING_DIMENSIONS",
   "RUNINFRA_IMAGE_MODEL",
   "RUNINFRA_TTS_MODEL",
   "RUNINFRA_TTS_VOICE",
@@ -420,6 +449,28 @@ await record("chat.completions.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL
   return { requestId: response._request_id };
 });
 
+await record("openai.params.chat.completions", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
+  const response = await client().chat.completions.create({
+    model: llmModel,
+    messages: [
+      { role: "system", content: "You are a concise SDK compatibility canary." },
+      { role: "user", content: "Reply with the single word ok." },
+    ],
+    temperature: 0,
+    top_p: 1,
+    max_tokens: 16,
+    stop: ["\n\n"],
+    presence_penalty: 0,
+    frequency_penalty: 0,
+    user: "sdk-canary",
+    metadata: { sdk_canary: "openai_params_chat" },
+  });
+  assertObject(response, "chat params response");
+  assertChatCompletionEnvelope(response, "chat params response");
+  assertRequestId(response._request_id, "openai.params.chat.completions");
+  return { requestId: response._request_id };
+});
+
 await record("chat.completions.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
   const stream = await client().chat.completions.create({
     model: llmModel,
@@ -462,6 +513,21 @@ await record("responses.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], asy
   return { requestId: response._request_id, hasOutput: Boolean(response.output_text || response.output) };
 });
 
+await record("openai.params.responses", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
+  const response = await client().responses.create({
+    model: llmModel,
+    input: "Reply with the single word ok.",
+    instructions: "Be concise.",
+    temperature: 0,
+    max_output_tokens: 16,
+    metadata: { sdk_canary: "openai_params_responses" },
+  });
+  assertObject(response, "responses params response");
+  assertResponsesEnvelope(response, "responses params response");
+  assertRequestId(response._request_id, "openai.params.responses");
+  return { requestId: response._request_id, hasOutput: Boolean(response.output_text || response.output) };
+});
+
 await record("responses.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
   const stream = await client().responses.create({
     model: llmModel,
@@ -496,6 +562,27 @@ await record("embeddings.create", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL
   assertObject(response, "embeddings response");
   assertEmbeddingsEnvelope(response, "embeddings response");
   assertRequestId(response._request_id, "embeddings.create");
+  return { requestId: response._request_id, vectorLength: response.data[0].embedding.length };
+});
+
+await record("openai.params.embeddings", [
+  "RUNINFRA_API_KEY",
+  "RUNINFRA_EMBEDDING_MODEL",
+  "RUNINFRA_EMBEDDING_DIMENSIONS",
+], async () => {
+  const dimensions = requiredPositiveIntegerEnv("RUNINFRA_EMBEDDING_DIMENSIONS");
+  const response = await client().embeddings.create({
+    model: embeddingModel,
+    input: "runinfra sdk openai parameter canary",
+    encoding_format: "float",
+    dimensions,
+  });
+  assertObject(response, "embeddings params response");
+  assertEmbeddingsEnvelope(response, "embeddings params response");
+  assertRequestId(response._request_id, "openai.params.embeddings");
+  if (response.data[0].embedding.length !== dimensions) {
+    throw new Error("embeddings params response ignored requested dimensions");
+  }
   return { requestId: response._request_id, vectorLength: response.data[0].embedding.length };
 });
 
@@ -628,6 +715,20 @@ await record("error.request.invalid_options", [], async () => {
     return { errorType: error.type, errorStatus: error.status };
   }
   throw new Error("invalid request option unexpectedly succeeded");
+});
+
+await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
+  try {
+    await client().responses.create({
+      model: llmModel,
+      input: "Reply with the single word ok.",
+      max_output_tokens: 1,
+      runinfra_unsupported_parameter_probe: "must_error",
+    });
+  } catch (error) {
+    return assertClearUnsupportedParameterError(error, "unsupported body parameter");
+  }
+  throw new Error("unsupported body parameter unexpectedly succeeded");
 });
 
 await record("webhooks.create.unsupported", [], async () => {

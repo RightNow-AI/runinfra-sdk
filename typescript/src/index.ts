@@ -121,6 +121,8 @@ export interface ResponsesCreate {
 export interface EmbeddingRequest extends Record<string, unknown> {
   model: string;
   input: string | string[];
+  encoding_format?: "float" | string;
+  dimensions?: number;
 }
 
 export interface EmbeddingObject extends Record<string, unknown> {
@@ -150,6 +152,9 @@ export interface TranscriptionRequest extends Record<string, unknown> {
   model: string;
   file: Blob;
   filename?: string;
+  language?: string;
+  prompt?: string;
+  response_format?: "json" | "verbose_json" | string;
 }
 
 export interface TranscriptionResponse extends RunInfraRequestMetadata {
@@ -807,6 +812,24 @@ function validateEmbeddingInput(value: unknown): void {
   throw invalidRequestOption("input must be a non-empty string or array of strings");
 }
 
+function validateEmbeddingResponseOptions(body: Record<string, unknown>): void {
+  if (body.encoding_format !== undefined && body.encoding_format !== "float") {
+    throw invalidRequestOption(
+      "embedding encoding_format must be float for native SDK typed responses",
+    );
+  }
+  if (
+    body.dimensions !== undefined &&
+    (
+      typeof body.dimensions !== "number" ||
+      !Number.isSafeInteger(body.dimensions) ||
+      body.dimensions <= 0
+    )
+  ) {
+    throw invalidRequestOption("embedding dimensions must be a positive integer");
+  }
+}
+
 function validateBlobFile(value: unknown): Blob {
   if (!(value instanceof Blob)) {
     throw invalidRequestOption("file must be a Blob");
@@ -877,6 +900,19 @@ function validateMultipartFieldValue(value: unknown): string {
     throw invalidRequestOption("multipart field values must contain only finite numbers");
   }
   return String(value);
+}
+
+function validateTranscriptionResponseFormat(body: Record<string, unknown>): void {
+  const responseFormat = body.response_format;
+  if (
+    responseFormat !== undefined &&
+    responseFormat !== "json" &&
+    responseFormat !== "verbose_json"
+  ) {
+    throw invalidRequestOption(
+      "audio transcription response_format must be json or verbose_json for native SDK typed responses",
+    );
+  }
 }
 
 const JSON_BODY_ERROR = "JSON request body must be JSON-serializable and contain only finite numbers";
@@ -1361,6 +1397,7 @@ export class RunInfra {
       create: (request, requestOptions) => {
         const body = withValidatedModel(request);
         validateEmbeddingInput(body.input);
+        validateEmbeddingResponseOptions(body);
         return this.request("/embeddings", {
           method: "POST",
           body,
@@ -1394,6 +1431,7 @@ export class RunInfra {
       },
       transcriptions: {
         create: (request, requestOptions) => {
+          validateTranscriptionResponseFormat(request);
           const formData = new FormData();
           formData.append("model", validateSdkModel(request.model));
           formData.append(

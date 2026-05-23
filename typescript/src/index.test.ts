@@ -155,6 +155,22 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).not.toContain('voice: process.env.RUNINFRA_TTS_VOICE ?? "default"');
   });
 
+  it("documents the OpenAI-compatible parameter subset and local response-shape guards", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("## OpenAI-compatible parameter scope");
+    expect(readme).toContain("Verified native SDK subset");
+    expect(readme).toContain("`openai.params.chat.completions`");
+    expect(readme).toContain("`openai.params.responses`");
+    expect(readme).toContain("`openai.params.embeddings`");
+    expect(readme).toContain("dimension control");
+    expect(readme).toContain("`encoding_format` values other than `\"float\"`");
+    expect(readme).toContain("`response_format` values other than `\"json\"` or `\"verbose_json\"`");
+    expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
+    expect(liveCanaries).toContain("error.body.unsupported_parameter");
+  });
+
   it("documents local request payload validation before network sends", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
@@ -497,6 +513,31 @@ describe("RunInfra TypeScript SDK", () => {
     );
   });
 
+  it("passes through typed OpenAI-compatible embedding dimensions and float format", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse({ data: [{ embedding: [0.1, 0.2], index: 0 }] }),
+    );
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+    });
+
+    await client.embeddings.create({
+      model: "bge-m3",
+      input: "hello",
+      encoding_format: "float",
+      dimensions: 256,
+    });
+
+    const body = JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      model: "bge-m3",
+      input: "hello",
+      encoding_format: "float",
+      dimensions: 256,
+    });
+  });
+
   it("rejects blank inference model ids before sending", async () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({}));
     const client = new RunInfra({
@@ -655,6 +696,38 @@ describe("RunInfra TypeScript SDK", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("rejects native embedding response shapes it cannot type before sending", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({}));
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.embeddings.create({
+        model: "bge-m3",
+        input: "hello",
+        encoding_format: "base64",
+      }),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "embedding encoding_format must be float for native SDK typed responses",
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.embeddings.create({
+        model: "bge-m3",
+        input: "hello",
+        dimensions: 0,
+      }),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "embedding dimensions must be a positive integer",
+    });
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("rejects unsafe transcription multipart metadata before sending", async () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({}));
     const client = new RunInfra({
@@ -707,6 +780,27 @@ describe("RunInfra TypeScript SDK", () => {
         type: "invalid_request_options",
       });
     }
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects native ASR response formats it cannot parse as JSON before sending", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({}));
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.audio.transcriptions.create({
+        model: "whisper",
+        file: new Blob([new Uint8Array([1])], { type: "audio/wav" }),
+        response_format: "text",
+      }),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "audio transcription response_format must be json or verbose_json for native SDK typed responses",
+    });
 
     expect(fetcher).not.toHaveBeenCalled();
   });
