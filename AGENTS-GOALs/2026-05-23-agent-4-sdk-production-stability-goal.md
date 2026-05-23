@@ -528,3 +528,37 @@ Current blockers remain:
 - This closes the Responses adapter contract-doc gap but does not make strict live multimodal canaries green without production canary env/fixtures.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Local Streaming Fault Canary Coverage
+
+Added deterministic local streaming fault coverage for both public stream surfaces:
+
+- New strict matrix rows: `chat.completions.stream.malformed_frame.local`, `chat.completions.stream.disconnect.local`, `chat.completions.stream.stalled_read.local`, `responses.stream.malformed_frame.local`, `responses.stream.disconnect.local`, and `responses.stream.stalled_read.local`.
+- TypeScript child canary uses local `Response` and `ReadableStream` bodies, never production gateway calls, and asserts typed `RunInfraStreamParseError`, `RunInfraConnectionError`, and `RunInfraTimeoutError` behavior with request IDs.
+- Python child canary uses a local transport plus byte iterators that inject malformed frames, connection resets, and timeout errors, also without production calls.
+- Runner readiness marks these `.local` rows as ready without env because they prove installed SDK stream behavior, not deployed model behavior.
+- TS/Python tests now assert runner, child canaries, and docs stay in parity for all six rows.
+- `LIVE-CANARIES.md` documents the local rows separately from live network streaming rows and includes them in the matrix list.
+
+Fresh local verification:
+
+- Targeted local streaming-fault tests passed: TS 1 test, Python 1 test.
+- Python canary syntax passed.
+- Source canary report passed: TypeScript 13 passed/26 skipped, Python 13 passed/26 skipped.
+- TS typecheck passed.
+- TS tests passed, 124 tests.
+- Python tests passed, 111 tests plus 105 subtests.
+- Workflow policy and version sync passed for `0.1.4`.
+- TS build and `pnpm --dir typescript pack` passed; npm tarball contents remained limited to changelog, dist, license, package.json, and README.
+- Python wheel/sdist build, Python package verifier, and `twine check` passed.
+- npm package verifier and clean artifact install/import for both npm and Python passed.
+- Artifact canary report passed: TypeScript 13 passed/26 skipped, Python 13 passed/26 skipped.
+- Strict preflight remains intentionally blocked: 13 ready rows and 26 blocked rows because no scoped live canary env/fixtures are present in this shell.
+- `git diff --check` passed with CRLF warnings only.
+- Second-opinion review found no Critical or Important issues. Its minor docs finding was fixed.
+
+Current blockers remain:
+
+- This proves deterministic SDK stream-fault handling, not live multimodal GA readiness.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.

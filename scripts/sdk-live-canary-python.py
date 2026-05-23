@@ -24,6 +24,10 @@ from runinfra import (  # noqa: E402
     ModelNotFoundError,
     PermissionDeniedError,
     RunInfra,
+    RunInfraConnectionError,
+    RunInfraResponse,
+    RunInfraStreamParseError,
+    RunInfraTimeoutError,
     construct_webhook_event,
     verify_webhook_signature,
 )
@@ -395,6 +399,98 @@ def read_slow_stream(
     return {"events": events, "delay": "set_redacted"}
 
 
+class LocalStreamTransport:
+    def __init__(self, body: Any, request_id: str) -> None:
+        self.body = body
+        self.request_id = request_id
+
+    def __call__(self, _request: Any) -> RunInfraResponse:
+        return RunInfraResponse(
+            200,
+            {"content-type": "text/event-stream", "x-request-id": self.request_id},
+            self.body,
+        )
+
+
+def local_stream_client(body: Any, request_id: str) -> RunInfra:
+    return RunInfra(
+        api_key="sk-ri-live-canary-local",
+        base_url="http://localhost:1/v1",
+        max_retries=0,
+        transport=LocalStreamTransport(body, request_id),
+    )
+
+
+def local_chat_stream(body: Any, request_id: str) -> Any:
+    stream = local_stream_client(body, request_id).chat.completions.create(
+        model="runinfra-local-stream-model",
+        messages=[{"role": "user", "content": "local stream canary"}],
+        stream=True,
+    )
+    assert_request_id(stream.request_id, request_id)
+    return stream
+
+
+def local_responses_stream(body: Any, request_id: str) -> Any:
+    stream = local_stream_client(body, request_id).responses.create(
+        model="runinfra-local-stream-model",
+        input="local stream canary",
+        stream=True,
+    )
+    assert_request_id(stream.request_id, request_id)
+    return stream
+
+
+def expect_stream_error(
+    stream: Any,
+    error_class: Any,
+    error_type: str,
+    label: str,
+    *,
+    read_first: bool = False,
+) -> Dict[str, Any]:
+    iterator = iter(stream)
+    try:
+        if read_first:
+            first = next(iterator)
+            assert_object(first, f"{label} first event")
+        try:
+            next(iterator)
+        except error_class as error:
+            if getattr(error, "type", None) != error_type:
+                raise AssertionError(f"{label} expected {error_type}, got {getattr(error, 'type', None) or 'unknown'}")
+            request_id = getattr(error, "request_id", None)
+            assert_request_id(request_id, label)
+            return {"requestId": request_id, "errorType": error_type, "errorName": error.__class__.__name__}
+        except BaseException as error:
+            raise AssertionError(f"{label} expected {error_class.__name__}, got {error.__class__.__name__}") from error
+        raise AssertionError(f"{label} did not raise the expected stream error")
+    finally:
+        close = getattr(iterator, "close", None)
+        if callable(close):
+            close()
+
+
+def chat_disconnect_chunks() -> Iterable[bytes]:
+    yield b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'
+    raise ConnectionResetError("stream reset")
+
+
+def chat_stalled_chunks() -> Iterable[bytes]:
+    yield b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'
+    raise TimeoutError("stream read timed out")
+
+
+def responses_disconnect_chunks() -> Iterable[bytes]:
+    yield b'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+    raise ConnectionResetError("stream reset")
+
+
+def responses_stalled_chunks() -> Iterable[bytes]:
+    yield b'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+    raise TimeoutError("stream read timed out")
+
+
 def is_chat_terminal_event(event: Dict[str, Any]) -> bool:
     choices = event.get("choices")
     return isinstance(choices, list) and any(
@@ -550,11 +646,17 @@ def main() -> int:
     record("chat.completions.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_final(client(), llm_model))
     record("chat.completions.stream.cancel", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_cancel(client(), llm_model))
     record("chat.completions.stream.slow_consumer", lambda: slow_stream_requirements(), lambda: _chat_stream_slow_consumer(client(), llm_model))
+    record("chat.completions.stream.malformed_frame.local", [], _chat_stream_malformed_frame_local)
+    record("chat.completions.stream.disconnect.local", [], _chat_stream_disconnect_local)
+    record("chat.completions.stream.stalled_read.local", [], _chat_stream_stalled_read_local)
     record("responses.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_create(client(), llm_model))
     record("openai.params.responses", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_params(client(), llm_model))
     record("responses.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_stream_final(client(), llm_model))
     record("responses.stream.cancel", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_stream_cancel(client(), llm_model))
     record("responses.stream.slow_consumer", lambda: slow_stream_requirements(), lambda: _responses_stream_slow_consumer(client(), llm_model))
+    record("responses.stream.malformed_frame.local", [], _responses_stream_malformed_frame_local)
+    record("responses.stream.disconnect.local", [], _responses_stream_disconnect_local)
+    record("responses.stream.stalled_read.local", [], _responses_stream_stalled_read_local)
     record("embeddings.create", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"], lambda: _embeddings_create(client(), embedding_model))
     record(
         "openai.params.embeddings",
@@ -758,6 +860,38 @@ def _chat_stream_slow_consumer(client: RunInfra, model: str) -> Dict[str, Any]:
     }
 
 
+def _chat_stream_malformed_frame_local() -> Dict[str, Any]:
+    stream = local_chat_stream(b"data: {not-json}\n\n", "req-local-chat-malformed")
+    return expect_stream_error(
+        stream,
+        RunInfraStreamParseError,
+        "stream_parse_error",
+        "chat.completions.stream.malformed_frame.local",
+    )
+
+
+def _chat_stream_disconnect_local() -> Dict[str, Any]:
+    stream = local_chat_stream(chat_disconnect_chunks(), "req-local-chat-disconnect")
+    return expect_stream_error(
+        stream,
+        RunInfraConnectionError,
+        "connection_error",
+        "chat.completions.stream.disconnect.local",
+        read_first=True,
+    )
+
+
+def _chat_stream_stalled_read_local() -> Dict[str, Any]:
+    stream = local_chat_stream(chat_stalled_chunks(), "req-local-chat-stalled")
+    return expect_stream_error(
+        stream,
+        RunInfraTimeoutError,
+        "timeout_error",
+        "chat.completions.stream.stalled_read.local",
+        read_first=True,
+    )
+
+
 def _responses_create(client: RunInfra, model: str) -> Dict[str, Any]:
     response = client.responses.create(
         model=model,
@@ -833,6 +967,38 @@ def _responses_stream_slow_consumer(client: RunInfra, model: str) -> Dict[str, A
         "eventCount": len(events),
         "slowConsumerDelayMs": result["delay"],
     }
+
+
+def _responses_stream_malformed_frame_local() -> Dict[str, Any]:
+    stream = local_responses_stream(b"data: {not-json}\n\n", "req-local-responses-malformed")
+    return expect_stream_error(
+        stream,
+        RunInfraStreamParseError,
+        "stream_parse_error",
+        "responses.stream.malformed_frame.local",
+    )
+
+
+def _responses_stream_disconnect_local() -> Dict[str, Any]:
+    stream = local_responses_stream(responses_disconnect_chunks(), "req-local-responses-disconnect")
+    return expect_stream_error(
+        stream,
+        RunInfraConnectionError,
+        "connection_error",
+        "responses.stream.disconnect.local",
+        read_first=True,
+    )
+
+
+def _responses_stream_stalled_read_local() -> Dict[str, Any]:
+    stream = local_responses_stream(responses_stalled_chunks(), "req-local-responses-stalled")
+    return expect_stream_error(
+        stream,
+        RunInfraTimeoutError,
+        "timeout_error",
+        "responses.stream.stalled_read.local",
+        read_first=True,
+    )
 
 
 def _embeddings_create(client: RunInfra, model: str) -> Dict[str, Any]:

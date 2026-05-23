@@ -378,6 +378,41 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`");
   });
 
+  it("keeps child canaries in parity for local streaming fault coverage", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const rows = [
+      "chat.completions.stream.malformed_frame.local",
+      "responses.stream.malformed_frame.local",
+      "chat.completions.stream.disconnect.local",
+      "responses.stream.disconnect.local",
+      "chat.completions.stream.stalled_read.local",
+      "responses.stream.stalled_read.local",
+    ];
+
+    for (const row of rows) {
+      expect(runner).toContain(`"${row}"`);
+      expect(typescriptCanary).toContain(`record("${row}"`);
+      expect(pythonCanary).toContain(`"${row}"`);
+      expect(liveCanaries).toContain(row);
+    }
+
+    expect(typescriptCanary).toContain("RunInfraStreamParseError");
+    expect(typescriptCanary).toContain("RunInfraConnectionError");
+    expect(typescriptCanary).toContain("RunInfraTimeoutError");
+    expect(typescriptCanary).toContain("localStreamClient");
+    expect(typescriptCanary).toContain("expectStreamError");
+    expect(pythonCanary).toContain("RunInfraStreamParseError");
+    expect(pythonCanary).toContain("RunInfraConnectionError");
+    expect(pythonCanary).toContain("RunInfraTimeoutError");
+    expect(pythonCanary).toContain("local_stream_client");
+    expect(pythonCanary).toContain("expect_stream_error");
+    expect(liveCanaries).toContain("Local streaming fault rows");
+    expect(liveCanaries).toContain("do not call the production gateway");
+  });
+
   it("documents public-repo production promotion without stale monorepo commands", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 

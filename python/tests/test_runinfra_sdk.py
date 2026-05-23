@@ -300,6 +300,39 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Slow-consumer streaming rows", live_canaries)
         self.assertIn("bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`", live_canaries)
 
+    def test_child_canaries_cover_local_streaming_fault_rows(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        rows = (
+            "chat.completions.stream.malformed_frame.local",
+            "responses.stream.malformed_frame.local",
+            "chat.completions.stream.disconnect.local",
+            "responses.stream.disconnect.local",
+            "chat.completions.stream.stalled_read.local",
+            "responses.stream.stalled_read.local",
+        )
+
+        for row in rows:
+            self.assertIn(f'"{row}"', runner)
+            self.assertIn(f'record("{row}"', typescript_canary)
+            self.assertIn(f'"{row}"', python_canary)
+            self.assertIn(row, live_canaries)
+
+        self.assertIn("RunInfraStreamParseError", typescript_canary)
+        self.assertIn("RunInfraConnectionError", typescript_canary)
+        self.assertIn("RunInfraTimeoutError", typescript_canary)
+        self.assertIn("localStreamClient", typescript_canary)
+        self.assertIn("expectStreamError", typescript_canary)
+        self.assertIn("RunInfraStreamParseError", python_canary)
+        self.assertIn("RunInfraConnectionError", python_canary)
+        self.assertIn("RunInfraTimeoutError", python_canary)
+        self.assertIn("local_stream_client", python_canary)
+        self.assertIn("expect_stream_error", python_canary)
+        self.assertIn("Local streaming fault rows", live_canaries)
+        self.assertIn("do not call the production gateway", live_canaries)
+
     def test_python_live_canary_validates_slow_consumer_delay_before_opening_stream(self):
         canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
         spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)

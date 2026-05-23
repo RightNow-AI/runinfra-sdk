@@ -477,6 +477,9 @@ const {
   PermissionDeniedError,
   RUNINFRA_SDK_VERSION,
   RunInfra,
+  RunInfraConnectionError,
+  RunInfraStreamParseError,
+  RunInfraTimeoutError,
   constructWebhookEvent,
   verifyWebhookSignature,
 } = sdkModule;
@@ -501,6 +504,95 @@ function client(options = {}) {
     maxRetries: 0,
     ...options,
   });
+}
+
+const streamEncoder = new TextEncoder();
+
+function localStreamResponse(body, requestId) {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "x-request-id": requestId,
+    },
+  });
+}
+
+function localStreamClient(body, requestId, timeoutMs = 50) {
+  return client({
+    apiKey: "sk-ri-live-canary-local",
+    baseURL: "http://localhost:1/v1",
+    timeoutMs,
+    fetch: async () => localStreamResponse(body, requestId),
+  });
+}
+
+function disconnectingStream(firstFrame) {
+  let reads = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (reads === 0) {
+        reads += 1;
+        controller.enqueue(streamEncoder.encode(firstFrame));
+        return;
+      }
+      controller.error(new TypeError("stream reset"));
+    },
+  });
+}
+
+function stalledStream() {
+  return new ReadableStream({
+    start() {
+      // Keep the stream open so the SDK read timeout is what ends the row.
+    },
+  });
+}
+
+async function localChatStream(body, requestId, timeoutMs) {
+  const stream = await localStreamClient(body, requestId, timeoutMs).chat.completions.create({
+    model: "runinfra-local-stream-model",
+    messages: [{ role: "user", content: "local stream canary" }],
+    stream: true,
+  });
+  assertRequestId(stream.requestId, requestId);
+  return stream;
+}
+
+async function localResponsesStream(body, requestId, timeoutMs) {
+  const stream = await localStreamClient(body, requestId, timeoutMs).responses.create({
+    model: "runinfra-local-stream-model",
+    input: "local stream canary",
+    stream: true,
+  });
+  assertRequestId(stream.requestId, requestId);
+  return stream;
+}
+
+async function expectStreamError(stream, errorClass, errorType, label, options = {}) {
+  const iterator = stream[Symbol.asyncIterator]();
+  try {
+    if (options.readFirst === true) {
+      const first = await iterator.next();
+      if (first.done) throw new Error(`${label} ended before the injected stream fault`);
+      assertObject(first.value, `${label} first event`);
+    }
+    await iterator.next();
+    throw new Error(`${label} did not raise the expected stream error`);
+  } catch (error) {
+    if (!(error instanceof errorClass)) {
+      throw new Error(`${label} expected ${errorClass.name}, got ${error?.name ?? typeof error}`);
+    }
+    if (error.type !== errorType) {
+      throw new Error(`${label} expected ${errorType}, got ${error.type ?? "unknown"}`);
+    }
+    assertRequestId(error.requestId, label);
+    return { requestId: error.requestId, errorType: error.type, errorName: error.name };
+  } finally {
+    if (typeof iterator.return === "function") {
+      await iterator.return().catch(() => undefined);
+    }
+  }
 }
 
 function speechVoicePayload() {
@@ -771,6 +863,40 @@ await record("chat.completions.stream.slow_consumer", slowStreamRequirements, as
   return { requestId: stream.requestId, eventCount: events.length, slowConsumerDelayMs: result.delayMs };
 });
 
+await record("chat.completions.stream.malformed_frame.local", [], async () => {
+  const stream = await localChatStream("data: {not-json}\n\n", "req-local-chat-malformed");
+  return expectStreamError(
+    stream,
+    RunInfraStreamParseError,
+    "stream_parse_error",
+    "chat.completions.stream.malformed_frame.local",
+  );
+});
+
+await record("chat.completions.stream.disconnect.local", [], async () => {
+  const stream = await localChatStream(
+    disconnectingStream('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'),
+    "req-local-chat-disconnect",
+  );
+  return expectStreamError(
+    stream,
+    RunInfraConnectionError,
+    "connection_error",
+    "chat.completions.stream.disconnect.local",
+    { readFirst: true },
+  );
+});
+
+await record("chat.completions.stream.stalled_read.local", [], async () => {
+  const stream = await localChatStream(stalledStream(), "req-local-chat-stalled", 20);
+  return expectStreamError(
+    stream,
+    RunInfraTimeoutError,
+    "timeout_error",
+    "chat.completions.stream.stalled_read.local",
+  );
+});
+
 await record("responses.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
   const response = await client().responses.create({
     model: llmModel,
@@ -839,6 +965,40 @@ await record("responses.stream.slow_consumer", slowStreamRequirements, async () 
   const { events } = result;
   events.forEach((event, index) => assertResponsesStreamEnvelope(event, `responses slow-consumer stream event ${index}`));
   return { requestId: stream.requestId, eventCount: events.length, slowConsumerDelayMs: result.delayMs };
+});
+
+await record("responses.stream.malformed_frame.local", [], async () => {
+  const stream = await localResponsesStream("data: {not-json}\n\n", "req-local-responses-malformed");
+  return expectStreamError(
+    stream,
+    RunInfraStreamParseError,
+    "stream_parse_error",
+    "responses.stream.malformed_frame.local",
+  );
+});
+
+await record("responses.stream.disconnect.local", [], async () => {
+  const stream = await localResponsesStream(
+    disconnectingStream('data: {"type":"response.output_text.delta","delta":"hi"}\n\n'),
+    "req-local-responses-disconnect",
+  );
+  return expectStreamError(
+    stream,
+    RunInfraConnectionError,
+    "connection_error",
+    "responses.stream.disconnect.local",
+    { readFirst: true },
+  );
+});
+
+await record("responses.stream.stalled_read.local", [], async () => {
+  const stream = await localResponsesStream(stalledStream(), "req-local-responses-stalled", 20);
+  return expectStreamError(
+    stream,
+    RunInfraTimeoutError,
+    "timeout_error",
+    "responses.stream.stalled_read.local",
+  );
 });
 
 await record("embeddings.create", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"], async () => {

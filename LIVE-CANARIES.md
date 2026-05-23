@@ -85,11 +85,17 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `chat.completions.stream.final`
 - `chat.completions.stream.cancel`
 - `chat.completions.stream.slow_consumer`
+- `chat.completions.stream.malformed_frame.local`
+- `chat.completions.stream.disconnect.local`
+- `chat.completions.stream.stalled_read.local`
 - `responses.create`
 - `openai.params.responses`
 - `responses.stream.final`
 - `responses.stream.cancel`
 - `responses.stream.slow_consumer`
+- `responses.stream.malformed_frame.local`
+- `responses.stream.disconnect.local`
+- `responses.stream.stalled_read.local`
 - `embeddings.create`
 - `openai.params.embeddings`
 - `images.generate`
@@ -129,8 +135,17 @@ Responses API semantics.
 Slow-consumer streaming rows drain real chat and Responses SSE streams while
 pausing after each event; reports record only request IDs, event counts, and a
 redacted delay marker. The pause budget is bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`,
-so an excessive valid delay fails closed instead of holding a canary job open. The
-OpenAI parameter rows prove chat sampling and metadata pass-through, chat
+so an excessive valid delay fails closed instead of holding a canary job open.
+Local streaming fault rows do not call the production gateway; they run against
+deterministic local SSE bodies from the installed SDK package and prove typed
+malformed-frame, disconnect, and stalled-read error handling for both chat and
+Responses streams: `chat.completions.stream.malformed_frame.local`,
+`responses.stream.malformed_frame.local`,
+`chat.completions.stream.disconnect.local`,
+`responses.stream.disconnect.local`,
+`chat.completions.stream.stalled_read.local`, and
+`responses.stream.stalled_read.local`.
+The OpenAI parameter rows prove chat sampling and metadata pass-through, chat
 `stream_options.include_usage` usage chunks with numeric token fields but
 without recording token counts, Responses instructions, metadata, temperature,
 output-token controls, embeddings `encoding_format: "float"` plus `dimensions`,
