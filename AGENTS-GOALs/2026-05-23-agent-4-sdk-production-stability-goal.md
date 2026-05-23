@@ -13,7 +13,7 @@ Agent 4 owns SDK hardening, package safety, live contract proof, and release evi
 
 ## Verified State
 
-- Local `main` is ahead of `origin/main` by 8 commits; PR #9 contains the SDK GA canary/security work.
+- Local `main` carries PR #9 commits; verify exact ahead count with `git status`.
 - PR checks are green: TS SDK, Python SDK, CodeQL/default code scanning, package/build/test gates.
 - Branch protection is active: merge is blocked by `REVIEW_REQUIRED`; current auth user cannot self-approve.
 - Code scanning showed 0 open alerts and 0 open high/critical alerts. Default branch still has 3 moderate Dependabot alerts.
