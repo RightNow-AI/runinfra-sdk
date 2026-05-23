@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,7 +9,8 @@ description = "RunInfra SDK for optimized inference deployments (beta; LLM + emb
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "RunInfra" }]
-license = { file = "LICENSE" }
+license = "LicenseRef-Proprietary"
+license-files = ["LICENSE"]
 keywords = [
   "runinfra",
   "inference",

@@ -107,7 +107,7 @@ combination:
 | `client.audio.transcriptions.create` | **Experimental** — same |
 | `client.webhooks.verifySignature` / `.constructEvent` | Works locally |
 | `client.webhooks.create` / `.list` | Throws `UnsupportedOperationError` — delivery not shipped |
-| `client.voice.pipeline.create` | Throws `UnsupportedOperationError` — not shipped |
+| `client.voice.pipeline.create` | **Experimental** - posts binary audio to the pipeline-scoped `/pipeline` route, not live-canary verified |
 
 The READMEs include a Modality Status table that mirrors this. JSDoc
 (`@experimental`) and Python docstrings (`[EXPERIMENTAL]`) on the classes

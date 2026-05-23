@@ -69,6 +69,33 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).not.toContain("reach every active deployment");
   });
 
+  it("keeps the root README snippets safe and modality status aligned with shipped SDK behavior", () => {
+    const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("const apiKey = process.env.RUNINFRA_API_KEY;");
+    expect(readme).toContain("Set RUNINFRA_API_KEY");
+    expect(readme).not.toContain("process.env.RUNINFRA_API_KEY!");
+
+    expect(readme).toContain("api_key = os.environ.get(\"RUNINFRA_API_KEY\")");
+    expect(readme).not.toContain("os.environ[\"RUNINFRA_API_KEY\"]");
+
+    expect(readme).toContain("| Webhook delivery | Not shipped");
+    expect(readme).toContain("| Voice pipeline | **Experimental**, pipeline-scoped route, not live-canary verified |");
+    expect(readme).not.toContain("Webhook delivery, Voice pipeline | Not shipped");
+  });
+
+  it("documents voice pipeline as experimental instead of unsupported", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+
+    expect(readme).toContain(
+      "| Voice pipeline | `client.voice.pipeline.create` | **Experimental**, pipeline-scoped route, not live-canary verified |",
+    );
+    expect(readme).not.toContain("Voice pipeline | `client.voice.pipeline.create` | Not shipped");
+    expect(changelog).not.toContain("client.voice.pipeline.create` is not shipped");
+    expect(changelog).toContain("client.voice.pipeline.create` posts audio to the pipeline-scoped `/pipeline` route");
+  });
+
   it("documents safe base URL requirements", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
@@ -163,27 +190,21 @@ describe("RunInfra TypeScript SDK", () => {
     );
   });
 
-  it("documents the strict live canary gate before production promotion", () => {
+  it("documents public-repo production promotion without stale monorepo commands", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
     expect(readme).toContain("For production promotion");
-    expect(readme).toContain("pnpm verify:sdk-release");
-    expect(readme).toContain("pnpm test:sdk-canary:live -- --print-env-template");
-    expect(readme).toContain(".env.sdk-live.local");
-    expect(readme).toContain("pnpm test:sdk-canary:live -- --env-file .env.sdk-live.local --print-env-status");
-    expect(readme).toContain("pnpm discover:sdk-live-targets -- --env-file .env.sdk-live.local --probe-inference --report artifacts/sdk/live-targets-discovery.json");
-    expect(readme).toContain("pnpm verify:sdk-live-targets -- --env-file .env.sdk-live.local --require-available --discovery-report artifacts/sdk/live-targets-discovery.json");
-    expect(readme).toContain("pnpm test:sdk-canary:live -- --env-file .env.sdk-live.local --check-env-only");
-    expect(readme).toContain("pnpm test:sdk-canary:live -- --env-file .env.sdk-live.local --discovery-report artifacts/sdk/live-targets-discovery.json --report artifacts/sdk/live-canary.json");
-    expect(readme).toContain("pnpm verify:sdk-live-report");
-    expect(readme).toContain("pnpm verify:sdk-goal -- --release-report artifacts/sdk/release-verification.json --live-report artifacts/sdk/live-canary.json --live-targets-report artifacts/sdk/live-targets-discovery.json --env-check-report artifacts/sdk/live-canary-env-check.json --focused-smoke-report artifacts/sdk/native-focused-smoke.json --openai-focused-smoke-report artifacts/sdk/openai-focused-smoke.json --report artifacts/sdk/goal-readiness.json");
-    expect(readme).toContain("The discovery report also includes `nextActions`");
-    expect(readme).toContain("A skipped probe is diagnostic only");
-    expect(readme).toContain("only `passed` probes can promote `targets_available`");
-    expect(readme).toContain("LLM, embeddings, image, TTS, and ASR");
-    expect(readme).toContain("Focused `pnpm test:sdk-canary -- --report ...` smoke reports");
-    expect(readme).toContain("verify:sdk-goal");
-    expect(readme).toContain("generated from older source");
+    expect(readme).toContain("This extracted public repo does not define the old monorepo");
+    expect(readme).toContain("node scripts/verify-workflow-policy.mjs");
+    expect(readme).toContain("node scripts/verify-version-sync.mjs");
+    expect(readme).toContain("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz");
+    expect(readme).toContain("python scripts/verify-python-package.py python/dist");
+    expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true");
+    expect(readme).toContain("Run live deployment canaries from RunPipe or RunInfra-Engine");
+    expect(readme).toContain("Do not use npm or PyPI tokens");
+    expect(readme).not.toContain("pnpm verify:sdk-release");
+    expect(readme).not.toContain("pnpm test:sdk-canary:live");
+    expect(readme).not.toContain("RUNINFRA_SDK_CI_TOKEN");
   });
 
   it("calls pipeline-scoped OpenAI-compatible chat completions", async () => {

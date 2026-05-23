@@ -22,13 +22,14 @@ This SDK is in **beta**. The surfaces below have different verification levels:
 | Audio (TTS) | `client.audio.speech.create` | **Experimental**, not live-canary verified |
 | Audio (ASR) | `client.audio.transcriptions.create` | **Experimental**, not live-canary verified |
 | Webhooks | `client.webhooks.*` | Local verification helpers only; remote delivery not shipped |
-| Voice pipeline | `client.voice.pipeline.create` | Not shipped; throws `UnsupportedOperationError` |
+| Voice pipeline | `client.voice.pipeline.create` | **Experimental**, pipeline-scoped route, not live-canary verified |
 
-The HTTP envelopes for experimental surfaces match the OpenAI API contract,
-but we haven't yet completed a full end-to-end live-canary deployment for
-those modalities in the public gateway. They will reach GA in v1.0.0 once
-the canary suite covers all five modalities. Test against your own deployed
-models before using experimental surfaces in production.
+Experimental surfaces match their documented gateway contracts, but we have
+not yet completed a full end-to-end live-canary deployment for those
+modalities in the public gateway. They will reach GA in v1.0.0 once the
+canary suite covers all five model modalities plus voice pipeline. Test
+against your own deployed models before using experimental surfaces in
+production.
 
 ## Create a client
 
@@ -246,137 +247,46 @@ client = OpenAI(
 
 ## Production promotion
 
-Local package tests prove SDK shape, retry behavior, streaming parsing, and
-typed errors. They do not prove that a newly optimized deployment is ready for
-customers. For production promotion, run the strict live SDK canary gate from
-the RunPipe repo against the same base URL and API key you plan to expose. The gate starts with `test:sdk-live-api-key`, which verifies the plaintext key hashes to an active workspace-scoped `api_keys` row before any paid inference canary runs:
+Local package tests prove SDK shape, retry behavior, streaming parsing, typed
+errors, package contents, version sync, and trusted-publishing workflow policy.
+They do not prove that a newly optimized deployment is ready for customers.
+This extracted public repo does not define the old monorepo live-canary
+commands.
+
+For production promotion from this repo, run these local checks from the
+repository root before opening a release PR:
 
 ```bash
-pnpm verify:sdk-release
-pnpm test:sdk-canary:live -- --print-env-template
-pnpm test:sdk-canary:live -- --env-file .env.sdk-live.local --print-env-status
-pnpm sync:sdk-live-env -- --source .env.local --target .env.sdk-live.local
-pnpm discover:sdk-live-targets -- --env-file .env.sdk-live.local --probe-inference --report artifacts/sdk/live-targets-discovery.json
-pnpm bootstrap:sdk-live-key -- --env-file .env.sdk-live.local
-pnpm discover:sdk-live-targets -- --env-file .env.sdk-live.local --probe-inference --report artifacts/sdk/live-targets-discovery.json
-pnpm prepare:sdk-live-env -- --discovery-report artifacts/sdk/live-targets-discovery.json --output .env.sdk-live.local
-pnpm discover:sdk-live-targets -- --env-file .env.sdk-live.local --probe-inference --report artifacts/sdk/live-targets-discovery.json
-pnpm verify:sdk-live-targets -- --env-file .env.sdk-live.local --require-available --discovery-report artifacts/sdk/live-targets-discovery.json
-pnpm test:sdk-canary:live -- --env-file .env.sdk-live.local --check-env-only
-pnpm test:sdk-canary:live -- --env-file .env.sdk-live.local --discovery-report artifacts/sdk/live-targets-discovery.json --report artifacts/sdk/live-canary.json
-pnpm verify:sdk-live-report -- artifacts/sdk/live-canary.json
-pnpm test:sdk-canary -- --env-file .env.sdk-live.local --report artifacts/sdk/native-focused-smoke.json
-pnpm test:openai-compat -- --env-file .env.sdk-live.local --report artifacts/sdk/openai-focused-smoke.json
-pnpm verify:sdk-goal -- --release-report artifacts/sdk/release-verification.json --live-report artifacts/sdk/live-canary.json --live-targets-report artifacts/sdk/live-targets-discovery.json --env-check-report artifacts/sdk/live-canary-env-check.json --focused-smoke-report artifacts/sdk/native-focused-smoke.json --openai-focused-smoke-report artifacts/sdk/openai-focused-smoke.json --report artifacts/sdk/goal-readiness.json
-pnpm verify:sdk-publish -- --release-report artifacts/sdk/release-verification.json --goal-report artifacts/sdk/goal-readiness.json --live-report artifacts/sdk/live-canary.json --live-targets-report artifacts/sdk/live-targets-discovery.json --env-check-report artifacts/sdk/live-canary-env-check.json --focused-smoke-report artifacts/sdk/native-focused-smoke.json --openai-focused-smoke-report artifacts/sdk/openai-focused-smoke.json --report artifacts/sdk/publish-readiness.json
+node scripts/verify-workflow-policy.mjs
+node scripts/verify-version-sync.mjs
+pnpm --dir typescript install --lockfile=false
+pnpm --dir typescript exec tsc -p tsconfig.json --noEmit
+pnpm --dir typescript test
+pnpm --dir typescript build
+pnpm --dir typescript pack
+node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz
+python -m pip install -e python pytest build twine
+python -m pytest python/tests -v
+python -m build python
+python scripts/verify-python-package.py python/dist
+python -m twine check python/dist/*
 ```
 
-Save the printed template as `.env.sdk-live.local`; it is ignored by git and
-should contain the real production gateway, workspace-scoped API key, database
-URL, pipeline-scoped API key for the optimized LLM pipeline, `RUNPOD_API_KEY`,
-deployed model IDs, the optimized LLM `TEST_PIPELINE_ID`, TTS proof inputs, and
-ASR clip path. `RUNPOD_API_KEY` is
-used only by discovery to prove checked RunPod endpoint inventory. A checked
-inventory needs endpointCount greater than zero, and `endpointCount: 0` blocks
-promotion even if old database rows still mention active deployments. Discovery
-also blocks any selected target with `endpoint_not_in_runpod_inventory` and
-emits `runpod_endpoint_inventory_empty` when RunPod returns no endpoints. For
-operator handoffs, set optional `RUNPOD_EXPECTED_ENDPOINT_IDS` to a
-comma-separated list of endpoint IDs. Discovery compares those IDs against the
-same checked inventory and reports only redacted verified or missing endpoint
-IDs, so a wrong RunPod account/scope becomes an explicit blocker.
-For TTS, set either `TEST_TTS_VOICE` or both `TEST_TTS_REF_AUDIO` and
-`TEST_TTS_REF_TEXT` for Base/voice-cloning models.
-`sync:sdk-live-env` copies `RUNPOD_API_KEY` from the source env file when it is
-present. If you keep the RunPod key only in the shell, discovery uses that
-process value instead of the generated placeholder in `.env.sdk-live.local`.
-Use `--print-env-status` before running the canary to see missing, placeholder,
-or invalid fields without printing API keys, database URLs, or file paths. Use `pnpm sync:sdk-live-env -- --source .env.local --target .env.sdk-live.local` to copy whitelisted local values such as `DATABASE_URL` without printing secrets, then use `pnpm discover:sdk-live-targets -- --env-file .env.sdk-live.local --probe-inference --report artifacts/sdk/live-targets-discovery.json` to inspect
-which `active_verified` deployments can satisfy strict modality coverage without
-printing API keys, key hashes, or database credentials. Deployments that are
-close but not promotable appear under redacted `nearEligibleTargets` with
-reasons such as `status_not_active_verified`, `missing_inference_url`, or
-`missing_endpoint_id`. The discovery report also includes `nextActions`, so
-deployment and SDK agents can follow safe commands without scraping error text.
-A skipped probe is diagnostic only. It means discovery intentionally avoided a
-live inference call after an earlier eligibility failure; only `passed` probes can promote `targets_available`.
-After discovery reports eligible `active_verified` targets, `pnpm bootstrap:sdk-live-key -- --env-file .env.sdk-live.local` can create a workspace-scoped key for that workspace, store only its hash in the database, and write the plaintext once into the ignored live env file without printing it. Rerun discovery after bootstrap so the report proves the selected workspace now has an active workspace-scoped key.
-When discovery is complete, use
-`pnpm prepare:sdk-live-env -- --discovery-report artifacts/sdk/live-targets-discovery.json --output .env.sdk-live.local`
-to fill the deployment model IDs and the optimized LLM `TEST_PIPELINE_ID`, then rerun `discover:sdk-live-targets` against the prepared env file.
-`prepare:sdk-live-env` cannot recover a one-time plaintext pipeline secret. Set
-`RUNINFRA_PIPELINE_API_KEY` from the Deploy tab for `TEST_PIPELINE_ID` before
-strict live canaries, while keeping `RUNINFRA_API_KEY` workspace-scoped for
-billing and flat-route verification.
-Before running live canaries, run
-`pnpm verify:sdk-live-targets -- --env-file .env.sdk-live.local --require-available --discovery-report artifacts/sdk/live-targets-discovery.json`
-against the prepared-env discovery report to validate that it is redacted, same-workspace, uses exact live env values, and only promotes callable `active_verified` targets.
-If the output file already has `RUNINFRA_API_KEY`, `RUNINFRA_PIPELINE_API_KEY`,
-`DATABASE_URL`, `TEST_ASR_FILE`, or local TTS reference inputs, the helper
-preserves them and does not print them.
+Then trigger a GitHub dry-run publish from `main`:
 
-That gate must cover LLM, embeddings, image, TTS, and ASR endpoints before the
-deployment is treated as production verified. Those strict modality targets must
-be distinct deployed model IDs in the same workspace, because the promotion
-canary uses one workspace-scoped key and then proves billing for every reported
-model. The generated live report also records the SDK version and source digest,
-so stale canaries cannot promote a newer SDK build.
-Focused `pnpm test:sdk-canary -- --report ...` smoke reports also record the
-same SDK / Docs / Engine source digest and stay redacted. The raw
-OpenAI-compatible focused smoke writes `artifacts/sdk/openai-focused-smoke.json`
-and the native SDK smoke writes `artifacts/sdk/native-focused-smoke.json`.
-`verify:sdk-goal` rejects either focused smoke report when it was generated from older source,
-so focused LLM debugging evidence cannot be reused as fresh promotion evidence.
-Each canary result also records redacted `checks` for the required proof checks
-it emitted. If a canary exits successfully but misses a required proof line, the
-strict report records `missingChecks` and stays blocked. The runner only counts
-a proof line when the child canary prints `[ OK ] <required check>`; `[FAIL]` lines do not satisfy promotion evidence. The proof set covers model discovery
-and retrieval, LLM responses and streaming,
-pipeline-scoped native SDK responses, OpenAI-compatible pipeline-scoped `/v1/responses`, embeddings vectors, image data, TTS audio bytes, ASR transcription text,
-OpenAI-compatible auth and error paths, native SDK typed `AuthenticationError`
-mapping, request ID propagation, unsupported webhook guards, API key scope, and
-billing usage verification. OpenAI-compatible security checks also prove request tracing, HSTS, `nosniff`, path traversal blocking, invalid model 404, missing model 400, and auth failures before publish promotion can pass.
-The live-target gate also requires checked RunPod endpoint inventory before
-promotion. `selectedTargets.*.runpodEndpointVerified` must be true for every
-strict modality.
+```bash
+gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true
+```
 
-Use registry trusted publishing first. Do not provide NPM or PyPI publish tokens.
-Registry tokens are not used; publish through GitHub trusted publishing only. If
-trusted publishing is unavailable, do not publish until the registry identity is fixed.
-The publish-readiness report ties the local release verification,
-goal-readiness report, live-target discovery report, and strict live canary
-report, plus both focused smoke reports, to the same source digest.
-PyPI publishing should use the same verified release flow; do not upload the
-wheel or sdist from a local shell until the publish-readiness report passes.
-Use `pnpm prepare:sdk-publish` to build the npm package, Python wheel, and
-Python sdist only after publish readiness passes; the command writes a
-source-digest-tied manifest with artifact SHA-256 hashes, byte counts, and
-checksummed release / goal / live-target / live-canary proof reports at
-`artifacts/sdk/publish/publish-artifacts.json`.
-Use `pnpm publish:sdk -- --dry-run` to validate that manifest and print the npm
-trusted-publishing and PyPI action handoff without sending packages. The guarded publish wrapper
-refuses `--execute` outside CI, validates artifact checksums again, and supports
-npm trusted publishing through GitHub OIDC on the Node 22.14.0 publish workflow;
-PyPI should be uploaded by `pypa/gh-action-pypi-publish` in the `SDK Publish`
-workflow.
-GitHub Actions has two SDK-only workflows for the same path. `SDK Release Gate`
-runs `pnpm verify:sdk-release` and requires `RUNINFRA_SDK_CI_TOKEN` with
-read-only access to the docs and Engine contract repositories. `SDK Publish` is
-manual only, defaults to `publish: false`, runs `verify:sdk-release`, creates
-the strict live SDK env from GitHub secrets, discovers `active_verified` targets,
-prepares the modality env, runs strict live canaries, verifies goal and publish
-readiness, prepares artifacts, runs `publish:sdk -- --dry-run`, then uploads the
-proof reports and package artifacts. The verification job has no registry OIDC permission;
-the npm and PyPI publish jobs download the checked artifacts and are the only
-jobs with registry trusted publishing identity. The npm publish job uses GitHub environment `npm`;
-the PyPI publish job revalidates the publish manifest before upload and uses GitHub environment `pypi`. The live proof secrets are
-`RUNINFRA_SDK_LIVE_API_KEY`, `RUNINFRA_SDK_LIVE_DATABASE_URL`, `RUNPOD_API_KEY`, and
-`RUNINFRA_SDK_LIVE_ASR_FILE_BASE64`; voice-less Base TTS canaries can also set
-`RUNINFRA_SDK_LIVE_TTS_REF_AUDIO` and `RUNINFRA_SDK_LIVE_TTS_REF_TEXT`. Only
-after those gates pass should a maintainer rerun it with `publish: true`; npm
-and PyPI must use trusted publishers.
-`pnpm verify:sdk-release` also runs SDK secret hygiene and fails if non-test
-handoff docs or release files contain full-shaped RunInfra keys, service tokens,
-or package publish tokens.
+Actual publishing must use the same workflow with `dry_run=false` after CI,
+review, and environment approval. Do not use npm or PyPI tokens. OIDC trusted
+publishing is the only supported publish path.
 
-Co-located voice pipelines are available through the native `client.voice.pipeline.create()` helper on pipeline-scoped keys. The helper posts binary audio to the verified `/pipeline` route and returns the JSON transcript / response envelope. Public webhook create/list calls are intentionally unavailable until their gateway routes are verified, and the SDK raises `UnsupportedOperationError` locally for those webhook capabilities without making a request.
+Run live deployment canaries from RunPipe or RunInfra-Engine against the exact
+production gateway, workspace, pipeline keys, and RunPod inventory that will
+serve customers. The SDK repo only proves client artifact integrity. GA still
+requires live coverage for LLM, embeddings, image, TTS, ASR, and voice pipeline
+surfaces, plus explicit evidence that the smoke keys and temporary canary
+resources were removed.
+
+Co-located voice pipelines are available through the native `client.voice.pipeline.create()` helper on pipeline-scoped keys. The helper posts binary audio to the pipeline-scoped `/pipeline` route and returns the JSON transcript / response envelope. Public webhook create/list calls are intentionally unavailable until their gateway routes are verified, and the SDK raises `UnsupportedOperationError` locally for those webhook capabilities without making a request.

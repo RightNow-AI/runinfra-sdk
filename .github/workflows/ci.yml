@@ -18,6 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify workflow policy
+        run: node scripts/verify-workflow-policy.mjs
+
+      - name: Verify version sync
+        run: node scripts/verify-version-sync.mjs
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -49,14 +55,7 @@ jobs:
         working-directory: typescript
         run: |
           pnpm pack
-          tar -tf runinfra-sdk-*.tgz
-          # Verify only the whitelisted files are present
-          tar -tf runinfra-sdk-*.tgz | grep -qE '(package/dist/|package/README.md|package/CHANGELOG.md|package/LICENSE|package/package.json)' || (echo 'Unexpected files in tarball!' && exit 1)
-          # Verify nothing dangerous
-          if tar -tf runinfra-sdk-*.tgz | grep -qE '\.(map|env|test\.ts)$'; then
-            echo 'FAIL: sourcemap/.env/test files in tarball!'
-            exit 1
-          fi
+          node ../scripts/verify-npm-package.mjs runinfra-sdk-*.tgz
 
   python:
     name: Python SDK
@@ -85,13 +84,7 @@ jobs:
           # Verify wheel + sdist exist
           test -n "$(ls dist/runinfra-*.whl 2>/dev/null)" || (echo 'no wheel' && exit 1)
           test -n "$(ls dist/runinfra-*.tar.gz 2>/dev/null)" || (echo 'no sdist' && exit 1)
-          # Show contents
-          python -m zipfile -l dist/runinfra-*.whl
-          # No sourcemaps, no env files
-          if python -m zipfile -l dist/runinfra-*.whl | grep -qE '\.(map|env|pyc)$'; then
-            echo 'FAIL: sourcemap/.env/.pyc files in wheel!'
-            exit 1
-          fi
+          python ../scripts/verify-python-package.py dist
           # twine-check (PyPI metadata sanity)
           twine check dist/*
 

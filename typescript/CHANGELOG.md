@@ -6,8 +6,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 ## [0.1.1] - 2026-05-23
 
 ### Changed
-- **`license`**: `UNLICENSED` → `LicenseRef-Proprietary` (aligns with Python SDK; the prior value was contradictory for a public package).
-- **`repository.url`**: now points at `RightNow-AI/RunInfra-Landing` (the actual source repo). Previous value pointed at the non-existent `RunPipe` slug.
+- **`license`**: `UNLICENSED` -> `LicenseRef-Proprietary` (aligns with Python SDK; the prior value was contradictory for a public package).
+- **`repository.url`**: now points at `RightNow-AI/runinfra-sdk` (the public source repo). Previous value pointed at the non-existent `RunPipe` slug.
 - **`bugs.url`**: same fix.
 - **`description`**: now states "beta; LLM + embeddings tested, image/audio surfaces experimental" so the registry listing accurately reflects verification state.
 
@@ -15,7 +15,7 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 - **Modality status section** in the README documenting which surfaces are
   contract-tested vs experimental.
 - **`@experimental` JSDoc** on `client.images.*`, `client.audio.speech.*`, and
-  `client.audio.transcriptions.*` — these surfaces match the OpenAI HTTP
+  `client.audio.transcriptions.*` - these surfaces match the OpenAI HTTP
   envelope but have not been verified end-to-end against a live deployed
   pipeline in the public-gateway canary suite. Test against your own
   deployments before using in production.
@@ -23,7 +23,7 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 
 ### Provenance
 This is the first release published via GitHub OIDC trusted publishing
-(`.github/workflows/sdk-publish.yml` → `npm` environment). The published
+(`.github/workflows/publish.yml` -> `npm` environment). The published
 tarball includes a Sigstore-backed provenance attestation that ties the
 release to a specific CI run. Verify with:
 ```bash
@@ -38,12 +38,13 @@ configuration and does not have provenance. All v0.1.1+ releases will.
 - Webhook delivery routes are not shipped; `client.webhooks.create` /
   `.list()` throw `UnsupportedOperationError`. Local signature verification
   (`verifySignature`, `constructEvent`) works.
-- `client.voice.pipeline.create` is not shipped; throws
-  `UnsupportedOperationError`.
+- `client.voice.pipeline.create` posts audio to the pipeline-scoped `/pipeline` route.
+  It is experimental until live canary coverage is complete.
 
 ### Toward 1.0.0 GA
-GA requires all 5 modalities live-canary verified, the workflow
-`bypass_live_canary` flag retired, and the strict gate scripts re-enabled.
+GA requires all 5 model modalities plus voice pipeline live-canary verified and
+public-repo release gates that block stale, missing, or bypassed canary
+evidence.
 
 ## [0.1.0] - 2026-05-22
 

@@ -76,6 +76,25 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertNotIn("reach any active deployment", readme)
         self.assertNotIn("reach every active deployment", readme)
 
+    def test_readme_documents_voice_pipeline_as_experimental_instead_of_unsupported(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        changelog = Path(__file__).resolve().parents[1].joinpath("CHANGELOG.md").read_text()
+
+        self.assertIn(
+            "| Voice pipeline | `client.voice.pipeline.create` | **Experimental**, pipeline-scoped route, not live-canary verified |",
+            readme,
+        )
+        self.assertNotIn("Voice pipeline | `client.voice.pipeline.create` | Not shipped", readme)
+        self.assertNotIn("client.voice.pipeline.create` is not shipped", changelog)
+        self.assertIn("client.voice.pipeline.create` posts audio to the pipeline-scoped `/pipeline` route", changelog)
+
+    def test_pyproject_uses_non_deprecated_license_metadata(self):
+        pyproject = Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text()
+
+        self.assertIn('license = "LicenseRef-Proprietary"', pyproject)
+        self.assertIn('license-files = ["LICENSE"]', pyproject)
+        self.assertNotIn('license = { file = "LICENSE" }', pyproject)
+
     def test_readme_documents_safe_base_url_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
@@ -153,45 +172,24 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             readme,
         )
 
-    def test_readme_documents_strict_live_canary_gate(self):
+    def test_readme_documents_public_repo_promotion_without_stale_monorepo_commands(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
         self.assertIn("For production promotion", readme)
-        self.assertIn("pnpm verify:sdk-release", readme)
-        self.assertIn("pnpm test:sdk-canary:live -- --print-env-template", readme)
-        self.assertIn(".env.sdk-live.local", readme)
+        self.assertIn("This extracted public repo does not define the old monorepo", readme)
+        self.assertIn("node scripts/verify-workflow-policy.mjs", readme)
+        self.assertIn("node scripts/verify-version-sync.mjs", readme)
+        self.assertIn("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz", readme)
+        self.assertIn("python scripts/verify-python-package.py python/dist", readme)
         self.assertIn(
-            "pnpm test:sdk-canary:live -- --env-file .env.sdk-live.local --print-env-status",
+            "gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true",
             readme,
         )
-        self.assertIn(
-            "pnpm discover:sdk-live-targets -- --env-file .env.sdk-live.local --probe-inference --report artifacts/sdk/live-targets-discovery.json",
-            readme,
-        )
-        self.assertIn(
-            "pnpm verify:sdk-live-targets -- --env-file .env.sdk-live.local --require-available --discovery-report artifacts/sdk/live-targets-discovery.json",
-            readme,
-        )
-        self.assertIn(
-            "pnpm test:sdk-canary:live -- --env-file .env.sdk-live.local --check-env-only",
-            readme,
-        )
-        self.assertIn(
-            "pnpm test:sdk-canary:live -- --env-file .env.sdk-live.local --discovery-report artifacts/sdk/live-targets-discovery.json --report artifacts/sdk/live-canary.json",
-            readme,
-        )
-        self.assertIn("pnpm verify:sdk-live-report", readme)
-        self.assertIn(
-            "pnpm verify:sdk-goal -- --release-report artifacts/sdk/release-verification.json --live-report artifacts/sdk/live-canary.json --live-targets-report artifacts/sdk/live-targets-discovery.json --env-check-report artifacts/sdk/live-canary-env-check.json --focused-smoke-report artifacts/sdk/native-focused-smoke.json --openai-focused-smoke-report artifacts/sdk/openai-focused-smoke.json --report artifacts/sdk/goal-readiness.json",
-            readme,
-        )
-        self.assertIn("The discovery report also includes `nextActions`", readme)
-        self.assertIn("A skipped probe is diagnostic only", readme)
-        self.assertIn("only `passed` probes can promote `targets_available`", readme)
-        self.assertIn("LLM, embeddings, image, TTS, and ASR", readme)
-        self.assertIn("Focused `pnpm test:sdk-canary -- --report ...` smoke reports", readme)
-        self.assertIn("verify:sdk-goal", readme)
-        self.assertIn("generated from older source", readme)
+        self.assertIn("Run live deployment canaries from RunPipe or RunInfra-Engine", readme)
+        self.assertIn("Do not use npm or PyPI tokens", readme)
+        self.assertNotIn("pnpm verify:sdk-release", readme)
+        self.assertNotIn("pnpm test:sdk-canary:live", readme)
+        self.assertNotIn("RUNINFRA_SDK_CI_TOKEN", readme)
 
     def test_public_methods_expose_typed_response_annotations(self):
         client = RunInfra(api_key="sk-ri-test", transport=RecordingTransport())

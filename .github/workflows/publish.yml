@@ -39,9 +39,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify version sync
+        run: node scripts/verify-version-sync.mjs
+
       - name: Setup Node
-        # Note: do NOT set `registry-url` here — it creates an .npmrc with
-        # `_authToken=${NODE_AUTH_TOKEN}` which makes the CLI demand a token
+        # Note: do NOT set `registry-url` here. It creates an .npmrc with
+        # a token placeholder, which makes the CLI demand token auth
         # instead of using OIDC. The publish step sets the registry inline.
         uses: actions/setup-node@v4
         with:
@@ -77,16 +80,7 @@ jobs:
         run: |
           TGZ=$(ls runinfra-sdk-*.tgz)
           echo "=== Tarball: $TGZ ==="
-          tar -tf "$TGZ"
-          echo "=== Validation ==="
-          if tar -tf "$TGZ" | grep -qE '\.(map|env|test\.ts)$'; then
-            echo 'FAIL: forbidden file pattern in tarball'
-            exit 1
-          fi
-          # Verify minimum expected files
-          for f in package/dist/index.js package/dist/index.d.ts package/README.md package/CHANGELOG.md package/LICENSE package/package.json; do
-            tar -tf "$TGZ" | grep -q "^${f}$" || (echo "FAIL: missing required file: $f" && exit 1)
-          done
+          node ../scripts/verify-npm-package.mjs "$TGZ"
 
       - name: Install npm trusted publishing CLI
         run: |
@@ -107,7 +101,7 @@ jobs:
         if: ${{ github.event.inputs.dry_run == 'true' }}
         working-directory: typescript
         run: |
-          echo 'Dry run — would have published:'
+          echo 'Dry run - would have published:'
           ls -la runinfra-sdk-*.tgz
 
   publish-pypi:
@@ -122,6 +116,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify version sync
+        run: node scripts/verify-version-sync.mjs
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -147,11 +144,7 @@ jobs:
           ls -la dist/
           test -n "$(ls dist/runinfra-*.whl 2>/dev/null)" || (echo 'no wheel' && exit 1)
           test -n "$(ls dist/runinfra-*.tar.gz 2>/dev/null)" || (echo 'no sdist' && exit 1)
-          # No sourcemaps, no env files in wheel
-          if python -m zipfile -l dist/runinfra-*.whl | grep -qE '\.(map|env|pyc)$'; then
-            echo 'FAIL: sourcemap/.env/.pyc files in wheel!'
-            exit 1
-          fi
+          python ../scripts/verify-python-package.py dist
           twine check dist/*
 
       - name: Publish to PyPI
@@ -164,5 +157,5 @@ jobs:
         if: ${{ github.event.inputs.dry_run == 'true' }}
         working-directory: python
         run: |
-          echo 'Dry run — would have published:'
+          echo 'Dry run - would have published:'
           ls -la dist/

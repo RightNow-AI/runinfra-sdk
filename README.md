@@ -25,7 +25,10 @@ pip install runinfra
 ```ts
 import { RunInfra } from "@runinfra/sdk";
 
-const client = new RunInfra({ apiKey: process.env.RUNINFRA_API_KEY! });
+const apiKey = process.env.RUNINFRA_API_KEY;
+if (!apiKey) throw new Error("Set RUNINFRA_API_KEY before running this snippet.");
+
+const client = new RunInfra({ apiKey });
 
 const response = await client.chat.completions.create({
   model: "your-deployed-model-id",
@@ -36,9 +39,14 @@ console.log(response.choices?.[0]?.message?.content);
 ```
 
 ```python
+import os
 from runinfra import RunInfra
 
-client = RunInfra(api_key=os.environ["RUNINFRA_API_KEY"])
+api_key = os.environ.get("RUNINFRA_API_KEY")
+if not api_key:
+    raise RuntimeError("Set RUNINFRA_API_KEY before running this snippet.")
+
+client = RunInfra(api_key=api_key)
 
 response = client.chat.completions.create(
     model="your-deployed-model-id",
@@ -63,7 +71,8 @@ See each package's own README + CHANGELOG for surface-level docs.
 |---|---|
 | Chat completions, Responses, Embeddings | Beta, contract-tested |
 | Images, Audio TTS/ASR | **Experimental**, not live-canary verified |
-| Webhook delivery, Voice pipeline | Not shipped (helpers throw `UnsupportedOperationError`) |
+| Voice pipeline | **Experimental**, pipeline-scoped route, not live-canary verified |
+| Webhook delivery | Not shipped. Local verification helpers are available in both SDKs |
 
 See per-package READMEs and CHANGELOG for the path to v1.0.0 GA.
 
@@ -84,7 +93,7 @@ npm view @runinfra/sdk@latest dist.attestations
 ```
 
 Verify the PyPI release:
-- Go to https://pypi.org/project/runinfra/ → Releases → click a version →
+- Go to https://pypi.org/project/runinfra/ -> Releases -> click a version ->
   see the Trusted Publisher chain.
 
 ## Issues + contributing
@@ -92,7 +101,7 @@ Verify the PyPI release:
 Open an issue or pull request against this repo. See
 [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the workflow + style rules.
 
-For **security issues**, do NOT open a GitHub issue — see
+For **security issues**, do NOT open a GitHub issue - see
 [`SECURITY.md`](./SECURITY.md) for disclosure process.
 
 For RunInfra service issues (deployments, billing, account), email
