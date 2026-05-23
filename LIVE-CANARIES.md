@@ -115,7 +115,9 @@ non-JSON TTS responses, and string ASR transcripts. The TTS binary-interface
 row validates TypeScript `blob()` and `stream()` handling plus the Python raw
 byte response surface. Final streaming rows drain real SSE streams and require
 terminal events. Cancellation streaming rows consume a prefix and then close
-early to cover consumer cancellation. The
+early to cover consumer cancellation. TypeScript cancellation rows break out of
+`for await`, and Python cancellation rows close the active iterator, so both
+languages release local stream resources after partial consumption. The
 OpenAI parameter rows prove chat
 sampling and metadata pass-through, Responses instructions, metadata,
 temperature, output-token controls, embeddings `encoding_format: "float"` plus

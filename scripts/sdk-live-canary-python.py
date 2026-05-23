@@ -279,14 +279,17 @@ def safe_diagnostic_token(value: Any) -> Optional[str]:
 
 def read_some_stream(stream: Any, label: str) -> List[Dict[str, Any]]:
     events = []
-    for event in stream:
-        events.append(assert_object(event, f"{label} event"))
-        if len(events) >= 3:
-            break
+    iterator = iter(stream)
+    try:
+        while len(events) < 3:
+            try:
+                event = next(iterator)
+            except StopIteration:
+                break
+            events.append(assert_object(event, f"{label} event"))
+    finally:
+        iterator.close()
     assert_non_empty_list(events, f"{label} events")
-    close = getattr(stream, "close", None)
-    if callable(close):
-        close()
     return events
 
 

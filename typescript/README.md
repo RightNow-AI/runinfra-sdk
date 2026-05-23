@@ -113,6 +113,12 @@ for await (const event of stream) {
 console.log(stream.requestId);
 ```
 
+Breaking out of the `for await` loop cancels the underlying SSE reader and
+releases the reader lock. If you manually advance the stream iterator, call
+`return()` on that iterator when you stop early so local response resources are
+released. Streaming transport-level backend cancellation is best effort, and
+streaming calls are not automatically retried.
+
 ## Supported public routes
 
 - `models.list()`

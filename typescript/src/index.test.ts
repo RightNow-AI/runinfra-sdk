@@ -296,6 +296,17 @@ describe("RunInfra TypeScript SDK", () => {
     );
   });
 
+  it("documents streaming cancellation resource release", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("Breaking out of the `for await` loop cancels the underlying SSE reader");
+    expect(readme).toMatch(/If you manually advance the stream iterator,\s+call\s+`return\(\)` on that iterator/u);
+    expect(readme).toContain("Streaming transport-level backend cancellation is best effort");
+    expect(liveCanaries).toMatch(/TypeScript cancellation rows break out of\s+`for await`/u);
+    expect(liveCanaries).toContain("Python cancellation rows close the active iterator");
+  });
+
   it("documents public-repo production promotion without stale monorepo commands", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 

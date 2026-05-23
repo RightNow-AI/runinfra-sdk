@@ -235,6 +235,59 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             readme,
         )
 
+    def test_readme_documents_streaming_cancellation_resource_release(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        self.assertIn("Close the active iterator when you stop consuming a stream early", readme)
+        self.assertIn("iterator.close()", readme)
+        self.assertIn("Streaming transport-level backend cancellation is best effort", readme)
+        self.assertRegex(live_canaries, r"TypeScript cancellation rows break out of\s+`for await`")
+        self.assertIn("Python cancellation rows close the active iterator", live_canaries)
+
+    def test_python_live_canary_closes_active_stream_iterator_on_cancellation(self):
+        canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
+        canary = canary_path.read_text()
+
+        self.assertIn("iterator = iter(stream)", canary)
+        self.assertIn("iterator.close()", canary)
+        self.assertNotIn('getattr(stream, "close", None)', canary)
+
+        spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        live_canary = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(live_canary)
+
+        class CloseTrackingIterator:
+            def __init__(self):
+                self.index = 0
+                self.closed = False
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                self.index += 1
+                return {"event": self.index}
+
+            def close(self):
+                self.closed = True
+
+        class CloseTrackingStream:
+            def __init__(self):
+                self.iterator = CloseTrackingIterator()
+
+            def __iter__(self):
+                return self.iterator
+
+        stream = CloseTrackingStream()
+
+        events = live_canary.read_some_stream(stream, "test stream")
+
+        self.assertEqual(events, [{"event": 1}, {"event": 2}, {"event": 3}])
+        self.assertTrue(stream.iterator.closed)
+
     def test_readme_documents_sync_only_async_runtime_guidance(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 

@@ -96,6 +96,20 @@ for event in stream:
 print(stream.request_id)
 ```
 
+Close the active iterator when you stop consuming a stream early so local
+response resources are released:
+
+```python
+iterator = iter(stream)
+try:
+    first = next(iterator)
+finally:
+    iterator.close()
+```
+
+Streaming transport-level backend cancellation is best effort, and streaming
+calls are not automatically retried.
+
 ## Async Python runtimes
 
 `RunInfra` is intentionally sync-only in v0.1.4 and uses Python's standard

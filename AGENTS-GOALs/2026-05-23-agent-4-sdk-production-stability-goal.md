@@ -380,3 +380,37 @@ Current blockers remain:
 - This closes the documented browser-default security stance but does not ship ephemeral browser tokens.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Streaming Cancellation Canary Closure
+
+Hardened the streaming cancellation proof and docs:
+
+- Python live canary partial-stream rows now close the active iterator returned by `iter(stream)` after consuming the cancellation prefix, instead of looking for a nonexistent `stream.close()` method.
+- The Python unit suite imports `scripts/sdk-live-canary-python.py` and behavior-tests `read_some_stream()` with a fake close-tracking iterator, so the canary helper itself is now covered, not only string-checked.
+- TypeScript and Python READMEs document early stream-consumer cleanup without overclaiming backend cancellation. TypeScript explains that breaking from `for await` cancels the local SSE reader, and Python shows `iterator.close()` for manual partial reads.
+- `LIVE-CANARIES.md` now states that cancellation rows cover local stream-resource release after partial consumption for both languages, while backend transport cancellation remains best effort.
+
+Fresh local verification:
+
+- Targeted red tests failed first on missing streaming cancellation docs and on the old Python canary helper.
+- Targeted streaming cancellation tests passed after the patch.
+- `pnpm --dir typescript install --frozen-lockfile` passed.
+- `python -m pip install -r python/requirements-dev.txt` passed with pinned tooling already installed.
+- TS typecheck passed.
+- TS tests passed, 119 tests.
+- Python tests passed, 106 tests plus 105 subtests.
+- Python canary/package syntax passed.
+- Workflow policy and version sync passed for `0.1.4`.
+- TS build and `pnpm --dir typescript pack` passed; npm tarball contents remained limited to changelog, dist, license, package.json, and README.
+- Python wheel/sdist build, Python package verifier, and `twine check` passed.
+- npm package verifier and clean artifact install/import for both npm and Python passed.
+- Source and artifact canary parity passed: TypeScript 7 passed/23 skipped, Python 7 passed/23 skipped.
+- Strict preflight remains intentionally blocked: 7 ready rows and 23 blocked rows because no scoped live canary env/fixtures are present in this shell.
+- Code scanning refresh: 0 open alerts, 0 high/critical. Dependabot refresh: 3 open moderate default-branch alerts, 0 high/critical.
+- Second-opinion review found no blockers; CodeRabbit CLI was not installed, so the available subagent review path was used.
+
+Current blockers remain:
+
+- This closes a cancellation canary correctness gap but does not prove live multimodal GA readiness.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
