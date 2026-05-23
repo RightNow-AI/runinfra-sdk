@@ -10,9 +10,16 @@ Run from the repository root after building the TypeScript SDK:
 pnpm --dir typescript build
 pnpm --dir typescript pack
 python -m build python
+node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
 ```
+
+`--verify-surface-coverage` is a no-network check that maps every public SDK
+surface to the canary rows that prove it. It derives declared client/helper
+surfaces from the TypeScript source, Python source, and package READMEs, then
+fails if a declared surface has no mapped rows or if a mapped surface references
+a row outside the strict matrix.
 
 `--preflight` is a no-network readiness check. It writes the same redacted
 environment status plus row-by-row missing inputs, then fails in strict mode

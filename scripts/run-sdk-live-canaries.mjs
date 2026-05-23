@@ -2,13 +2,16 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const args = process.argv.slice(2);
 const strict = args.includes("--strict");
 const preflight = args.includes("--preflight");
+const verifySurfaceCoverage = args.includes("--verify-surface-coverage");
 const reportPath = optionValue("--report");
 const packageSource = optionValue("--package-source") ?? "artifact";
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tempDir = resolve(".canary-tmp", `${Date.now()}-${process.pid}`);
 const tsReport = resolve(tempDir, "typescript.json");
 const pyReport = resolve(tempDir, "python.json");
@@ -58,6 +61,111 @@ const expectedRows = [
   "webhooks.verify_signature.export",
   "webhooks.construct_event.export",
   "idempotency.replay.responses",
+];
+
+const publicSurfaceCoverage = [
+  { surface: "client.models.list", rows: ["models.list", "retry.safety.get.local"] },
+  { surface: "client.models.retrieve", rows: ["models.retrieve.llm", "error.model.not_found"] },
+  {
+    surface: "client.chat.completions.create",
+    rows: [
+      "chat.completions.create",
+      "openai.params.chat.completions",
+      "openai.params.chat.stream_options",
+      "chat.completions.stream.final",
+      "chat.completions.stream.cancel",
+      "chat.completions.stream.slow_consumer",
+      "chat.completions.stream.malformed_frame.local",
+      "chat.completions.stream.disconnect.local",
+      "chat.completions.stream.stalled_read.local",
+      "retry.safety.stream.no_retry.local",
+    ],
+  },
+  {
+    surface: "client.responses.create",
+    rows: [
+      "responses.create",
+      "openai.params.responses",
+      "responses.stream.final",
+      "responses.stream.cancel",
+      "responses.stream.slow_consumer",
+      "responses.stream.malformed_frame.local",
+      "responses.stream.disconnect.local",
+      "responses.stream.stalled_read.local",
+      "retry.safety.post.requires_idempotency.local",
+      "retry.safety.post.with_idempotency.local",
+      "idempotency.replay.responses",
+    ],
+  },
+  { surface: "client.embeddings.create", rows: ["embeddings.create", "openai.params.embeddings"] },
+  { surface: "client.images.generate", rows: ["images.generate", "openai.params.images"] },
+  {
+    surface: "client.audio.speech.create",
+    rows: [
+      "audio.speech.create",
+      "openai.params.audio.speech",
+      "audio.speech.binary_interfaces",
+      "retry.safety.audio_binary.no_retry.local",
+    ],
+  },
+  { surface: "RunInfraAudioResponse.arrayBuffer", rows: ["audio.speech.create", "audio.speech.binary_interfaces"] },
+  { surface: "RunInfraAudioResponse.blob", rows: ["audio.speech.binary_interfaces"] },
+  { surface: "RunInfraAudioResponse.stream", rows: ["audio.speech.binary_interfaces"] },
+  {
+    surface: "RunInfraStream[Symbol.asyncIterator]",
+    rows: [
+      "chat.completions.stream.final",
+      "chat.completions.stream.cancel",
+      "chat.completions.stream.slow_consumer",
+      "chat.completions.stream.malformed_frame.local",
+      "chat.completions.stream.disconnect.local",
+      "chat.completions.stream.stalled_read.local",
+      "responses.stream.final",
+      "responses.stream.cancel",
+      "responses.stream.slow_consumer",
+      "responses.stream.malformed_frame.local",
+      "responses.stream.disconnect.local",
+      "responses.stream.stalled_read.local",
+    ],
+  },
+  {
+    surface: "RunInfraStream.__iter__",
+    rows: [
+      "chat.completions.stream.final",
+      "chat.completions.stream.cancel",
+      "chat.completions.stream.slow_consumer",
+      "chat.completions.stream.malformed_frame.local",
+      "chat.completions.stream.disconnect.local",
+      "chat.completions.stream.stalled_read.local",
+      "responses.stream.final",
+      "responses.stream.cancel",
+      "responses.stream.slow_consumer",
+      "responses.stream.malformed_frame.local",
+      "responses.stream.disconnect.local",
+      "responses.stream.stalled_read.local",
+    ],
+  },
+  {
+    surface: "client.audio.transcriptions.create",
+    rows: [
+      "audio.transcriptions.create",
+      "openai.params.audio.transcriptions",
+      "retry.safety.audio_multipart.no_retry.local",
+    ],
+  },
+  { surface: "client.voice.pipeline.create", rows: ["voice.pipeline.create"] },
+  { surface: "client.webhooks.verifySignature", rows: ["webhooks.verify_signature.local"] },
+  { surface: "client.webhooks.constructEvent", rows: ["webhooks.construct_event.local"] },
+  { surface: "verifyWebhookSignature", rows: ["webhooks.verify_signature.export"] },
+  { surface: "constructWebhookEvent", rows: ["webhooks.construct_event.export"] },
+  { surface: "client.webhooks.verify_signature", rows: ["webhooks.verify_signature.local"] },
+  { surface: "client.webhooks.construct_event", rows: ["webhooks.construct_event.local"] },
+  { surface: "verify_webhook_signature", rows: ["webhooks.verify_signature.export"] },
+  { surface: "construct_webhook_event", rows: ["webhooks.construct_event.export"] },
+  { surface: "webhook delivery create/list absence", rows: ["webhooks.delivery_surface.absent"] },
+  { surface: "request option validation", rows: ["error.request.invalid_options"] },
+  { surface: "unsupported body parameter handling", rows: ["error.body.unsupported_parameter"] },
+  { surface: "authentication error mapping", rows: ["error.auth.invalid_key"] },
 ];
 
 function optionValue(name) {
@@ -323,6 +431,173 @@ function buildReadiness() {
   };
 }
 
+function sortedUnique(values) {
+  return [...new Set(values)].sort();
+}
+
+function readRepoText(...segments) {
+  return readFileSync(join(repositoryRoot, ...segments), "utf8");
+}
+
+function extractTypeScriptClassBlock(source, className) {
+  const classStart = source.indexOf(`export class ${className}`);
+  if (classStart === -1) return "";
+  const openBrace = source.indexOf("{", classStart);
+  if (openBrace === -1) return "";
+  let depth = 0;
+  for (let index = openBrace; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(openBrace + 1, index);
+    }
+  }
+  return "";
+}
+
+function extractTypeScriptClientSurfaces(source) {
+  const classStart = source.indexOf("export class RunInfra {");
+  const publicEnd = source.indexOf("  private readonly apiKey", classStart);
+  if (classStart === -1 || publicEnd === -1) return [];
+  const lines = source.slice(classStart, publicEnd).split(/\r?\n/u);
+  const stack = [];
+  const surfaces = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const blockMatch = trimmed.match(/^(?:readonly\s+)?([A-Za-z_]\w*):\s*\{\s*$/u);
+    if (blockMatch) {
+      stack.push(blockMatch[1]);
+      continue;
+    }
+    const leafMatch = trimmed.match(/^([A-Za-z_]\w*):\s*(?:typeof\s+[A-Za-z_]\w+|[A-Za-z_]\w+|.*=>.*);$/u);
+    if (leafMatch && stack.length) {
+      surfaces.push(`client.${[...stack, leafMatch[1]].join(".")}`);
+      continue;
+    }
+    if (trimmed === "};") {
+      stack.pop();
+    }
+  }
+  return surfaces;
+}
+
+function extractTypeScriptMethodSurfaces(source) {
+  const surfaces = [];
+  const audioBlock = extractTypeScriptClassBlock(source, "RunInfraAudioResponse");
+  for (const match of audioBlock.matchAll(/^\s{2}([A-Za-z_]\w*)\([^)]*\):/gmu)) {
+    if (match[1] !== "constructor" && match[1] !== "readBody") {
+      surfaces.push(`RunInfraAudioResponse.${match[1]}`);
+    }
+  }
+  const streamBlock = extractTypeScriptClassBlock(source, "RunInfraStream");
+  if (streamBlock.includes("[Symbol.asyncIterator]") || source.includes("[Symbol.asyncIterator]")) {
+    surfaces.push("RunInfraStream[Symbol.asyncIterator]");
+  }
+  if (/^export function verifyWebhookSignature\(/mu.test(source)) surfaces.push("verifyWebhookSignature");
+  if (/^export function constructWebhookEvent</mu.test(source)) surfaces.push("constructWebhookEvent");
+  return surfaces;
+}
+
+const pythonClassSurfacePrefixes = new Map([
+  ["_ChatCompletions", "client.chat.completions"],
+  ["_Responses", "client.responses"],
+  ["_Embeddings", "client.embeddings"],
+  ["_Speech", "client.audio.speech"],
+  ["_Transcriptions", "client.audio.transcriptions"],
+  ["_Models", "client.models"],
+  ["_Images", "client.images"],
+  ["_Webhooks", "client.webhooks"],
+  ["_VoicePipeline", "client.voice.pipeline"],
+]);
+
+function extractPythonClassBlock(source, className) {
+  const lines = source.split(/\r?\n/u);
+  const start = lines.findIndex((line) => line === `class ${className}:`);
+  if (start === -1) return "";
+  const body = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^(class|def)\s/u.test(lines[index])) break;
+    body.push(lines[index]);
+  }
+  return body.join("\n");
+}
+
+function extractPythonPublicSurfaces(source) {
+  const surfaces = [];
+  for (const [className, prefix] of pythonClassSurfacePrefixes.entries()) {
+    const block = extractPythonClassBlock(source, className);
+    for (const match of block.matchAll(/^    def ([A-Za-z_]\w*)\(/gmu)) {
+      if (match[1] !== "__init__") surfaces.push(`${prefix}.${match[1]}`);
+    }
+  }
+  if (extractPythonClassBlock(source, "RunInfraStream").includes("def __iter__(")) {
+    surfaces.push("RunInfraStream.__iter__");
+  }
+  if (/^def verify_webhook_signature\(/mu.test(source)) surfaces.push("verify_webhook_signature");
+  if (/^def construct_webhook_event\(/mu.test(source)) surfaces.push("construct_webhook_event");
+  return surfaces;
+}
+
+function extractReadmeRouteSurfaces(markdown) {
+  const sectionStart = markdown.indexOf("## Supported public routes");
+  if (sectionStart === -1) return [];
+  const nextSection = markdown.indexOf("\n## ", sectionStart + 1);
+  const section = markdown.slice(sectionStart, nextSection === -1 ? markdown.length : nextSection);
+  return [...section.matchAll(/^- `([^`]+)\(\)`/gmu)]
+    .map((match) => `client.${match[1]}`);
+}
+
+function declaredPublicSurfaces() {
+  const tsSource = readRepoText("typescript", "src", "index.ts");
+  const pySource = readRepoText("python", "runinfra", "__init__.py");
+  return sortedUnique([
+    ...extractTypeScriptClientSurfaces(tsSource),
+    ...extractTypeScriptMethodSurfaces(tsSource),
+    ...extractPythonPublicSurfaces(pySource),
+    ...extractReadmeRouteSurfaces(readRepoText("typescript", "README.md")),
+    ...extractReadmeRouteSurfaces(readRepoText("python", "README.md")),
+  ]);
+}
+
+function buildSurfaceCoverage() {
+  const expectedRowSet = new Set(expectedRows);
+  const errors = [];
+  const seen = new Set();
+  const manifestSurfaces = publicSurfaceCoverage.map((entry) => entry.surface);
+  const manifestSurfaceSet = new Set(manifestSurfaces);
+  const declaredSurfaces = declaredPublicSurfaces();
+  const uncoveredSurfaces = declaredSurfaces.filter((surface) => !manifestSurfaceSet.has(surface));
+  for (const surface of uncoveredSurfaces) {
+    errors.push(`public surface missing canary row coverage: ${surface}`);
+  }
+  for (const entry of publicSurfaceCoverage) {
+    if (seen.has(entry.surface)) {
+      errors.push(`duplicate public surface coverage entry: ${entry.surface}`);
+    }
+    seen.add(entry.surface);
+    if (!Array.isArray(entry.rows) || entry.rows.length === 0) {
+      errors.push(`${entry.surface} has no canary rows`);
+      continue;
+    }
+    for (const row of entry.rows) {
+      if (!expectedRowSet.has(row)) {
+        errors.push(`${entry.surface} references unknown canary row: ${row}`);
+      }
+    }
+  }
+  return {
+    status: errors.length ? "failed" : "passed",
+    errors,
+    declaredSurfaceCount: declaredSurfaces.length,
+    declaredSurfaces,
+    uncoveredSurfaces,
+    surfaceCount: publicSurfaceCoverage.length,
+    rowCount: expectedRows.length,
+    surfaces: manifestSurfaces,
+  };
+}
+
 function writeReport(report) {
   if (!reportPath) return;
   const absolute = resolve(reportPath);
@@ -330,8 +605,47 @@ function writeReport(report) {
   writeFileSync(absolute, `${JSON.stringify(report, null, 2)}\n`);
 }
 
+function surfaceCoverageFailureReport(errors, fields = {}) {
+  const surfaceCoverage = buildSurfaceCoverage();
+  const combined = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    strict,
+    packageSource,
+    expectedRows,
+    ...fields,
+    surfaceCoverage,
+    parity: {
+      status: "failed",
+      errors: [...new Set([...surfaceCoverage.errors, ...errors])],
+    },
+    reports: [],
+  };
+  try {
+    assertReportDoesNotLeak(combined);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+  writeReport(combined);
+  return combined;
+}
+
+if (verifySurfaceCoverage) {
+  const surfaceCoverage = buildSurfaceCoverage();
+  try {
+    assertReportDoesNotLeak(surfaceCoverage);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+  console.log(JSON.stringify(surfaceCoverage, null, 2));
+  process.exit(surfaceCoverage.status === "passed" ? 0 : 1);
+}
+
 if (preflight) {
   const readiness = buildReadiness();
+  const surfaceCoverage = buildSurfaceCoverage();
   const combined = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -339,9 +653,10 @@ if (preflight) {
     packageSource,
     expectedRows,
     readiness,
+    surfaceCoverage,
     parity: {
-      status: "not_run",
-      errors: [],
+      status: surfaceCoverage.status === "passed" ? "not_run" : "failed",
+      errors: surfaceCoverage.errors,
     },
     reports: [],
   };
@@ -353,7 +668,7 @@ if (preflight) {
   }
   writeReport(combined);
   console.log(JSON.stringify({ readiness: readiness.status, summary: readiness.summary }, null, 2));
-  process.exit(strict && readiness.status !== "ready" ? 1 : 0);
+  process.exit((strict && readiness.status !== "ready") || surfaceCoverage.status !== "passed" ? 1 : 0);
 }
 
 function configurationErrors() {
@@ -365,26 +680,7 @@ function configurationErrors() {
 
 const configErrors = configurationErrors();
 if (configErrors.length) {
-  const combined = {
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    strict,
-    packageSource,
-    expectedRows,
-    env: redactedEnv(relevantEnv),
-    parity: {
-      status: "failed",
-      errors: [...new Set(configErrors)],
-    },
-    reports: [],
-  };
-  try {
-    assertReportDoesNotLeak(combined);
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  }
-  writeReport(combined);
+  const combined = surfaceCoverageFailureReport(configErrors, { env: redactedEnv(relevantEnv) });
   console.error(`Live canary configuration invalid:\n${combined.parity.errors.join("\n")}`);
   process.exit(1);
 }
@@ -502,23 +798,7 @@ try {
     artifactRuntime = installArtifactCanaryPackages();
   }
 } catch {
-  const combined = {
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    strict,
-    packageSource,
-    expectedRows,
-    parity: {
-      status: "failed",
-      errors: ["artifact canary package setup failed"],
-    },
-    reports: [],
-  };
-  if (reportPath) {
-    const absolute = resolve(reportPath);
-    mkdirSync(dirname(absolute), { recursive: true });
-    writeFileSync(absolute, `${JSON.stringify(combined, null, 2)}\n`);
-  }
+  surfaceCoverageFailureReport(["artifact canary package setup failed"]);
   console.error("Live canary artifact package setup failed. Build npm and Python artifacts first.");
   process.exit(1);
 }
@@ -592,7 +872,9 @@ function assertReportDoesNotLeak(report) {
   }
 }
 
+const surfaceCoverage = buildSurfaceCoverage();
 const parityErrors = [
+  ...surfaceCoverage.errors,
   ...reportRowErrors(reports.find((report) => report.language === "typescript")),
   ...reportRowErrors(reports.find((report) => report.language === "python")),
 ];
@@ -606,6 +888,7 @@ const combined = {
   strict,
   packageSource,
   expectedRows,
+  surfaceCoverage,
   parity: {
     status: parityErrors.length ? "failed" : "passed",
     errors: parityErrors,

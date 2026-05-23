@@ -596,3 +596,38 @@ Current blockers remain:
 - This proves deterministic SDK retry-safety behavior, not live multimodal GA readiness.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Source-Aware Public Surface Coverage Gate
+
+Added a no-network release gate that maps public SDK surfaces to strict canary rows:
+
+- New command: `node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage`.
+- The gate validates duplicate surface entries, empty row lists, unknown row references, and source/docs-declared public surfaces without mapped canary rows.
+- Declared public surfaces are derived from TypeScript source, Python source, and package README supported-route sections.
+- Current derived state: 22 declared public surfaces, 26 mapped coverage surfaces, 45 strict canary rows, 0 uncovered surfaces.
+- Stream iterator surfaces are explicitly mapped: `RunInfraStream[Symbol.asyncIterator]` and `RunInfraStream.__iter__`.
+- Full-run reports and strict preflight reports now include `surfaceCoverage`; even config-error and artifact-setup early failures carry the same manifest result and merge manifest errors into parity failures.
+- Promotion docs now place surface coverage before strict preflight and artifact live canaries, and the TS/Python README tests assert that order.
+
+Fresh local verification:
+
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test` passed, 127 tests.
+- `python -m pytest python\tests -q` passed, 113 tests plus 105 subtests.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\verify-version-sync.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 mapped surfaces, and 0 uncovered surfaces.
+- `pnpm --dir typescript build` and `pnpm --dir typescript pack` passed; npm tarball contents remained limited to changelog, dist, license, package.json, and README.
+- `python -m build python`, `python scripts\verify-python-package.py python\dist`, and `python -m twine check python\dist\*` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-*.tgz` passed.
+- `node scripts\verify-clean-installs.mjs --package both --mode artifact` passed.
+- Source and artifact canary parity passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- Strict preflight remains intentionally blocked: 19 ready rows and 26 blocked rows because scoped production canary env/fixtures are not present in this shell.
+- `git diff --check` passed with CRLF warnings only.
+- Two independent read-only reviews initially found blockers: self-only manifest validation, missing surface coverage in early failure reports, missing stream iterator coverage, and README order tests that only checked substrings. Follow-up fixes addressed all findings; both reviewers returned Ready with no Critical, Important, or Minor findings. CodeRabbit CLI was not installed, so the available subagent review path was used.
+
+Current blockers remain:
+
+- This closes the public-surface coverage gate but does not make strict live multimodal canaries green.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.

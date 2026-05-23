@@ -360,6 +360,27 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Local retry-safety rows", live_canaries)
         self.assertIn("do not call the production gateway", live_canaries)
 
+    def test_runner_has_public_surface_coverage_gate(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+
+        self.assertIn("--verify-surface-coverage", runner)
+        self.assertIn("publicSurfaceCoverage", runner)
+        self.assertIn("client.chat.completions.create", runner)
+        self.assertIn("client.responses.create", runner)
+        self.assertIn("client.embeddings.create", runner)
+        self.assertIn("client.images.generate", runner)
+        self.assertIn("client.audio.speech.create", runner)
+        self.assertIn("client.audio.transcriptions.create", runner)
+        self.assertIn("client.voice.pipeline.create", runner)
+        self.assertIn("client.webhooks.verify_signature", runner)
+        self.assertIn("verify_webhook_signature", runner)
+        self.assertIn("RunInfraAudioResponse.blob", runner)
+        self.assertIn("declaredSurfaces", runner)
+        self.assertIn("uncoveredSurfaces", runner)
+        self.assertIn("RunInfraStream[Symbol.asyncIterator]", runner)
+        self.assertIn("RunInfraStream.__iter__", runner)
+        self.assertIn("surfaceCoverageFailureReport", runner)
+
     def test_python_live_canary_validates_slow_consumer_delay_before_opening_stream(self):
         canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
         spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
@@ -461,6 +482,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz", readme)
         self.assertIn("python scripts/verify-python-package.py python/dist", readme)
         self.assertIn("node scripts/verify-clean-installs.mjs --package both --mode artifact", readme)
+        self.assertIn("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage", readme)
         self.assertIn(
             "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json",
             readme,
@@ -469,6 +491,15 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json",
             readme,
         )
+        surface_coverage_index = readme.index("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage")
+        preflight_index = readme.index(
+            "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json"
+        )
+        live_canary_index = readme.index(
+            "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json"
+        )
+        self.assertLess(surface_coverage_index, preflight_index)
+        self.assertLess(preflight_index, live_canary_index)
         self.assertIn(
             "gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>",
             readme,
@@ -478,7 +509,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>",
             readme,
         )
-        self.assertIn("Run the strict preflight first", readme)
+        self.assertIn("Run the surface-coverage check before preflight", readme)
+        self.assertIn("Then run the strict preflight", readme)
         self.assertIn("Then run the strict live canary matrix against the exact production gateway", readme)
         self.assertIn("Do not use npm or PyPI tokens", readme)
         self.assertNotIn("pnpm verify:sdk-release", readme)

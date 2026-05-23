@@ -452,12 +452,20 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz");
     expect(readme).toContain("python scripts/verify-python-package.py python/dist");
     expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode artifact");
+    expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
+    const surfaceCoverageIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
+    const preflightIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
+    const liveCanaryIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
+    expect(surfaceCoverageIndex).toBeGreaterThan(-1);
+    expect(preflightIndex).toBeGreaterThan(surfaceCoverageIndex);
+    expect(liveCanaryIndex).toBeGreaterThan(preflightIndex);
     expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>");
     expect(readme).toContain("A real publish must also prove registry install/import");
     expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>");
-    expect(readme).toContain("Run the strict preflight first");
+    expect(readme).toContain("Run the surface-coverage check before preflight");
+    expect(readme).toContain("Then run the strict preflight");
     expect(readme).toContain("Then run the strict live canary matrix against the exact production gateway");
     expect(readme).toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");
@@ -545,6 +553,127 @@ describe("RunInfra TypeScript SDK", () => {
 
     for (const sample of samples) {
       expect(findForbiddenContent(sample), sample).not.toBeNull();
+    }
+  });
+
+  it("verifies public SDK surface has canary row coverage", () => {
+    const result = spawnSync(process.execPath, [
+      "../scripts/run-sdk-live-canaries.mjs",
+      "--verify-surface-coverage",
+    ], {
+      cwd: new URL("..", import.meta.url),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RUNINFRA_API_KEY: "",
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const output = JSON.parse(result.stdout) as {
+      status?: string;
+      declaredSurfaces?: string[];
+      uncoveredSurfaces?: string[];
+      surfaceCount?: number;
+      rowCount?: number;
+      surfaces?: string[];
+    };
+    expect(output.status).toBe("passed");
+    expect(output.uncoveredSurfaces).toEqual([]);
+    expect(output.surfaceCount).toBeGreaterThanOrEqual(17);
+    expect(output.rowCount).toBeGreaterThanOrEqual(39);
+    expect(output.surfaces).toEqual(expect.arrayContaining([
+      "client.chat.completions.create",
+      "client.responses.create",
+      "client.embeddings.create",
+      "client.images.generate",
+      "client.audio.speech.create",
+      "client.audio.transcriptions.create",
+      "client.voice.pipeline.create",
+      "client.webhooks.verifySignature",
+      "verifyWebhookSignature",
+      "RunInfraAudioResponse.blob",
+    ]));
+    expect(output.declaredSurfaces).toEqual(expect.arrayContaining([
+      "client.models.list",
+      "client.models.retrieve",
+      "client.chat.completions.create",
+      "client.responses.create",
+      "client.embeddings.create",
+      "client.images.generate",
+      "client.audio.speech.create",
+      "client.audio.transcriptions.create",
+      "client.voice.pipeline.create",
+      "client.webhooks.verifySignature",
+      "client.webhooks.verify_signature",
+      "verifyWebhookSignature",
+      "verify_webhook_signature",
+      "RunInfraAudioResponse.arrayBuffer",
+      "RunInfraAudioResponse.blob",
+      "RunInfraAudioResponse.stream",
+      "RunInfraStream[Symbol.asyncIterator]",
+      "RunInfraStream.__iter__",
+    ]));
+  });
+
+  it("writes surface coverage into early full-run failure reports", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-full-failure-"));
+    const configReportPath = join(tmp, "config-report.json");
+    const artifactReportPath = join(tmp, "artifact-report.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    try {
+      const configFailure = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--package-source",
+        "source",
+        "--report",
+        configReportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_CANARY_TIMEOUT_SECONDS: "NaN",
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(configFailure.status).toBe(1);
+      const configReport = JSON.parse(readFileSync(configReportPath, "utf8")) as {
+        surfaceCoverage?: { status?: string; uncoveredSurfaces?: string[] };
+        parity?: { errors?: string[] };
+      };
+      expect(configReport.surfaceCoverage?.status).toBe("passed");
+      expect(configReport.surfaceCoverage?.uncoveredSurfaces).toEqual([]);
+      expect(configReport.parity?.errors).toEqual(expect.arrayContaining([
+        "RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number",
+      ]));
+
+      const artifactFailure = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "artifact",
+        "--report",
+        artifactReportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(artifactFailure.status).toBe(1);
+      const artifactReport = JSON.parse(readFileSync(artifactReportPath, "utf8")) as {
+        surfaceCoverage?: { status?: string; uncoveredSurfaces?: string[] };
+        parity?: { errors?: string[] };
+      };
+      expect(artifactReport.surfaceCoverage?.status).toBe("passed");
+      expect(artifactReport.surfaceCoverage?.uncoveredSurfaces).toEqual([]);
+      expect(artifactReport.parity?.errors).toContain("artifact canary package setup failed");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
   });
 
