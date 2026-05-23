@@ -409,6 +409,92 @@ function speechVoicePayload() {
   return null;
 }
 
+function speechRequirements() {
+  const missing = ["RUNINFRA_API_KEY", "RUNINFRA_TTS_MODEL"].filter((name) => !env(name));
+  if (!speechVoicePayload()) missing.push("RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT");
+  return missing;
+}
+
+function speechRequest(input) {
+  const request = {
+    model: ttsModel,
+    input,
+    ...speechVoicePayload(),
+  };
+  if (env("RUNINFRA_TTS_RESPONSE_FORMAT")) request.response_format = env("RUNINFRA_TTS_RESPONSE_FORMAT");
+  return request;
+}
+
+function canaryTimeoutMs() {
+  return Number(env("RUNINFRA_CANARY_TIMEOUT_SECONDS") ?? 120) * 1000;
+}
+
+function remainingStreamMs(deadlineMs, label) {
+  const remaining = Math.ceil(deadlineMs - performance.now());
+  if (remaining <= 0) {
+    throw new Error(`${label} stream read timed out`);
+  }
+  return remaining;
+}
+
+async function readStreamChunkWithTimeout(reader, label, timeoutMs) {
+  let timeoutId;
+  const read = reader.read();
+  read.catch(() => undefined);
+  try {
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`${label} stream read timed out`)), timeoutMs);
+    });
+    return await Promise.race([read, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function cancelReaderWithTimeout(reader) {
+  let timeoutId;
+  const cancel = reader.cancel();
+  cancel.catch(() => undefined);
+  try {
+    await Promise.race([
+      cancel,
+      new Promise((resolve) => {
+        timeoutId = setTimeout(resolve, 1000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function readAudioByteStream(stream, label) {
+  if (!stream || typeof stream.getReader !== "function") {
+    throw new Error(`${label} did not expose a readable byte stream`);
+  }
+  const reader = stream.getReader();
+  let byteLength = 0;
+  const deadlineMs = performance.now() + canaryTimeoutMs();
+  try {
+    for (;;) {
+      const { done, value } = await readStreamChunkWithTimeout(reader, label, remainingStreamMs(deadlineMs, label));
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw new Error(`${label} emitted a non-byte chunk`);
+      byteLength += value.byteLength;
+    }
+  } catch (error) {
+    await cancelReaderWithTimeout(reader);
+    throw error;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // The runtime can keep the reader locked while propagating a body error.
+    }
+  }
+  if (byteLength === 0) throw new Error(`${label} stream was empty`);
+  return byteLength;
+}
+
 const results = [];
 
 async function record(name, requirements, fn) {
@@ -609,23 +695,33 @@ await record("images.generate", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], as
   return { requestId: response._request_id, output: response.data[0].url ? "url" : "b64_json" };
 });
 
-await record("audio.speech.create", () => {
-  const missing = ["RUNINFRA_API_KEY", "RUNINFRA_TTS_MODEL"].filter((name) => !env(name));
-  if (!speechVoicePayload()) missing.push("RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT");
-  return missing;
-}, async () => {
-  const request = {
-    model: ttsModel,
-    input: "RunInfra SDK live canary.",
-    ...speechVoicePayload(),
-  };
-  if (env("RUNINFRA_TTS_RESPONSE_FORMAT")) request.response_format = env("RUNINFRA_TTS_RESPONSE_FORMAT");
-  const response = await client().audio.speech.create(request);
+await record("audio.speech.create", speechRequirements, async () => {
+  const response = await client().audio.speech.create(speechRequest("RunInfra SDK live canary."));
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.length === 0) throw new Error("TTS response was empty");
   assertAudioContentType(response.contentType, "audio.speech.create");
   assertRequestId(response.requestId, "audio.speech.create");
   return { requestId: response.requestId, contentType: response.contentType, byteLength: bytes.length };
+});
+
+await record("audio.speech.binary_interfaces", speechRequirements, async () => {
+  const blobResponse = await client().audio.speech.create(speechRequest("RunInfra SDK blob canary."));
+  const blob = await blobResponse.blob();
+  if (!(blob instanceof Blob) || blob.size === 0) throw new Error("TTS blob response was empty");
+  assertAudioContentType(blobResponse.contentType, "audio.speech.binary_interfaces blob");
+  assertRequestId(blobResponse.requestId, "audio.speech.binary_interfaces blob");
+
+  const streamResponse = await client().audio.speech.create(speechRequest("RunInfra SDK stream canary."));
+  const streamBytes = await readAudioByteStream(streamResponse.stream(), "audio.speech.binary_interfaces");
+  assertAudioContentType(streamResponse.contentType, "audio.speech.binary_interfaces stream");
+  assertRequestId(streamResponse.requestId, "audio.speech.binary_interfaces stream");
+  return {
+    blobRequestId: blobResponse.requestId,
+    streamRequestId: streamResponse.requestId,
+    blobContentType: blob.type || blobResponse.contentType,
+    blobByteLength: blob.size,
+    streamByteLength: streamBytes,
+  };
 });
 
 await record("audio.transcriptions.create", [

@@ -26,6 +26,7 @@ const expectedRows = [
   "openai.params.embeddings",
   "images.generate",
   "audio.speech.create",
+  "audio.speech.binary_interfaces",
   "audio.transcriptions.create",
   "voice.pipeline.create",
   "error.auth.invalid_key",
@@ -190,6 +191,7 @@ const rowReadinessRequirements = [
   ]],
   ["images.generate", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"])],
   ["audio.speech.create", speechRequirements],
+  ["audio.speech.binary_interfaces", speechRequirements],
   ["audio.transcriptions.create", () => [
     ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL", "RUNINFRA_ASR_EXPECTED_TEXT"]),
     ...readableNonEmptyFileRequirement("RUNINFRA_ASR_FIXTURE_PATH"),

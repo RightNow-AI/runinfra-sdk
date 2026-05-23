@@ -449,6 +449,7 @@ def main() -> int:
     )
     record("images.generate", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], lambda: _images_generate(client(), image_model))
     record("audio.speech.create", lambda: _speech_requirements(), lambda: _speech_create(client(), tts_model))
+    record("audio.speech.binary_interfaces", lambda: _speech_requirements(), lambda: _speech_binary_interfaces(client(), tts_model))
     record(
         "audio.transcriptions.create",
         ["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL", "RUNINFRA_ASR_FIXTURE_PATH", "RUNINFRA_ASR_EXPECTED_TEXT"],
@@ -681,20 +682,38 @@ def _speech_requirements() -> List[str]:
     return missing_items
 
 
-def _speech_create(client: RunInfra, model: str) -> Dict[str, Any]:
+def _speech_request(model: str, input_text: str) -> Dict[str, Any]:
     request: Dict[str, Any] = {
         "model": model,
-        "input": "RunInfra SDK live canary.",
+        "input": input_text,
         **(speech_voice_payload() or {}),
     }
     if env("RUNINFRA_TTS_RESPONSE_FORMAT"):
         request["response_format"] = env("RUNINFRA_TTS_RESPONSE_FORMAT")
+    return request
+
+
+def _speech_create(client: RunInfra, model: str) -> Dict[str, Any]:
+    request = _speech_request(model, "RunInfra SDK live canary.")
     response = client.audio.speech.create(**request)
     if not response.content:
         raise AssertionError("TTS response was empty")
     assert_audio_content_type(response.content_type, "audio.speech.create")
     assert_request_id(response.request_id, "audio.speech.create")
     return {"requestId": response.request_id, "contentType": response.content_type, "byteLength": len(response.content)}
+
+
+def _speech_binary_interfaces(client: RunInfra, model: str) -> Dict[str, Any]:
+    response = client.audio.speech.create(**_speech_request(model, "RunInfra SDK Python bytes canary."))
+    if not isinstance(response.content, bytes) or not response.content:
+        raise AssertionError("TTS bytes response was empty")
+    assert_audio_content_type(response.content_type, "audio.speech.binary_interfaces")
+    assert_request_id(response.request_id, "audio.speech.binary_interfaces")
+    return {
+        "requestId": response.request_id,
+        "contentType": response.content_type,
+        "byteLength": len(response.content),
+    }
 
 
 def _transcriptions_create(client: RunInfra, model: str) -> Dict[str, Any]:

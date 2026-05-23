@@ -94,3 +94,29 @@ Current blockers remain:
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, and idempotency.
 - This checkpoint proves more local public helper surface, not live multimodal GA readiness.
+
+## 2026-05-23 Agent 4 Checkpoint: Audio Binary Interface Canary Coverage
+
+Added a TTS binary-interface row to the strict canary matrix:
+
+- New row: `audio.speech.binary_interfaces`.
+- TypeScript canary now validates `RunInfraAudioResponse.blob()` and `RunInfraAudioResponse.stream()` using real TTS calls when live TTS env is present.
+- Existing `audio.speech.create` continues to validate `arrayBuffer()`.
+- Python canary validates its raw `AudioResponse.content` byte surface under the same TTS readiness gate.
+- `LIVE-CANARIES.md` now documents the language-specific binary response coverage.
+
+Fresh local verification:
+
+- Added failing TS preflight assertion first; it failed because `audio.speech.binary_interfaces` was absent.
+- Review found the initial TS stream drain could hang after headers; fixed by bounding each raw stream read with `RUNINFRA_CANARY_TIMEOUT_SECONDS`, canceling the reader on timeout/error, and adding a regression assertion against bare `reader.read()`.
+- TS tests passed, 113 tests.
+- Python tests passed, 101 tests plus 88 subtests.
+- TS typecheck and build passed.
+- Workflow policy, version sync, Python canary syntax, and `git diff --check` passed.
+- Source canary report passed parity: TypeScript 8 passed/19 skipped, Python 8 passed/19 skipped, expected rows 27.
+- Strict preflight remains intentionally blocked: 8 ready rows and 19 blocked rows.
+
+Current blockers remain:
+
+- This does not prove live TTS until `RUNINFRA_TTS_MODEL` plus voice or reference-audio inputs are supplied.
+- Strict live canaries still require scoped production canary env and fixtures for the broader multimodal matrix.

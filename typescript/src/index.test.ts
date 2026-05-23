@@ -346,6 +346,13 @@ describe("RunInfra TypeScript SDK", () => {
         "RUNINFRA_ASR_FIXTURE_PATH",
         "RUNINFRA_ASR_EXPECTED_TEXT",
       ]));
+      expect(report.expectedRows).toContain("audio.speech.binary_interfaces");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "audio.speech.binary_interfaces")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_TTS_MODEL",
+        "RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT",
+      ]));
       expect(JSON.stringify(report)).not.toContain(fakeKey);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -445,6 +452,23 @@ describe("RunInfra TypeScript SDK", () => {
         rmSync(tmp, { recursive: true, force: true });
       }
     }
+  });
+
+  it("bounds TypeScript audio stream canary reads", () => {
+    const script = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+
+    expect(script).toContain("function readStreamChunkWithTimeout");
+    expect(script).toContain("function remainingStreamMs");
+    expect(script).toContain("const deadlineMs = performance.now() + canaryTimeoutMs()");
+    expect(script).toContain("remainingStreamMs(deadlineMs, label)");
+    expect(script).toContain("function cancelReaderWithTimeout");
+    expect(script).toContain("Promise.race([read, timeout])");
+    expect(script).toContain("Promise.race([");
+    expect(script).toContain("setTimeout(resolve, 1000)");
+    expect(script).toContain("clearTimeout(timeoutId)");
+    expect(script).toContain("await cancelReaderWithTimeout(reader)");
+    expect(script).not.toContain("const { done, value } = await reader.read()");
+    expect(script).not.toContain("await reader.cancel().catch(() => undefined)");
   });
 
   it("calls pipeline-scoped OpenAI-compatible chat completions", async () => {
