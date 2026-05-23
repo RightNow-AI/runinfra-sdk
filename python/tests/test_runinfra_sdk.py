@@ -1,7 +1,9 @@
 import hashlib
 import hmac
+import importlib.util
 import json
 import math
+import os
 import unittest
 from collections import UserDict
 from email.utils import formatdate
@@ -32,7 +34,6 @@ from runinfra import (
     RunInfraStreamParseError,
     RunInfraTimeoutError,
     TranscriptionResponse,
-    UnsupportedOperationError,
     WebhookVerificationError,
     construct_webhook_event,
 )
@@ -106,10 +107,18 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
     def test_readme_documents_full_webhook_verification_helper_surface(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        changelog = Path(__file__).resolve().parents[1].joinpath("CHANGELOG.md").read_text()
 
         self.assertIn("construct_webhook_event", readme)
         self.assertIn("verify_webhook_signature", readme)
         self.assertIn("WebhookVerificationError", readme)
+        self.assertIn("webhook delivery create/list methods are not part of the GA public SDK surface", readme)
+        self.assertNotIn("client.webhooks.create", readme)
+        self.assertNotIn("client.webhooks.list", readme)
+        self.assertIn("`UnsupportedOperationError` remains exported for compatibility", readme)
+        self.assertIn("## [0.1.4]", changelog)
+        self.assertIn("Removed unshipped webhook delivery `create` / `list` methods", changelog)
+        self.assertIn("`webhooks.delivery_surface.absent`", changelog)
 
     def test_readme_documents_non_blank_idempotency_key_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -140,6 +149,117 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("ref_text", readme)
         self.assertIn("task_type", readme)
         self.assertNotIn('voice=process.env.RUNINFRA_TTS_VOICE ?? "default"', readme)
+
+    def test_readme_documents_openai_parameter_subset_and_response_shape_guards(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        source = Path(__file__).resolve().parents[1].joinpath("runinfra", "__init__.py").read_text()
+
+        self.assertIn("## OpenAI-compatible parameter scope", readme)
+        self.assertIn("Live-gated native SDK subset", readme)
+        self.assertIn("will be treated as verified only after the strict live canaries pass", readme)
+        self.assertIn("`openai.params.chat.completions`", readme)
+        self.assertIn("`openai.params.chat.stream_options`", readme)
+        self.assertIn("`openai.params.responses`", readme)
+        self.assertIn("`openai.params.embeddings`", readme)
+        self.assertIn("`openai.params.images`", readme)
+        self.assertIn("`openai.params.audio.speech`", readme)
+        self.assertIn("`openai.params.audio.transcriptions`", readme)
+        self.assertIn("openai.params.images", live_canaries)
+        self.assertIn("openai.params.audio.speech", live_canaries)
+        self.assertIn("openai.params.audio.transcriptions", live_canaries)
+        self.assertIn("RUNINFRA_TTS_RESPONSE_FORMAT", live_canaries)
+        self.assertIn("RUNINFRA_ASR_RESPONSE_FORMAT", live_canaries)
+        self.assertIn("Optional for the base ASR row; required for the OpenAI ASR parameter row", live_canaries)
+        self.assertIn("dimension control", readme)
+        self.assertIn('`encoding_format` values other than `"float"`', readme)
+        self.assertIn('`response_format` values other than `"json"` or `"verbose_json"`', readme)
+        self.assertIn("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx", readme)
+        self.assertIn("error.model.not_found", live_canaries)
+        self.assertIn("error.body.unsupported_parameter", live_canaries)
+        self.assertIn("RunInfra `/v1/responses` is a chat-completions compatibility adapter.", readme)
+        self.assertIn("forwards the supported request through the chat-completions serving path", readme)
+        self.assertIn(
+            "does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics",
+            readme,
+        )
+        self.assertIn("Responses rows prove the compatibility adapter", live_canaries)
+        self.assertIn("Responses compatibility adapter", source)
+        self.assertIn("not a full stateful OpenAI Responses implementation", source)
+
+    def test_child_canaries_cover_chat_stream_options_usage_chunks(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        for text in (runner, typescript_canary, python_canary, live_canaries):
+            self.assertIn("openai.params.chat.stream_options", text)
+            self.assertIn("stream_options", text)
+            self.assertIn("include_usage", text)
+        self.assertIn("assertChatStreamUsageEvent", typescript_canary)
+        self.assertIn("assertChatUsageObject", typescript_canary)
+        self.assertIn('"prompt_tokens"', typescript_canary)
+        self.assertIn('"completion_tokens"', typescript_canary)
+        self.assertIn('"total_tokens"', typescript_canary)
+        self.assertIn('usage: "present"', typescript_canary)
+        self.assertIn("assert_chat_stream_usage_event", python_canary)
+        self.assertIn("assert_chat_usage_object", python_canary)
+        self.assertIn('"prompt_tokens"', python_canary)
+        self.assertIn('"completion_tokens"', python_canary)
+        self.assertIn('"total_tokens"', python_canary)
+        self.assertIn('"usage": "present"', python_canary)
+
+    def test_child_canaries_cover_live_model_not_found_error_mapping(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+
+        self.assertIn('"error.model.not_found"', runner)
+        self.assertIn("ModelNotFoundError", typescript_canary)
+        self.assertIn('record("error.model.not_found"', typescript_canary)
+        self.assertIn("runinfra-sdk-canary-missing-model", typescript_canary)
+        self.assertIn("ModelNotFoundError", python_canary)
+        self.assertIn('record("error.model.not_found"', python_canary)
+        self.assertIn("runinfra-sdk-canary-missing-model", python_canary)
+
+    def test_models_list_canary_fails_when_configured_model_is_absent_from_catalog(self):
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        self.assertIn("configuredCanaryModelIds", typescript_canary)
+        self.assertIn("assertConfiguredModelsListed(response.data)", typescript_canary)
+        self.assertIn("models.list did not include", typescript_canary)
+        self.assertNotIn("missing.join", typescript_canary)
+        self.assertIn("configured_canary_model_ids", python_canary)
+        self.assertIn('assert_configured_models_listed(response["data"])', python_canary)
+        self.assertIn("models.list did not include", python_canary)
+        self.assertNotIn("join(missing", python_canary)
+        self.assertIn("`models.list` must\ninclude every configured canary model ID", live_canaries)
+        self.assertIn("Reports record\nonly the item count", live_canaries)
+        typescript_report_env = typescript_canary.split("const relevantEnv = [", 1)[1].split("];", 1)[0]
+        python_report_env = python_canary.split("relevant_env = [", 1)[1].split("]", 1)[0]
+        self.assertNotIn('"TEST_PIPELINE_ID"', typescript_report_env)
+        self.assertNotIn('"TEST_PIPELINE_ID"', python_report_env)
+        self.assertIn('firstEnv("RUNINFRA_VOICE_PIPELINE_ID", "TEST_PIPELINE_ID")', typescript_canary)
+        self.assertIn('first_env("RUNINFRA_VOICE_PIPELINE_ID", "TEST_PIPELINE_ID")', python_canary)
+
+    def test_webhook_delivery_methods_are_absent_from_artifact_and_canary_public_surface(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        clean_install_verifier = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-clean-installs.mjs").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        for text in (runner, typescript_canary, python_canary, clean_install_verifier, live_canaries):
+            self.assertIn("webhooks.delivery_surface.absent", text)
+            self.assertNotIn("webhooks.create.unsupported", text)
+            self.assertNotIn("webhooks.list.unsupported", text)
+        self.assertIn('typeof client.webhooks.create !== "undefined"', clean_install_verifier)
+        self.assertIn('typeof client.webhooks.list !== "undefined"', clean_install_verifier)
+        self.assertIn('hasattr(client.webhooks, "create")', clean_install_verifier)
+        self.assertIn('hasattr(client.webhooks, "list")', clean_install_verifier)
 
     def test_readme_documents_local_request_payload_validation_before_sending(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -172,24 +292,287 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             readme,
         )
 
+    def test_readme_documents_streaming_cancellation_resource_release(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        self.assertIn("Close the active iterator when you stop consuming a stream early", readme)
+        self.assertIn("iterator.close()", readme)
+        self.assertIn("Streaming transport-level backend cancellation is best effort", readme)
+        self.assertRegex(live_canaries, r"TypeScript cancellation rows break out of\s+`for await`")
+        self.assertIn("Python cancellation rows close the active iterator", live_canaries)
+
+    def test_child_canaries_cover_slow_consumer_streaming_rows(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        for row in ("chat.completions.stream.slow_consumer", "responses.stream.slow_consumer"):
+            self.assertIn(f'"{row}"', runner)
+            self.assertIn(f'record("{row}"', typescript_canary)
+            self.assertIn(f'"{row}"', python_canary)
+            self.assertIn(row, live_canaries)
+
+        self.assertIn("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS", runner)
+        self.assertIn("slowConsumerDelayMs", typescript_canary)
+        self.assertIn("slow_consumer_delay_seconds", python_canary)
+        self.assertIn("slow_stream_requirements", python_canary)
+        self.assertIn("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS", live_canaries)
+        self.assertIn("Slow-consumer streaming rows", live_canaries)
+        self.assertIn("bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`", live_canaries)
+
+    def test_child_canaries_cover_local_streaming_fault_rows(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        rows = (
+            "chat.completions.stream.malformed_frame.local",
+            "responses.stream.malformed_frame.local",
+            "chat.completions.stream.disconnect.local",
+            "responses.stream.disconnect.local",
+            "chat.completions.stream.stalled_read.local",
+            "responses.stream.stalled_read.local",
+        )
+
+        for row in rows:
+            self.assertIn(f'"{row}"', runner)
+            self.assertIn(f'record("{row}"', typescript_canary)
+            self.assertIn(f'"{row}"', python_canary)
+            self.assertIn(row, live_canaries)
+
+        self.assertIn("RunInfraStreamParseError", typescript_canary)
+        self.assertIn("RunInfraConnectionError", typescript_canary)
+        self.assertIn("RunInfraTimeoutError", typescript_canary)
+        self.assertIn("localStreamClient", typescript_canary)
+        self.assertIn("expectStreamError", typescript_canary)
+        self.assertIn("RunInfraStreamParseError", python_canary)
+        self.assertIn("RunInfraConnectionError", python_canary)
+        self.assertIn("RunInfraTimeoutError", python_canary)
+        self.assertIn("local_stream_client", python_canary)
+        self.assertIn("expect_stream_error", python_canary)
+        self.assertIn("Local streaming fault rows", live_canaries)
+        self.assertIn("do not call the production gateway", live_canaries)
+
+    def test_child_canaries_cover_local_retry_safety_rows(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        rows = (
+            "retry.safety.get.local",
+            "retry.safety.post.requires_idempotency.local",
+            "retry.safety.post.with_idempotency.local",
+            "retry.safety.stream.no_retry.local",
+            "retry.safety.audio_binary.no_retry.local",
+            "retry.safety.audio_multipart.no_retry.local",
+        )
+
+        for row in rows:
+            self.assertIn(f'"{row}"', runner)
+            self.assertIn(f'record("{row}"', typescript_canary)
+            self.assertIn(f'"{row}"', python_canary)
+            self.assertIn(row, live_canaries)
+
+        self.assertIn("localRetryClient", typescript_canary)
+        self.assertIn("assertRetryCallCount", typescript_canary)
+        self.assertIn("local_retry_client", python_canary)
+        self.assertIn("assert_retry_call_count", python_canary)
+        self.assertIn("Local retry-safety rows", live_canaries)
+        self.assertIn("do not call the production gateway", live_canaries)
+
+    def test_runner_has_public_surface_coverage_gate(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+
+        self.assertIn("--verify-surface-coverage", runner)
+        self.assertIn("publicSurfaceCoverage", runner)
+        self.assertIn("client.chat.completions.create", runner)
+        self.assertIn("client.responses.create", runner)
+        self.assertIn("client.embeddings.create", runner)
+        self.assertIn("client.images.generate", runner)
+        self.assertIn("client.audio.speech.create", runner)
+        self.assertIn("client.audio.transcriptions.create", runner)
+        self.assertIn("client.voice.pipeline.create", runner)
+        self.assertIn("client.webhooks.verify_signature", runner)
+        self.assertIn("verify_webhook_signature", runner)
+        self.assertIn("RunInfraAudioResponse.blob", runner)
+        self.assertIn("declaredSurfaces", runner)
+        self.assertIn("uncoveredSurfaces", runner)
+        self.assertIn("RunInfraStream[Symbol.asyncIterator]", runner)
+        self.assertIn("RunInfraStream.__iter__", runner)
+        self.assertIn("surfaceCoverageFailureReport", runner)
+        self.assertIn("canonicalEnvAliases", runner)
+        self.assertIn("TEST_MODEL", runner)
+        self.assertIn("TEST_ASR_FILE", runner)
+
+    def test_python_live_canary_validates_slow_consumer_delay_before_opening_stream(self):
+        canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
+        spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        live_canary = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(live_canary)
+
+        class ExplodingCompletions:
+            def create(self, **_kwargs):
+                raise AssertionError("stream opened before delay validation")
+
+        class FakeChat:
+            completions = ExplodingCompletions()
+
+        class FakeClient:
+            chat = FakeChat()
+
+        with patch.dict(os.environ, {"RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS": "6000"}):
+            with self.assertRaisesRegex(AssertionError, "non-negative integer <= 5000"):
+                live_canary._chat_stream_slow_consumer(FakeClient(), "model")
+
+    def test_python_live_canary_bounds_slow_consumer_sleep_to_row_deadline(self):
+        canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
+        spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        live_canary = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(live_canary)
+
+        with patch.dict(
+            os.environ,
+            {
+                "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS": "2",
+                "RUNINFRA_CANARY_TIMEOUT_SECONDS": "0.001",
+            },
+        ):
+            with self.assertRaisesRegex(AssertionError, "slow-consumer timed out"):
+                live_canary.read_slow_stream([{"event": 1}], "test slow stream", lambda _event: True)
+
+    def test_python_live_canary_closes_active_stream_iterator_on_cancellation(self):
+        canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
+        canary = canary_path.read_text()
+
+        self.assertIn("iterator = iter(stream)", canary)
+        self.assertIn("iterator.close()", canary)
+        self.assertNotIn('getattr(stream, "close", None)', canary)
+
+        spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        live_canary = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(live_canary)
+
+        class CloseTrackingIterator:
+            def __init__(self):
+                self.index = 0
+                self.closed = False
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                self.index += 1
+                return {"event": self.index}
+
+            def close(self):
+                self.closed = True
+
+        class CloseTrackingStream:
+            def __init__(self):
+                self.iterator = CloseTrackingIterator()
+
+            def __iter__(self):
+                return self.iterator
+
+        stream = CloseTrackingStream()
+
+        events = live_canary.read_some_stream(stream, "test stream")
+
+        self.assertEqual(events, [{"event": 1}, {"event": 2}, {"event": 3}])
+        self.assertTrue(stream.iterator.closed)
+
+    def test_readme_documents_sync_only_async_runtime_guidance(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+
+        self.assertIn("## Async Python runtimes", readme)
+        self.assertIn("`RunInfra` is intentionally sync-only in v0.1.4", readme)
+        self.assertIn("does not block the event loop", readme)
+        self.assertIn("`AsyncRunInfra` client yet", readme)
+
     def test_readme_documents_public_repo_promotion_without_stale_monorepo_commands(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
         self.assertIn("For production promotion", readme)
-        self.assertIn("This extracted public repo does not define the old monorepo", readme)
+        self.assertIn("This public repo now includes live-canary runners for both SDKs.", readme)
         self.assertIn("node scripts/verify-workflow-policy.mjs", readme)
         self.assertIn("node scripts/verify-version-sync.mjs", readme)
         self.assertIn("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz", readme)
         self.assertIn("python scripts/verify-python-package.py python/dist", readme)
+        self.assertIn("node scripts/verify-clean-installs.mjs --package both --mode artifact", readme)
+        self.assertIn("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage", readme)
         self.assertIn(
-            "gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true",
+            "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json",
             readme,
         )
-        self.assertIn("Run live deployment canaries from RunPipe or RunInfra-Engine", readme)
+        self.assertIn(
+            "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json",
+            readme,
+        )
+        surface_coverage_index = readme.index("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage")
+        preflight_index = readme.index(
+            "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json"
+        )
+        live_canary_index = readme.index(
+            "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json"
+        )
+        self.assertLess(surface_coverage_index, preflight_index)
+        self.assertLess(preflight_index, live_canary_index)
+        self.assertIn(
+            "gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>",
+            readme,
+        )
+        self.assertIn("A real publish must also prove registry install/import", readme)
+        self.assertIn(
+            "node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>",
+            readme,
+        )
+        self.assertIn("Run the surface-coverage check before preflight", readme)
+        self.assertIn("Then run the strict preflight", readme)
+        self.assertIn("Then run the strict live canary matrix against the exact production gateway", readme)
         self.assertIn("Do not use npm or PyPI tokens", readme)
         self.assertNotIn("pnpm verify:sdk-release", readme)
         self.assertNotIn("pnpm test:sdk-canary:live", readme)
         self.assertNotIn("RUNINFRA_SDK_CI_TOKEN", readme)
+
+    def test_python_package_verifier_blocks_broader_secret_and_path_families(self):
+        verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
+        spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        samples = [
+            "github_pat_" + "A" * 82,
+            "ghs_" + "A" * 36,
+            "AKIA" + "A" * 16,
+            "sk_live_" + "A" * 24,
+            "whsec_" + "A" * 32,
+            "eyJ" + "A" * 20 + "." + "B" * 20 + "." + "C" * 20,
+            "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+            "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+            r"C:\Users\someone\project",
+            "/Users/someone/project/.env.local",
+            "/home/someone/project/.env.local",
+            ".npmrc",
+            "package/.npmrc",
+            ".env",
+            ".env.local",
+            "package/.env.local",
+            "/tmp/project/.env.local",
+        ]
+
+        for sample in samples:
+            with self.subTest(sample=sample[:12]):
+                self.assertTrue(verifier.has_forbidden_content(sample.encode("utf-8")))
 
     def test_public_methods_expose_typed_response_annotations(self):
         client = RunInfra(api_key="sk-ri-test", transport=RecordingTransport())
@@ -357,6 +740,27 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         client.embeddings.create(model="bge-m3", input=["a", "b"])
 
         self.assertEqual(transport.calls[0].url, "https://api.runinfra.ai/v1/embeddings")
+
+    def test_embedding_passes_through_float_format_and_dimensions(self):
+        transport = RecordingTransport(json_response({"data": [{"embedding": [0.1, 0.2], "index": 0}]}))
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        client.embeddings.create(
+            model="bge-m3",
+            input="hello",
+            encoding_format="float",
+            dimensions=256,
+        )
+
+        self.assertEqual(
+            json.loads(transport.calls[0].body.decode("utf-8")),
+            {
+                "model": "bge-m3",
+                "input": "hello",
+                "encoding_format": "float",
+                "dimensions": 256,
+            },
+        )
 
     def test_voice_pipeline_posts_audio_to_verified_pipeline_route(self):
         transport = RecordingTransport(json_response({
@@ -822,6 +1226,36 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertEqual(response["_request_id"], "req-server-123")
 
+    def test_request_ids_are_header_case_insensitive(self):
+        transport = RecordingTransport(
+            RunInfraResponse(
+                200,
+                {"content-type": "application/json", "X-REQUEST-ID": "req-json-case"},
+                json.dumps({"object": "list", "data": []}).encode("utf-8"),
+            ),
+            RunInfraResponse(
+                200,
+                {"content-type": "text/event-stream", "X-REQUEST-ID": "req-stream-case"},
+                b'data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+            ),
+            RunInfraResponse(
+                200,
+                {"Content-Type": "audio/mpeg", "X-REQUEST-ID": "req-audio-case"},
+                b"\x01\x02",
+            ),
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        self.assertEqual(client.models.list()["_request_id"], "req-json-case")
+        stream = client.responses.create(model="llama-3.1-8b", input="Hi", stream=True)
+        self.assertEqual(stream.request_id, "req-stream-case")
+        self.assertEqual(
+            list(stream),
+            [{"type": "response.completed", "response": {"status": "completed"}}],
+        )
+        audio = client.audio.speech.create(model="kokoro", input="hello", voice="default")
+        self.assertEqual(audio.request_id, "req-audio-case")
+
     def test_rejects_malformed_json_response_shapes_before_returning_user_data(self):
         transport = RecordingTransport(
             RunInfraResponse(
@@ -946,6 +1380,41 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                     )
                 self.assertEqual(raised.exception.type, "invalid_request_options")
 
+        self.assertEqual(transport.calls, [])
+
+    def test_native_embedding_rejects_response_shapes_it_cannot_type_before_network(self):
+        transport = RecordingTransport(json_response({}))
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.embeddings.create(model="bge-m3", input="hello", encoding_format="base64")
+        self.assertEqual(raised.exception.type, "invalid_request_options")
+        self.assertEqual(
+            str(raised.exception),
+            "embedding encoding_format must be float for native SDK typed responses",
+        )
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.embeddings.create(model="bge-m3", input="hello", dimensions=0)
+        self.assertEqual(raised.exception.type, "invalid_request_options")
+        self.assertEqual(str(raised.exception), "embedding dimensions must be a positive integer")
+        self.assertEqual(transport.calls, [])
+
+    def test_native_asr_rejects_response_formats_it_cannot_parse_before_network(self):
+        transport = RecordingTransport(json_response({"text": "hello"}))
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.audio.transcriptions.create(
+                model="whisper-large-v3",
+                file=b"abc",
+                response_format="text",
+            )
+        self.assertEqual(raised.exception.type, "invalid_request_options")
+        self.assertEqual(
+            str(raised.exception),
+            "audio transcription response_format must be json or verbose_json for native SDK typed responses",
+        )
         self.assertEqual(transport.calls, [])
 
     def test_typed_errors_and_retries(self):
@@ -1591,6 +2060,42 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         )
         self.assertIn(b'"stream":true', transport.calls[0].body)
 
+    def test_streaming_preserves_multibyte_utf8_split_across_chunks(self):
+        payload = (
+            b'data: {"choices":[{"delta":{"content":"caf'
+            + bytes([0xC3, 0xA9])
+            + b'"}}]}\n\n'
+        )
+        split_at = payload.index(bytes([0xC3, 0xA9])) + 1
+
+        def chunks():
+            yield payload[:split_at]
+            yield payload[split_at:]
+
+        transport = RecordingTransport(
+            RunInfraResponse(
+                200,
+                {"content-type": "text/event-stream", "x-request-id": "req-stream-utf8"},
+                chunks(),
+            )
+        )
+        client = RunInfra(
+            api_key="sk-ri-test",
+            pipeline_id="pipe-stream",
+            transport=transport,
+        )
+
+        stream = client.chat.completions.create(
+            model="llama-3.1-8b",
+            messages=[{"role": "user", "content": "Hi"}],
+            stream=True,
+        )
+
+        self.assertEqual(
+            list(stream),
+            [{"choices": [{"delta": {"content": "caf\u00e9"}}]}],
+        )
+
     def test_chat_streaming_marks_transport_request_and_consumes_incremental_chunks(self):
         def chunks():
             yield b'data: {"choices":[{"delta":{"content":"hel"}}]}\n'
@@ -1740,12 +2245,14 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertTrue(chunks.closed)
 
-    def test_unsupported_webhooks_fail_locally(self):
+    def test_unshipped_webhook_delivery_helpers_are_not_public_runtime_surface(self):
         transport = RecordingTransport()
         client = RunInfra(api_key="sk-ri-test", transport=transport)
 
-        with self.assertRaises(UnsupportedOperationError):
-            client.webhooks.create()
+        self.assertFalse(hasattr(client.webhooks, "create"))
+        self.assertFalse(hasattr(client.webhooks, "list"))
+        self.assertTrue(callable(client.webhooks.verify_signature))
+        self.assertTrue(callable(client.webhooks.construct_event))
         self.assertEqual(transport.calls, [])
 
     def test_construct_webhook_event_verifies_exact_raw_body(self):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import json
 import hashlib
 import hmac
@@ -19,7 +20,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optio
 JsonDict = Dict[str, Any]
 Transport = Callable[["RunInfraRequest"], "RunInfraResponse"]
 ResponseBody = Union[bytes, Iterable[bytes]]
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 _MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 60.0
 _WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH = 8192
 
@@ -220,6 +221,7 @@ class RunInfraStream:
     def __iter__(self) -> Iterator[JsonDict]:
         buffer = ""
         data_lines: List[str] = []
+        decoder = codecs.getincrementaldecoder("utf-8")()
 
         def dispatch_event() -> Optional[JsonDict]:
             payload = "\n".join(data_lines).strip()
@@ -257,7 +259,7 @@ class RunInfraStream:
 
         try:
             for chunk in chunks:
-                buffer += chunk.decode("utf-8", errors="replace")
+                buffer += decoder.decode(chunk, final=False)
                 lines = buffer.split("\n")
                 buffer = lines.pop() or ""
                 for line in lines:
@@ -265,6 +267,7 @@ class RunInfraStream:
                     if parsed is not None:
                         yield parsed
 
+            buffer += decoder.decode(b"", final=True)
             parsed = parse_line(buffer)
             if parsed is not None:
                 yield parsed
@@ -521,6 +524,19 @@ def _validate_embedding_input(value: Any) -> None:
     ):
         return
     raise _invalid_request_option("input must be a non-empty string or array of strings")
+
+
+def _validate_embedding_response_options(options: Mapping[str, Any]) -> None:
+    encoding_format = options.get("encoding_format")
+    if encoding_format is not None and encoding_format != "float":
+        raise _invalid_request_option(
+            "embedding encoding_format must be float for native SDK typed responses"
+        )
+    dimensions = options.get("dimensions")
+    if dimensions is not None and (
+        isinstance(dimensions, bool) or not isinstance(dimensions, int) or dimensions <= 0
+    ):
+        raise _invalid_request_option("embedding dimensions must be a positive integer")
 
 
 def _validated_audio_file(value: Any) -> bytes:
@@ -829,7 +845,7 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
     except Exception:
         pass
 
-    request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+    request_id = _request_id_from_headers(response.headers)
     if response.status == 401:
         return AuthenticationError(message, status=response.status, error_type="auth_error", request_id=request_id)
     if response.status == 403:
@@ -863,11 +879,11 @@ def _json_body(payload: Mapping[str, Any]) -> bytes:
 def _json_response(response: RunInfraResponse) -> Any:
     payload = response.json()
     if isinstance(payload, dict):
-        request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+        request_id = _request_id_from_headers(response.headers)
         if request_id:
             return {**payload, "_request_id": request_id}
         return payload
-    request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+    request_id = _request_id_from_headers(response.headers)
     raise RunInfraError(
         f"RunInfra JSON response shape error: expected object, got {_json_payload_kind(payload)}.",
         status=response.status,
@@ -917,6 +933,14 @@ def _validated_multipart_field_value(value: Any) -> str:
     if isinstance(value, float) and not math.isfinite(value):
         raise _invalid_request_option("multipart field values must contain only finite numbers")
     return str(value)
+
+
+def _validate_transcription_response_format(options: Mapping[str, Any]) -> None:
+    response_format = options.get("response_format")
+    if response_format is not None and response_format not in {"json", "verbose_json"}:
+        raise _invalid_request_option(
+            "audio transcription response_format must be json or verbose_json for native SDK typed responses"
+        )
 
 
 def _multipart_body(fields: Mapping[str, str], files: Mapping[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
@@ -1096,7 +1120,7 @@ class _ChatCompletions:
         if stream:
             return RunInfraStream(
                 response.body,
-                response.headers.get("x-request-id") or response.headers.get("X-Request-Id"),
+                _request_id_from_headers(response.headers),
             )
         return _json_response(response)
 
@@ -1111,6 +1135,11 @@ class _Responses:
         self._requester = requester
 
     def create(self, **kwargs: Any) -> Union[ResponsesCreateResponse, RunInfraStream]:
+        """Create through RunInfra's Responses compatibility adapter.
+
+        The gateway maps supported fields onto chat completions and rewraps
+        the result; this is not a full stateful OpenAI Responses implementation.
+        """
         request_options = kwargs.pop("request_options", None)
         kwargs = {**kwargs, "model": _validated_model(kwargs.get("model"))}
         _validate_responses_input(kwargs.get("input"))
@@ -1124,7 +1153,7 @@ class _Responses:
         if stream:
             return RunInfraStream(
                 response.body,
-                response.headers.get("x-request-id") or response.headers.get("X-Request-Id"),
+                _request_id_from_headers(response.headers),
             )
         return _json_response(response)
 
@@ -1142,6 +1171,7 @@ class _Embeddings:
         **kwargs: Any,
     ) -> EmbeddingResponse:
         _validate_embedding_input(input)
+        _validate_embedding_response_options(kwargs)
         return _json_response(self._requester.request(
             "/embeddings",
             json_payload={"model": _validated_model(model), "input": input, **kwargs},
@@ -1184,7 +1214,7 @@ class _Speech:
             request_options=request_options,
         )
         content_type = response.headers.get("content-type", response.headers.get("Content-Type", "application/octet-stream"))
-        request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+        request_id = _request_id_from_headers(response.headers)
         return AudioResponse(response.body, content_type, request_id)
 
 
@@ -1202,6 +1232,7 @@ class _Transcriptions:
         request_options: Optional[Mapping[str, Any]] = None,
         **kwargs: Any,
     ) -> TranscriptionResponse:
+        _validate_transcription_response_format(kwargs)
         fields = {
             "model": _validated_model(model),
             **{key: _validated_multipart_field_value(value) for key, value in kwargs.items()},
@@ -1222,7 +1253,7 @@ class _Transcriptions:
 class _Audio:
     """Audio surfaces (text-to-speech + speech-to-text).
 
-    [EXPERIMENTAL] As of v0.1.3, these methods have NOT been verified end-to-end
+    [EXPERIMENTAL] As of v0.1.4, these methods have NOT been verified end-to-end
     against a live deployed pipeline in the canary suite. The HTTP envelope
     matches the OpenAI Audio API contract and the request/response shapes are
     stable, but you should test against your own deployed model before using
@@ -1257,7 +1288,7 @@ class _Models:
 class _Images:
     """Image generation surface.
 
-    [EXPERIMENTAL] As of v0.1.3, this method has NOT been verified end-to-end
+    [EXPERIMENTAL] As of v0.1.4, this method has NOT been verified end-to-end
     against a live deployed pipeline in the canary suite. The HTTP envelope
     matches the OpenAI Images API contract, but you should test against your
     own deployed model before using in production. Live-canary verification
@@ -1289,16 +1320,6 @@ class _Webhooks:
 
     def construct_event(self, **kwargs: Any) -> Any:
         return construct_webhook_event(**kwargs)
-
-    def create(self, **_kwargs: Any) -> Any:
-        raise UnsupportedOperationError(
-            "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped."
-        )
-
-    def list(self) -> Any:
-        raise UnsupportedOperationError(
-            "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped."
-        )
 
 
 class _VoicePipeline:

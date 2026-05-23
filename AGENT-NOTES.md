@@ -19,17 +19,22 @@ constraints around OIDC trusted publishing and registry policy.
 > - **v0.1.3** — hardened browser runtime guards, avoided URL normalization
 >   regex backtracking, pinned CI build tooling, SHA-pinned workflow actions,
 >   and made real publish dispatch require an exact version confirmation.
-> - **v0.2.0+** — same path as 0.1.3.
+> - **v0.1.4 candidate** — removes unshipped webhook delivery create/list
+>   methods from the public SDK surface and proves their absence in canaries.
+> - **v0.2.0+** — same protected OIDC path.
 >
 > Both registries' Trusted Publisher rules have been migrated to point at
 > THIS repo. The old rules pointing at `RunInfra-Landing` were removed.
 
 ## What ships
 
-| Registry | Package | Source dir | Latest |
+| Registry | Package | Source dir | Current source version |
 |---|---|---|---|
-| npm | `@runinfra/sdk` | `typescript/` | `0.1.3` |
-| PyPI | `runinfra` | `python/` | `0.1.3` |
+| npm | `@runinfra/sdk` | `typescript/` | `0.1.4` |
+| PyPI | `runinfra` | `python/` | `0.1.4` |
+
+Registry latest remains `0.1.3` until the protected trusted-publish workflow
+publishes `0.1.4` from `main`.
 
 Customer install:
 ```
@@ -116,8 +121,12 @@ and have admin bypass disabled. Main branch protection also enforces admins.
 | `client.audio.speech.create` | **Experimental** — same |
 | `client.audio.transcriptions.create` | **Experimental** — same |
 | `client.webhooks.verifySignature` / `.constructEvent` | Works locally |
-| `client.webhooks.create` / `.list` | Throws `UnsupportedOperationError` — delivery not shipped |
+| Webhook delivery create/list | Not shipped and not exposed on the public SDK surface |
 | `client.voice.pipeline.create` | **Experimental** - posts binary audio to the pipeline-scoped `/pipeline` route, not live-canary verified |
+
+Python remains sync-only in v0.1.4. Keep FastAPI/async users pointed at worker
+threads, queues, or background jobs until `AsyncRunInfra` ships with matching
+unit, streaming, live-canary, and clean-install coverage.
 
 The READMEs include a Modality Status table that mirrors this. JSDoc
 (`@experimental`) and Python docstrings (`[EXPERIMENTAL]`) on the classes
@@ -128,6 +137,7 @@ drive IDE warnings for customers using experimental surfaces.
 ```
 runinfra-sdk/
 ├── README.md             — project overview + install
+├── LIVE-CANARIES.md      — strict GA live-canary matrix and env contract
 ├── LICENSE               — proprietary source-available terms
 ├── AGENT-NOTES.md        — this file
 ├── .gitignore
@@ -156,6 +166,10 @@ runinfra-sdk/
     └── publish.yml       — manual workflow_dispatch publish via OIDC
 ```
 
+CodeQL is intentionally enforced by GitHub default setup and protected checks.
+Do not add `.github/workflows/codeql.yml` while default setup is enabled;
+GitHub rejects advanced uploads in that configuration.
+
 LICENSE files exist in 3 places (root + typescript/ + python/). They are
 identical proprietary source-available terms. Customers see them via:
 
@@ -176,7 +190,8 @@ identical proprietary source-available terms. Customers see them via:
 
 3. Commit + push + PR + merge to `main`.
 
-4. Wait for `ci.yml` to pass green on `main`.
+4. Wait for `ci.yml` and the GitHub default CodeQL `Analyze (...)` checks to
+   pass green on `main`.
 
 5. Trigger publish:
    ```
@@ -188,6 +203,20 @@ identical proprietary source-available terms. Customers see them via:
    - `dry_run`: `true` (verify only) | `false` (actually publish)
    - `confirm_version`: exact package version, required when `dry_run=false`
 
+Before GA promotion, also run:
+```
+pnpm --dir typescript build
+node scripts/verify-clean-installs.mjs --package both --mode artifact
+node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
+node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
+```
+
+Do not graduate image, TTS, ASR, or voice pipeline out of experimental status
+without strict TypeScript + Python live-canary reports for the exact production
+gateway, models, workspace key, and pipeline key. Strict reports must keep
+TS/Python row parity, redact custom base URLs, drain final streams to terminal
+events, and prove idempotency replay with explicit gateway evidence.
+
 6. Watch:
    ```
    gh run watch <run-id> --repo RightNow-AI/runinfra-sdk
@@ -196,10 +225,12 @@ identical proprietary source-available terms. Customers see them via:
 
 7. Verify post-publish:
    ```
+   node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>
    npm view @runinfra/sdk@<version> dist.attestations
    pip index versions runinfra
    ```
 
+   Registry install/import checks must pass for the exact released version.
    `dist.attestations` should be a non-empty JSON blob (Sigstore-signed
    provenance). PyPI provenance is visible at
    https://pypi.org/manage/project/runinfra/publishing/.
@@ -221,18 +252,17 @@ some things are now obsolete in the new repo context:
 
 | Old (monorepo `RunInfra-Landing`) | New (this repo `runinfra-sdk`) |
 |---|---|
-| Workflow: `.github/workflows/sdk-publish.yml` | `.github/workflows/publish.yml` + `.github/workflows/ci.yml` |
+| Workflow: `.github/workflows/sdk-publish.yml` | `.github/workflows/publish.yml` + `.github/workflows/ci.yml` + GitHub default CodeQL checks |
 | Bypass flag: `RUNINFRA_SDK_BYPASS_LIVE_CANARY` + `bypass_live_canary` input | None. The simplified workflow doesn't run the strict gate scripts. |
-| Gate scripts: `scripts/verify-sdk-*.mjs` + `scripts/publish-sdk-artifacts.mjs` | None. CI runs `pnpm test` + tarball-leak grep instead. |
+| Gate scripts: `scripts/verify-sdk-*.mjs` + `scripts/publish-sdk-artifacts.mjs` | Package gates are local scripts in `scripts/`; strict live canaries run through `scripts/run-sdk-live-canaries.mjs`. |
 | Source paths: `sdks/typescript/`, `sdks/python/` | `typescript/`, `python/` (root-level) |
-| Workflow has 5-modality live canary gate | Workflow does basic test + build + publish |
+| Workflow has 5-modality live canary gate | CI/publish run package gates; GA still requires strict live canary reports before promotion. |
 | Repo URLs in metadata: `RunInfra-Landing` | `runinfra-sdk` |
 | Publish requires bypass workflow input | Publish only requires `package=both/typescript/python` + `dry_run=false` |
 
-The strict gates from the monorepo are not yet replicated here. When you
-need to retire the implicit "beta" status (i.e., bump to 1.0.0), the gate
-scripts will need to be ported over OR the project will need to define a
-new set of gates appropriate to a public OSS-ish repo.
+The strict package gates are replicated here, but GA still requires complete
+production live-canary reports for every supported public SDK surface before
+retiring the implicit beta status.
 
 ## Things future agents must NOT do
 

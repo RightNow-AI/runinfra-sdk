@@ -23,9 +23,16 @@ FORBIDDEN_SUFFIXES = (
 )
 
 FORBIDDEN_CONTENT_RE = re.compile(
-    r"C:\\Users\\jaber|RightNow-Full|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|"
-    r"npm_[A-Za-z0-9]{20,}|pypi-[A-Za-z0-9_-]{40,}|ghp_[A-Za-z0-9_]{20,}|"
-    r"sk-ri-[A-Za-z0-9_-]{20,}|sourceMappingURL|sourcesContent|webpack://|\\.npmrc",
+    r"\b[A-Z]:\\Users\\[^\\\s\"'<>]+|/Users/[^/\s\"'<>]+|/home/[^/\s\"'<>]+|"
+    r"RightNow-Full|BEGIN (?:(?:RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY|PGP PRIVATE KEY BLOCK)|"
+    r"npm_[A-Za-z0-9]{20,}|pypi-[A-Za-z0-9_-]{40,}|"
+    r"(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{22,})|"
+    r"(?:A3T[A-Z0-9]|AKIA|ASIA)[A-Z0-9]{16}|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|"
+    r"whsec_[A-Za-z0-9]{20,}|"
+    r"eyJ[A-Za-z0-9_=-]{10,}\.[A-Za-z0-9_=-]{10,}\.[A-Za-z0-9_=-]{10,}|"
+    r"sk-ri-[A-Za-z0-9_-]{20,}|sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}|"
+    r"AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{20,}|"
+    r"sourceMappingURL|sourcesContent|webpack://|\.npmrc|(?:^|[\\/])\.env(?:\.[A-Za-z0-9_-]+)?(?:$|[\\/\s\"'<>])",
     re.IGNORECASE,
 )
 

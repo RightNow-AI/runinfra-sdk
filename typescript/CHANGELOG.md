@@ -3,6 +3,22 @@
 All notable changes to `@runinfra/sdk` are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-05-23
+
+### Changed
+- Removed unshipped webhook delivery `create` / `list` methods from the
+  public `client.webhooks` surface. Local signature verification remains
+  available through `verifySignature`, `constructEvent`,
+  `verifyWebhookSignature`, and `constructWebhookEvent`.
+- Replaced the live-canary unsupported-webhook rows with
+  `webhooks.delivery_surface.absent`, so source, artifact, and clean-install
+  gates prove the dead delivery methods are absent instead of merely
+  fail-closed.
+
+### Compatibility
+- `UnsupportedOperationError` remains exported for older v0.1.x consumers, but
+  current public helpers do not raise it.
+
 ## [0.1.3] - 2026-05-23
 
 ### Security

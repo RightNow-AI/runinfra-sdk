@@ -1,7 +1,10 @@
 // @vitest-environment node
 
 import { createHmac } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
   AuthenticationError,
@@ -13,7 +16,6 @@ import {
   RunInfraStream,
   RunInfraStreamParseError,
   RunInfraTimeoutError,
-  UnsupportedOperationError,
   WebhookVerificationError,
   constructWebhookEvent,
   type RunInfraOptions,
@@ -106,6 +108,20 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("Custom base URLs must not include query strings or fragments.");
   });
 
+  it("documents browser API-key protection and backend proxy posture", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const rootReadme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+
+    for (const text of [readme, rootReadme]) {
+      expect(text).toMatch(/Do not put `RUNINFRA_API_KEY` in browser\s+code/u);
+      expect(text).toContain("backend proxy");
+      expect(text).toMatch(/Ephemeral\s+browser tokens are not shipped in v0\.1\.4/u);
+    }
+
+    expect(readme).toMatch(/The SDK fails closed\s+when it detects a browser runtime/u);
+    expect(readme).toMatch(/dangerouslyAllowBrowser:\s+true/u);
+  });
+
   it("documents explicit webhook secret environment guards instead of non-null assertions", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
@@ -116,10 +132,18 @@ describe("RunInfra TypeScript SDK", () => {
 
   it("documents the full local webhook verification helper surface", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
 
     expect(readme).toContain("constructWebhookEvent");
     expect(readme).toContain("verifyWebhookSignature");
     expect(readme).toContain("WebhookVerificationError");
+    expect(readme).toContain("webhook delivery create/list methods are not part of the GA public SDK surface");
+    expect(readme).not.toContain("client.webhooks.create");
+    expect(readme).not.toContain("client.webhooks.list");
+    expect(readme).toContain("`UnsupportedOperationError` remains exported for compatibility");
+    expect(changelog).toContain("## [0.1.4]");
+    expect(changelog).toContain("Removed unshipped webhook delivery `create` / `list` methods");
+    expect(changelog).toContain("`webhooks.delivery_surface.absent`");
   });
 
   it("documents non-blank idempotency key requirements", () => {
@@ -153,6 +177,143 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("ref_text");
     expect(readme).toContain("task_type");
     expect(readme).not.toContain('voice: process.env.RUNINFRA_TTS_VOICE ?? "default"');
+  });
+
+  it("documents the OpenAI-compatible parameter subset and local response-shape guards", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+
+    expect(readme).toContain("## OpenAI-compatible parameter scope");
+    expect(readme).toContain("Live-gated native SDK subset");
+    expect(readme).toContain("will be treated as verified only after the strict live canaries pass");
+    expect(readme).toContain("`openai.params.chat.completions`");
+    expect(readme).toContain("`openai.params.chat.stream_options`");
+    expect(readme).toContain("`openai.params.responses`");
+    expect(readme).toContain("`openai.params.embeddings`");
+    expect(readme).toContain("`openai.params.images`");
+    expect(readme).toContain("`openai.params.audio.speech`");
+    expect(readme).toContain("`openai.params.audio.transcriptions`");
+    expect(liveCanaries).toContain("openai.params.images");
+    expect(liveCanaries).toContain("openai.params.audio.speech");
+    expect(liveCanaries).toContain("openai.params.audio.transcriptions");
+    expect(liveCanaries).toContain("RUNINFRA_TTS_RESPONSE_FORMAT");
+    expect(liveCanaries).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
+    expect(liveCanaries).toContain("Optional for the base ASR row; required for the OpenAI ASR parameter row");
+    expect(readme).toContain("dimension control");
+    expect(readme).toContain("`encoding_format` values other than `\"float\"`");
+    expect(readme).toContain("`response_format` values other than `\"json\"` or `\"verbose_json\"`");
+    expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
+    expect(liveCanaries).toContain("error.model.not_found");
+    expect(liveCanaries).toContain("error.body.unsupported_parameter");
+    expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
+    expect(readme).toContain("forwards the supported request through the chat-completions serving path");
+    expect(readme).toContain(
+      "does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics",
+    );
+    expect(liveCanaries).toContain("Responses rows prove the compatibility adapter");
+    expect(source).toContain("Responses compatibility adapter");
+    expect(source).toContain("not a full stateful OpenAI Responses implementation");
+  });
+
+  it("keeps child canaries in parity for chat stream options usage coverage", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    for (const text of [runner, typescriptCanary, pythonCanary, liveCanaries]) {
+      expect(text).toContain("openai.params.chat.stream_options");
+      expect(text).toContain("stream_options");
+      expect(text).toContain("include_usage");
+    }
+    expect(typescriptCanary).toContain("assertChatStreamUsageEvent");
+    expect(typescriptCanary).toMatch(
+      /function assertChatStreamUsageEvent[\s\S]*if \(!Array\.isArray\(event\.choices\) \|\|\s+event\.choices\.length !== 0\)/u,
+    );
+    expect(typescriptCanary).toContain("assertChatUsageObject");
+    expect(typescriptCanary).toContain('"prompt_tokens"');
+    expect(typescriptCanary).toContain('"completion_tokens"');
+    expect(typescriptCanary).toContain('"total_tokens"');
+    expect(typescriptCanary).toContain('usage: "present"');
+    expect(pythonCanary).toContain("assert_chat_stream_usage_event");
+    expect(pythonCanary).toContain("assert_chat_usage_object");
+    expect(pythonCanary).toContain('"prompt_tokens"');
+    expect(pythonCanary).toContain('"completion_tokens"');
+    expect(pythonCanary).toContain('"total_tokens"');
+    expect(pythonCanary).toContain('"usage": "present"');
+  });
+
+  it("keeps child canaries in parity for live model-not-found error mapping", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+
+    expect(runner).toContain('"error.model.not_found"');
+    expect(typescriptCanary).toContain("ModelNotFoundError");
+    expect(typescriptCanary).toContain('record("error.model.not_found"');
+    expect(typescriptCanary).toContain("runinfra-sdk-canary-missing-model");
+    expect(pythonCanary).toContain("ModelNotFoundError");
+    expect(pythonCanary).toContain('record("error.model.not_found"');
+    expect(pythonCanary).toContain("runinfra-sdk-canary-missing-model");
+  });
+
+  it("fails models.list live canaries when configured model ids are absent from the catalog", () => {
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    expect(typescriptCanary).toContain("configuredCanaryModelIds");
+    expect(typescriptCanary).toContain("assertConfiguredModelsListed(response.data)");
+    expect(typescriptCanary).toContain("models.list did not include");
+    expect(typescriptCanary).not.toContain("missing.join");
+    expect(pythonCanary).toContain("configured_canary_model_ids");
+    expect(pythonCanary).toContain('assert_configured_models_listed(response["data"])');
+    expect(pythonCanary).toContain("models.list did not include");
+    expect(pythonCanary).not.toContain("join(missing");
+    expect(liveCanaries).toContain("`models.list` must\ninclude every configured canary model ID");
+    expect(liveCanaries).toContain("Reports record\nonly the item count");
+  });
+
+  it("keeps unshipped webhook delivery methods out of artifact and canary public surface", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const cleanInstallVerifier = readFileSync(new URL("../../scripts/verify-clean-installs.mjs", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    for (const text of [runner, typescriptCanary, pythonCanary, cleanInstallVerifier, liveCanaries]) {
+      expect(text).toContain("webhooks.delivery_surface.absent");
+      expect(text).not.toContain("webhooks.create.unsupported");
+      expect(text).not.toContain("webhooks.list.unsupported");
+    }
+    expect(cleanInstallVerifier).toContain('typeof client.webhooks.create !== "undefined"');
+    expect(cleanInstallVerifier).toContain('typeof client.webhooks.list !== "undefined"');
+    expect(cleanInstallVerifier).toContain('hasattr(client.webhooks, "create")');
+    expect(cleanInstallVerifier).toContain('hasattr(client.webhooks, "list")');
+  });
+
+  it("keeps child canaries in parity for audio OpenAI parameter coverage", () => {
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+
+    expect(typescriptCanary).toContain('record("openai.params.audio.speech"');
+    expect(typescriptCanary).toContain("RUNINFRA_TTS_RESPONSE_FORMAT");
+    expect(typescriptCanary).toContain('["mp3", "opus", "aac", "flac", "wav", "pcm"]');
+    expect(typescriptCanary).toContain("speechRequest(input, options = {})");
+    expect(typescriptCanary).toContain("options.responseFormat");
+    expect(typescriptCanary).toContain('responseFormat: "set_redacted"');
+    expect(typescriptCanary).toContain('record("openai.params.audio.transcriptions"');
+    expect(typescriptCanary).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
+    expect(typescriptCanary).toContain("response_format: responseFormat");
+    expect(pythonCanary).toContain('"openai.params.audio.speech"');
+    expect(pythonCanary).toContain("RUNINFRA_TTS_RESPONSE_FORMAT");
+    expect(pythonCanary).toContain('{"mp3", "opus", "aac", "flac", "wav", "pcm"}');
+    expect(pythonCanary).toContain("response_format: Optional[str] = None");
+    expect(pythonCanary).toContain('"responseFormat": "set_redacted"');
+    expect(pythonCanary).toContain('"openai.params.audio.transcriptions"');
+    expect(pythonCanary).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
+    expect(pythonCanary).toContain("response_format=response_format");
   });
 
   it("documents local request payload validation before network sends", () => {
@@ -190,21 +351,797 @@ describe("RunInfra TypeScript SDK", () => {
     );
   });
 
+  it("documents streaming cancellation resource release", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("Breaking out of the `for await` loop cancels the underlying SSE reader");
+    expect(readme).toMatch(/If you manually advance the stream iterator,\s+call\s+`return\(\)` on that iterator/u);
+    expect(readme).toContain("Streaming transport-level backend cancellation is best effort");
+    expect(liveCanaries).toMatch(/TypeScript cancellation rows break out of\s+`for await`/u);
+    expect(liveCanaries).toContain("Python cancellation rows close the active iterator");
+  });
+
+  it("keeps child canaries in parity for slow-consumer streaming coverage", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    for (const row of ["chat.completions.stream.slow_consumer", "responses.stream.slow_consumer"]) {
+      expect(runner).toContain(`"${row}"`);
+      expect(typescriptCanary).toContain(`record("${row}"`);
+      expect(pythonCanary).toContain(`"${row}"`);
+      expect(liveCanaries).toContain(row);
+    }
+
+    expect(runner).toContain("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS");
+    expect(typescriptCanary).toContain("slowConsumerDelayMs");
+    expect(typescriptCanary).toMatch(
+      /const relevantEnv = \[[\s\S]*"RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS"/,
+    );
+    expect(typescriptCanary).toContain("function slowStreamRequirements()");
+    expect(typescriptCanary).toContain("sleepWithinDeadline");
+    expect(typescriptCanary).toMatch(
+      /record\("chat\.completions\.stream\.slow_consumer", slowStreamRequirements, async \(\) => \{\s+const delayMs = slowConsumerDelayMs\(\);\s+const stream = await client\(\)\.chat\.completions\.create/,
+    );
+    expect(typescriptCanary).toMatch(
+      /record\("responses\.stream\.slow_consumer", slowStreamRequirements, async \(\) => \{\s+const delayMs = slowConsumerDelayMs\(\);\s+const stream = await client\(\)\.responses\.create/,
+    );
+    expect(pythonCanary).toContain("slow_consumer_delay_seconds");
+    expect(pythonCanary).toContain("def slow_stream_requirements()");
+    expect(liveCanaries).toContain("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS");
+    expect(liveCanaries).toContain("Slow-consumer streaming rows");
+    expect(liveCanaries).toContain("bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`");
+  });
+
+  it("keeps child canaries in parity for local streaming fault coverage", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const rows = [
+      "chat.completions.stream.malformed_frame.local",
+      "responses.stream.malformed_frame.local",
+      "chat.completions.stream.disconnect.local",
+      "responses.stream.disconnect.local",
+      "chat.completions.stream.stalled_read.local",
+      "responses.stream.stalled_read.local",
+    ];
+
+    for (const row of rows) {
+      expect(runner).toContain(`"${row}"`);
+      expect(typescriptCanary).toContain(`record("${row}"`);
+      expect(pythonCanary).toContain(`"${row}"`);
+      expect(liveCanaries).toContain(row);
+    }
+
+    expect(typescriptCanary).toContain("RunInfraStreamParseError");
+    expect(typescriptCanary).toContain("RunInfraConnectionError");
+    expect(typescriptCanary).toContain("RunInfraTimeoutError");
+    expect(typescriptCanary).toContain("localStreamClient");
+    expect(typescriptCanary).toContain("expectStreamError");
+    expect(pythonCanary).toContain("RunInfraStreamParseError");
+    expect(pythonCanary).toContain("RunInfraConnectionError");
+    expect(pythonCanary).toContain("RunInfraTimeoutError");
+    expect(pythonCanary).toContain("local_stream_client");
+    expect(pythonCanary).toContain("expect_stream_error");
+    expect(liveCanaries).toContain("Local streaming fault rows");
+    expect(liveCanaries).toContain("do not call the production gateway");
+  });
+
+  it("keeps child canaries in parity for local retry safety coverage", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const rows = [
+      "retry.safety.get.local",
+      "retry.safety.post.requires_idempotency.local",
+      "retry.safety.post.with_idempotency.local",
+      "retry.safety.stream.no_retry.local",
+      "retry.safety.audio_binary.no_retry.local",
+      "retry.safety.audio_multipart.no_retry.local",
+    ];
+
+    for (const row of rows) {
+      expect(runner).toContain(`"${row}"`);
+      expect(typescriptCanary).toContain(`record("${row}"`);
+      expect(pythonCanary).toContain(`"${row}"`);
+      expect(liveCanaries).toContain(row);
+    }
+
+    expect(typescriptCanary).toContain("localRetryClient");
+    expect(typescriptCanary).toContain("assertRetryCallCount");
+    expect(pythonCanary).toContain("local_retry_client");
+    expect(pythonCanary).toContain("assert_retry_call_count");
+    expect(liveCanaries).toContain("Local retry-safety rows");
+    expect(liveCanaries).toContain("do not call the production gateway");
+  });
+
   it("documents public-repo production promotion without stale monorepo commands", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
     expect(readme).toContain("For production promotion");
-    expect(readme).toContain("This extracted public repo does not define the old monorepo");
+    expect(readme).toContain("This public repo now includes live-canary runners for both SDKs.");
     expect(readme).toContain("node scripts/verify-workflow-policy.mjs");
     expect(readme).toContain("node scripts/verify-version-sync.mjs");
     expect(readme).toContain("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz");
     expect(readme).toContain("python scripts/verify-python-package.py python/dist");
-    expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true");
-    expect(readme).toContain("Run live deployment canaries from RunPipe or RunInfra-Engine");
+    expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode artifact");
+    expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
+    expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
+    expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
+    const surfaceCoverageIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
+    const preflightIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
+    const liveCanaryIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
+    expect(surfaceCoverageIndex).toBeGreaterThan(-1);
+    expect(preflightIndex).toBeGreaterThan(surfaceCoverageIndex);
+    expect(liveCanaryIndex).toBeGreaterThan(preflightIndex);
+    expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>");
+    expect(readme).toContain("A real publish must also prove registry install/import");
+    expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>");
+    expect(readme).toContain("Run the surface-coverage check before preflight");
+    expect(readme).toContain("Then run the strict preflight");
+    expect(readme).toContain("Then run the strict live canary matrix against the exact production gateway");
     expect(readme).toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");
     expect(readme).not.toContain("pnpm test:sdk-canary:live");
     expect(readme).not.toContain("RUNINFRA_SDK_CI_TOKEN");
+  });
+
+  it("fails workflow policy when either publish job loses OIDC permission", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+
+    for (const jobName of ["publish-npm", "publish-pypi"]) {
+      const mutatedPublish = publish.replace(
+        new RegExp(`(\\n  ${jobName}:[\\s\\S]*?\\n    permissions:[\\s\\S]*?\\n      id-token:\\s*)write`, "u"),
+        "$1none",
+      );
+      expect(mutatedPublish).not.toBe(publish);
+
+      const checks = evaluateWorkflowPolicy({
+        publish: mutatedPublish,
+        ci,
+        hasCustomCodeqlWorkflow: false,
+      });
+
+      expect(checks.find((check) => check.label === "publish jobs request OIDC id-token permission")?.ok)
+        .toBe(false);
+    }
+    expect(
+      readFileSync(new URL("../../scripts/verify-workflow-policy.mjs", import.meta.url), "utf8"),
+    ).not.toContain("RUNINFRA_WORKFLOW_POLICY");
+  });
+
+  it("pins registry clean-install checks to canonical npm and PyPI indexes", async () => {
+    const { canonicalRegistryInstallEnv, npmRegistryInstallArgs, pythonRegistryInstallArgs } =
+      await import("../../scripts/clean-install-policy.mjs");
+    const env = canonicalRegistryInstallEnv({
+      npm_config_registry: "http://127.0.0.1:9/",
+      NPM_CONFIG_REGISTRY: "http://127.0.0.1:9/",
+      PIP_INDEX_URL: "http://127.0.0.1:9/simple",
+      PIP_EXTRA_INDEX_URL: "http://127.0.0.1:9/extra",
+      PIP_NO_INDEX: "1",
+      PIP_FIND_LINKS: "file:///tmp/packages",
+    });
+
+    expect(npmRegistryInstallArgs("0.1.3")).toContain("--registry=https://registry.npmjs.org/");
+    expect(pythonRegistryInstallArgs("0.1.3")).toEqual([
+      "-m",
+      "pip",
+      "install",
+      "--index-url",
+      "https://pypi.org/simple",
+      "--no-deps",
+      "runinfra==0.1.3",
+    ]);
+    expect(env.npm_config_registry).toBe("https://registry.npmjs.org/");
+    expect(env.NPM_CONFIG_REGISTRY).toBe("https://registry.npmjs.org/");
+    expect(env.PIP_INDEX_URL).toBe("https://pypi.org/simple");
+    expect(env.PIP_EXTRA_INDEX_URL).toBe("");
+    expect("PIP_NO_INDEX" in env).toBe(false);
+    expect("PIP_FIND_LINKS" in env).toBe(false);
+  });
+
+  it("blocks broader credential and local-path families in release scanners", async () => {
+    const { findForbiddenContent } = await import("../../scripts/secret-scan-policy.mjs");
+    const samples = [
+      "github_pat_" + "A".repeat(82),
+      "ghs_" + "A".repeat(36),
+      "AKIA" + "A".repeat(16),
+      "sk_live_" + "A".repeat(24),
+      "whsec_" + "A".repeat(32),
+      "eyJ" + "A".repeat(20) + "." + "B".repeat(20) + "." + "C".repeat(20),
+      "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+      "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+      "C:\\Users\\someone\\project",
+      "/Users/someone/project/.env.local",
+      "/home/someone/project/.env.local",
+      ".npmrc",
+      "package/.npmrc",
+      ".env",
+      ".env.local",
+      "package/.env.local",
+      "/tmp/project/.env.local",
+    ];
+
+    for (const sample of samples) {
+      expect(findForbiddenContent(sample), sample).not.toBeNull();
+    }
+  });
+
+  it("verifies public SDK surface has canary row coverage", () => {
+    const result = spawnSync(process.execPath, [
+      "../scripts/run-sdk-live-canaries.mjs",
+      "--verify-surface-coverage",
+    ], {
+      cwd: new URL("..", import.meta.url),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RUNINFRA_API_KEY: "",
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const output = JSON.parse(result.stdout) as {
+      status?: string;
+      declaredSurfaces?: string[];
+      uncoveredSurfaces?: string[];
+      surfaceCount?: number;
+      rowCount?: number;
+      surfaces?: string[];
+    };
+    expect(output.status).toBe("passed");
+    expect(output.uncoveredSurfaces).toEqual([]);
+    expect(output.surfaceCount).toBeGreaterThanOrEqual(17);
+    expect(output.rowCount).toBeGreaterThanOrEqual(39);
+    expect(output.surfaces).toEqual(expect.arrayContaining([
+      "client.chat.completions.create",
+      "client.responses.create",
+      "client.embeddings.create",
+      "client.images.generate",
+      "client.audio.speech.create",
+      "client.audio.transcriptions.create",
+      "client.voice.pipeline.create",
+      "client.webhooks.verifySignature",
+      "verifyWebhookSignature",
+      "RunInfraAudioResponse.blob",
+    ]));
+    expect(output.declaredSurfaces).toEqual(expect.arrayContaining([
+      "client.models.list",
+      "client.models.retrieve",
+      "client.chat.completions.create",
+      "client.responses.create",
+      "client.embeddings.create",
+      "client.images.generate",
+      "client.audio.speech.create",
+      "client.audio.transcriptions.create",
+      "client.voice.pipeline.create",
+      "client.webhooks.verifySignature",
+      "client.webhooks.verify_signature",
+      "verifyWebhookSignature",
+      "verify_webhook_signature",
+      "RunInfraAudioResponse.arrayBuffer",
+      "RunInfraAudioResponse.blob",
+      "RunInfraAudioResponse.stream",
+      "RunInfraStream[Symbol.asyncIterator]",
+      "RunInfraStream.__iter__",
+    ]));
+  });
+
+  it("writes surface coverage into early full-run failure reports", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-full-failure-"));
+    const configReportPath = join(tmp, "config-report.json");
+    const artifactReportPath = join(tmp, "artifact-report.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    try {
+      const configFailure = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--package-source",
+        "source",
+        "--report",
+        configReportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_CANARY_TIMEOUT_SECONDS: "NaN",
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(configFailure.status).toBe(1);
+      const configReport = JSON.parse(readFileSync(configReportPath, "utf8")) as {
+        surfaceCoverage?: { status?: string; uncoveredSurfaces?: string[] };
+        parity?: { errors?: string[] };
+      };
+      expect(configReport.surfaceCoverage?.status).toBe("passed");
+      expect(configReport.surfaceCoverage?.uncoveredSurfaces).toEqual([]);
+      expect(configReport.parity?.errors).toEqual(expect.arrayContaining([
+        "RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number",
+      ]));
+
+      const artifactFailure = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "artifact",
+        "--report",
+        artifactReportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(artifactFailure.status).toBe(1);
+      const artifactReport = JSON.parse(readFileSync(artifactReportPath, "utf8")) as {
+        surfaceCoverage?: { status?: string; uncoveredSurfaces?: string[] };
+        parity?: { errors?: string[] };
+      };
+      expect(artifactReport.surfaceCoverage?.status).toBe("passed");
+      expect(artifactReport.surfaceCoverage?.uncoveredSurfaces).toEqual([]);
+      expect(artifactReport.parity?.errors).toContain("artifact canary package setup failed");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("writes a redacted strict live-canary preflight report without running live calls", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
+    const reportPath = join(tmp, "readiness.json");
+    try {
+      const fakeKey = "sk-ri-preflight-secret-1234567890";
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: fakeKey,
+          RUNINFRA_LLM_MODEL: "llm-preflight-model",
+          RUNINFRA_EMBEDDING_MODEL: "",
+          RUNINFRA_IMAGE_MODEL: "",
+          RUNINFRA_TTS_MODEL: "",
+          RUNINFRA_ASR_MODEL: "",
+          RUNINFRA_ASR_FIXTURE_PATH: "",
+          RUNINFRA_ASR_EXPECTED_TEXT: "",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        expectedRows?: string[];
+        readiness?: {
+          status?: string;
+          env?: Record<string, string>;
+          missing?: string[];
+          rows?: Array<{ name: string; status: string; missing?: string[] }>;
+        };
+        reports?: unknown[];
+      };
+      expect(report.reports).toEqual([]);
+      expect(report.readiness?.status).toBe("blocked");
+      expect(report.readiness?.rows?.map((row) => row.name)).toEqual(report.expectedRows);
+      expect(report.expectedRows).toEqual(expect.arrayContaining([
+        "webhooks.delivery_surface.absent",
+        "webhooks.verify_signature.export",
+        "webhooks.construct_event.export",
+      ]));
+      expect(report.expectedRows).not.toContain("webhooks.create.unsupported");
+      expect(report.expectedRows).not.toContain("webhooks.list.unsupported");
+      expect(report.readiness?.env?.RUNINFRA_API_KEY).toBe("set_redacted");
+      expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
+      expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_MODEL");
+      expect(report.expectedRows).toContain("error.model.not_found");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "error.model.not_found")?.missing,
+      ).toEqual([]);
+      expect(report.expectedRows).toContain("openai.params.chat.stream_options");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.chat.stream_options")?.missing,
+      ).toEqual([]);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "audio.transcriptions.create")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_ASR_MODEL",
+        "RUNINFRA_ASR_FIXTURE_PATH",
+        "RUNINFRA_ASR_EXPECTED_TEXT",
+      ]));
+      expect(report.expectedRows).toContain("openai.params.audio.transcriptions");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.audio.transcriptions")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_ASR_MODEL",
+        "RUNINFRA_ASR_LANGUAGE",
+        "RUNINFRA_ASR_RESPONSE_FORMAT",
+        "RUNINFRA_ASR_FIXTURE_PATH",
+        "RUNINFRA_ASR_EXPECTED_TEXT",
+      ]));
+      expect(report.expectedRows).toContain("audio.speech.binary_interfaces");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "audio.speech.binary_interfaces")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_TTS_MODEL",
+        "RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT",
+      ]));
+      expect(report.expectedRows).toContain("openai.params.audio.speech");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.audio.speech")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_TTS_MODEL",
+        "RUNINFRA_TTS_RESPONSE_FORMAT",
+        "RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT",
+      ]));
+
+      const invalidFormatReportPath = join(tmp, "invalid-tts-format.json");
+      const invalidFormatResult = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        invalidFormatReportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: fakeKey,
+          RUNINFRA_LLM_MODEL: "llm-preflight-model",
+          RUNINFRA_TTS_MODEL: "tts-preflight-model",
+          RUNINFRA_TTS_VOICE: "voice-preflight",
+          RUNINFRA_TTS_RESPONSE_FORMAT: "json",
+          RUNINFRA_ASR_MODEL: "",
+          RUNINFRA_ASR_FIXTURE_PATH: "",
+          RUNINFRA_ASR_EXPECTED_TEXT: "",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "",
+        },
+      });
+      expect(invalidFormatResult.status).toBe(1);
+      const invalidFormatReport = JSON.parse(readFileSync(invalidFormatReportPath, "utf8")) as {
+        readiness?: { rows?: Array<{ name: string; missing?: string[] }> };
+      };
+      expect(
+        invalidFormatReport.readiness?.rows?.find((row) => row.name === "openai.params.audio.speech")?.missing,
+      ).toContain("RUNINFRA_TTS_RESPONSE_FORMAT mp3, opus, aac, flac, wav, or pcm");
+      expect(JSON.stringify(invalidFormatReport)).not.toContain("json");
+      expect(report.expectedRows).toContain("openai.params.images");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.images")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_IMAGE_MODEL",
+        "RUNINFRA_IMAGE_SIZE",
+        "RUNINFRA_IMAGE_RESPONSE_FORMAT",
+      ]));
+      expect(JSON.stringify(report)).not.toContain(fakeKey);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts RunPipe sdk-live TEST aliases in strict preflight without leaking values", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-aliases-"));
+    const reportPath = join(tmp, "readiness.json");
+    try {
+      const fakeKey = "sk-ri-preflight-secret-1234567890";
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: fakeKey,
+          TEST_MODEL: "llm-alias-model",
+          TEST_EMBEDDING_MODEL: "embedding-alias-model",
+          RUNINFRA_EMBEDDING_DIMENSIONS: "384",
+          TEST_IMAGE_MODEL: "image-alias-model",
+          RUNINFRA_IMAGE_SIZE: "1024x1024",
+          RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
+          TEST_TTS_MODEL: "tts-alias-model",
+          TEST_TTS_VOICE: "alloy",
+          RUNINFRA_TTS_RESPONSE_FORMAT: "mp3",
+          TEST_ASR_MODEL: "asr-alias-model",
+          TEST_ASR_FILE: __filename,
+          RUNINFRA_ASR_EXPECTED_TEXT: "hello",
+          RUNINFRA_ASR_LANGUAGE: "en",
+          RUNINFRA_ASR_RESPONSE_FORMAT: "json",
+          TEST_PIPELINE_ID: "pipeline-alias",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "1",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          status?: string;
+          env?: Record<string, string>;
+          missing?: string[];
+          rows?: Array<{ name: string; status: string; missing?: string[] }>;
+          aliases?: Record<string, string[]>;
+        };
+      };
+      expect(report.readiness?.status).toBe("ready");
+      expect(report.readiness?.missing).toEqual([]);
+      expect(report.readiness?.rows?.every((row) => row.status === "ready")).toBe(true);
+      expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
+      expect(report.readiness?.env?.RUNINFRA_ASR_FIXTURE_PATH).toBe("set_redacted");
+      expect(report.readiness?.env?.TEST_PIPELINE_ID).toBeUndefined();
+      expect(report.readiness?.aliases?.RUNINFRA_LLM_MODEL).toContain("TEST_MODEL");
+      expect(report.readiness?.aliases?.RUNINFRA_VOICE_PIPELINE_ID).toContain("TEST_PIPELINE_ID");
+      expect(JSON.stringify(report)).not.toContain(fakeKey);
+      expect(JSON.stringify(report)).not.toContain("llm-alias-model");
+      expect(JSON.stringify(report)).not.toContain("pipeline-alias");
+      expect(JSON.stringify(report)).not.toContain(__filename);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not report stale TEST aliases when canonical live-canary env wins", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-canonical-"));
+    const reportPath = join(tmp, "readiness.json");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_LLM_MODEL: "canonical-model",
+          TEST_MODEL: "stale-alias-model",
+          RUNINFRA_VOICE_PIPELINE_ID: "canonical-pipeline",
+          TEST_PIPELINE_ID: "stale-pipeline-alias",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          env?: Record<string, string>;
+          aliases?: Record<string, string[]>;
+        };
+      };
+      expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
+      expect(report.readiness?.env?.RUNINFRA_VOICE_PIPELINE_ID).toBe("set_redacted");
+      expect(report.readiness?.env?.TEST_PIPELINE_ID).toBeUndefined();
+      expect(report.readiness?.aliases?.RUNINFRA_LLM_MODEL).toBeUndefined();
+      expect(report.readiness?.aliases?.RUNINFRA_VOICE_PIPELINE_ID).toBeUndefined();
+      expect(JSON.stringify(report)).not.toContain("canonical-model");
+      expect(JSON.stringify(report)).not.toContain("stale-alias-model");
+      expect(JSON.stringify(report)).not.toContain("canonical-pipeline");
+      expect(JSON.stringify(report)).not.toContain("stale-pipeline-alias");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks strict live-canary preflight on invalid positive-integer readiness inputs", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
+    const reportPath = join(tmp, "readiness.json");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "sk-ri-preflight-secret-1234567890",
+          RUNINFRA_LLM_MODEL: "llm-preflight-model",
+          RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
+          RUNINFRA_EMBEDDING_DIMENSIONS: "not-a-positive-integer",
+          RUNINFRA_IMAGE_MODEL: "image-preflight-model",
+          RUNINFRA_TTS_MODEL: "tts-preflight-model",
+          RUNINFRA_TTS_VOICE: "voice-preflight",
+          RUNINFRA_ASR_MODEL: "asr-preflight-model",
+          RUNINFRA_ASR_FIXTURE_PATH: __filename,
+          RUNINFRA_ASR_EXPECTED_TEXT: "hello",
+          TEST_PIPELINE_ID: "pipeline-preflight",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "1",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          missing?: string[];
+          rows?: Array<{ name: string; status: string; missing?: string[] }>;
+        };
+      };
+      expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.embeddings")?.missing,
+      ).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks strict live-canary preflight on invalid timeout readiness inputs", () => {
+    for (const timeout of ["not-a-positive-number", "1".repeat(400)]) {
+      const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
+      const reportPath = join(tmp, "readiness.json");
+      try {
+        const result = spawnSync(process.execPath, [
+          "../scripts/run-sdk-live-canaries.mjs",
+          "--preflight",
+          "--strict",
+          "--package-source",
+          "source",
+          "--report",
+          reportPath,
+        ], {
+          cwd: new URL("..", import.meta.url),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            RUNINFRA_API_KEY: "sk-ri-preflight-secret-1234567890",
+            RUNINFRA_CANARY_TIMEOUT_SECONDS: timeout,
+            RUNINFRA_LLM_MODEL: "llm-preflight-model",
+            RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
+            RUNINFRA_EMBEDDING_DIMENSIONS: "128",
+            RUNINFRA_IMAGE_MODEL: "image-preflight-model",
+            RUNINFRA_TTS_MODEL: "tts-preflight-model",
+            RUNINFRA_TTS_VOICE: "voice-preflight",
+            RUNINFRA_ASR_MODEL: "asr-preflight-model",
+            RUNINFRA_ASR_FIXTURE_PATH: __filename,
+            RUNINFRA_ASR_EXPECTED_TEXT: "hello",
+            TEST_PIPELINE_ID: "pipeline-preflight",
+            RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "1",
+          },
+        });
+
+        expect(result.status).toBe(1);
+        const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+          readiness?: {
+            missing?: string[];
+          };
+        };
+        expect(report.readiness?.missing).toContain("RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number");
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("blocks slow-consumer stream rows on invalid optional delay input", () => {
+    for (const delay of ["not-a-delay", "6000"]) {
+      const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
+      const reportPath = join(tmp, "readiness.json");
+      try {
+        const result = spawnSync(process.execPath, [
+          "../scripts/run-sdk-live-canaries.mjs",
+          "--preflight",
+          "--strict",
+          "--package-source",
+          "source",
+          "--report",
+          reportPath,
+        ], {
+          cwd: new URL("..", import.meta.url),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            RUNINFRA_API_KEY: "sk-ri-preflight-secret-1234567890",
+            RUNINFRA_LLM_MODEL: "llm-preflight-model",
+            RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS: delay,
+            RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "",
+          },
+        });
+
+        expect(result.status).toBe(1);
+        const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+          readiness?: {
+            env?: Record<string, string>;
+            rows?: Array<{ name: string; status: string; missing?: string[] }>;
+          };
+        };
+
+        expect(report.readiness?.env?.RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS).toBe("set_redacted");
+        expect(
+          report.readiness?.rows?.find((row) => row.name === "chat.completions.stream.slow_consumer")?.missing,
+        ).toContain("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000");
+        expect(
+          report.readiness?.rows?.find((row) => row.name === "responses.stream.slow_consumer")?.missing,
+        ).toContain("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000");
+        expect(
+          report.readiness?.rows?.find((row) => row.name === "chat.completions.stream.final")?.missing,
+        ).toEqual([]);
+        expect(JSON.stringify(report)).not.toContain(delay);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("blocks full live-canary runs on invalid optional slow-consumer delay before child canaries spawn", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-canary-config-"));
+    const reportPath = join(tmp, "live-canary.json");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_BASE_URL: "http://localhost:1/v1",
+          RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS: "6000",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+        reports?: unknown[];
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain(
+        "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000",
+      );
+      expect(report.reports).toEqual([]);
+      expect(JSON.stringify(report)).not.toContain("6000");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds TypeScript audio stream canary reads", () => {
+    const script = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+
+    expect(script).toContain("function readStreamChunkWithTimeout");
+    expect(script).toContain("function remainingStreamMs");
+    expect(script).toContain("const deadlineMs = performance.now() + canaryTimeoutMs()");
+    expect(script).toContain("remainingStreamMs(deadlineMs, label)");
+    expect(script).toContain("function cancelReaderWithTimeout");
+    expect(script).toContain("Promise.race([read, timeout])");
+    expect(script).toContain("Promise.race([");
+    expect(script).toContain("setTimeout(resolve, 1000)");
+    expect(script).toContain("clearTimeout(timeoutId)");
+    expect(script).toContain("await cancelReaderWithTimeout(reader)");
+    expect(script).not.toContain("const { done, value } = await reader.read()");
+    expect(script).not.toContain("await reader.cancel().catch(() => undefined)");
   });
 
   it("calls pipeline-scoped OpenAI-compatible chat completions", async () => {
@@ -495,6 +1432,31 @@ describe("RunInfra TypeScript SDK", () => {
     );
   });
 
+  it("passes through typed OpenAI-compatible embedding dimensions and float format", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse({ data: [{ embedding: [0.1, 0.2], index: 0 }] }),
+    );
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+    });
+
+    await client.embeddings.create({
+      model: "bge-m3",
+      input: "hello",
+      encoding_format: "float",
+      dimensions: 256,
+    });
+
+    const body = JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      model: "bge-m3",
+      input: "hello",
+      encoding_format: "float",
+      dimensions: 256,
+    });
+  });
+
   it("rejects blank inference model ids before sending", async () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({}));
     const client = new RunInfra({
@@ -653,6 +1615,38 @@ describe("RunInfra TypeScript SDK", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("rejects native embedding response shapes it cannot type before sending", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({}));
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.embeddings.create({
+        model: "bge-m3",
+        input: "hello",
+        encoding_format: "base64",
+      }),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "embedding encoding_format must be float for native SDK typed responses",
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.embeddings.create({
+        model: "bge-m3",
+        input: "hello",
+        dimensions: 0,
+      }),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "embedding dimensions must be a positive integer",
+    });
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("rejects unsafe transcription multipart metadata before sending", async () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({}));
     const client = new RunInfra({
@@ -705,6 +1699,27 @@ describe("RunInfra TypeScript SDK", () => {
         type: "invalid_request_options",
       });
     }
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects native ASR response formats it cannot parse as JSON before sending", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({}));
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.audio.transcriptions.create({
+        model: "whisper",
+        file: new Blob([new Uint8Array([1])], { type: "audio/wav" }),
+        response_format: "text",
+      }),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "audio transcription response_format must be json or verbose_json for native SDK typed responses",
+    });
 
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -2019,16 +3034,20 @@ describe("RunInfra TypeScript SDK", () => {
     expect(new Uint8Array(body as ArrayBuffer)).toEqual(new Uint8Array([1, 2, 3]));
   });
 
-  it("fails unsupported webhook helpers locally without a network call", async () => {
+  it("does not expose unshipped webhook delivery helpers on the public runtime surface", () => {
     const fetcher = vi.fn();
     const client = new RunInfra({
       apiKey: "sk-ri-test",
       fetch: fetcher,
     });
+    const webhooks = client.webhooks as Record<string, unknown>;
 
-    await expect(client.webhooks.create()).rejects.toBeInstanceOf(
-      UnsupportedOperationError,
-    );
+    expect("create" in webhooks).toBe(false);
+    expect("list" in webhooks).toBe(false);
+    expect(Object.hasOwn(webhooks, "create")).toBe(false);
+    expect(Object.hasOwn(webhooks, "list")).toBe(false);
+    expect(typeof client.webhooks.verifySignature).toBe("function");
+    expect(typeof client.webhooks.constructEvent).toBe("function");
     expect(fetcher).not.toHaveBeenCalled();
   });
 

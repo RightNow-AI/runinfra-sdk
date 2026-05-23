@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const RUNINFRA_SDK_VERSION = "0.1.3";
+export const RUNINFRA_SDK_VERSION = "0.1.4";
 const MAX_AUTOMATIC_RETRY_AFTER_MS = 60_000;
 
 export interface RunInfraOptions {
@@ -80,6 +80,11 @@ export interface ChatCompletionsCreate {
   ): Promise<ChatCompletionResponse | RunInfraStream<ChatCompletionStreamEvent>>;
 }
 
+/**
+ * Request shape for the current RunInfra Responses compatibility adapter.
+ * The gateway maps supported fields onto chat completions and rewraps the
+ * result; this is not a full stateful OpenAI Responses implementation.
+ */
 export interface ResponsesCreateRequest extends Record<string, unknown> {
   model: string;
   input: string | Array<Record<string, unknown>>;
@@ -121,6 +126,8 @@ export interface ResponsesCreate {
 export interface EmbeddingRequest extends Record<string, unknown> {
   model: string;
   input: string | string[];
+  encoding_format?: "float" | string;
+  dimensions?: number;
 }
 
 export interface EmbeddingObject extends Record<string, unknown> {
@@ -150,6 +157,9 @@ export interface TranscriptionRequest extends Record<string, unknown> {
   model: string;
   file: Blob;
   filename?: string;
+  language?: string;
+  prompt?: string;
+  response_format?: "json" | "verbose_json" | string;
 }
 
 export interface TranscriptionResponse extends RunInfraRequestMetadata {
@@ -209,8 +219,6 @@ export interface ModelListResponse extends RunInfraRequestMetadata {
   object?: string;
   data: ModelObject[];
 }
-
-export type UnsupportedOperationRequest = Record<string, unknown>;
 
 export interface ConstructWebhookEventOptions {
   payload: string | Uint8Array | ArrayBuffer;
@@ -592,10 +600,6 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
   }
 }
 
-function unsupportedOperation(message: string): Promise<never> {
-  return Promise.reject(new UnsupportedOperationError(message));
-}
-
 interface RequestOptions {
   method?: "GET" | "POST";
   body?: unknown;
@@ -807,6 +811,24 @@ function validateEmbeddingInput(value: unknown): void {
   throw invalidRequestOption("input must be a non-empty string or array of strings");
 }
 
+function validateEmbeddingResponseOptions(body: Record<string, unknown>): void {
+  if (body.encoding_format !== undefined && body.encoding_format !== "float") {
+    throw invalidRequestOption(
+      "embedding encoding_format must be float for native SDK typed responses",
+    );
+  }
+  if (
+    body.dimensions !== undefined &&
+    (
+      typeof body.dimensions !== "number" ||
+      !Number.isSafeInteger(body.dimensions) ||
+      body.dimensions <= 0
+    )
+  ) {
+    throw invalidRequestOption("embedding dimensions must be a positive integer");
+  }
+}
+
 function validateBlobFile(value: unknown): Blob {
   if (!(value instanceof Blob)) {
     throw invalidRequestOption("file must be a Blob");
@@ -877,6 +899,19 @@ function validateMultipartFieldValue(value: unknown): string {
     throw invalidRequestOption("multipart field values must contain only finite numbers");
   }
   return String(value);
+}
+
+function validateTranscriptionResponseFormat(body: Record<string, unknown>): void {
+  const responseFormat = body.response_format;
+  if (
+    responseFormat !== undefined &&
+    responseFormat !== "json" &&
+    responseFormat !== "verbose_json"
+  ) {
+    throw invalidRequestOption(
+      "audio transcription response_format must be json or verbose_json for native SDK typed responses",
+    );
+  }
 }
 
 const JSON_BODY_ERROR = "JSON request body must be JSON-serializable and contain only finite numbers";
@@ -1254,7 +1289,7 @@ export class RunInfra {
   /**
    * Audio surfaces (text-to-speech + speech-to-text).
    *
-   * @experimental As of v0.1.3, these methods have NOT been verified end-to-end
+   * @experimental As of v0.1.4, these methods have NOT been verified end-to-end
    * against a live deployed pipeline in our canary suite. The HTTP envelope
    * matches the OpenAI Audio API contract and the request/response shapes are
    * stable, but you should test against your own deployed model before using
@@ -1277,7 +1312,7 @@ export class RunInfra {
   /**
    * Image generation surface.
    *
-   * @experimental As of v0.1.3, this method has NOT been verified end-to-end
+   * @experimental As of v0.1.4, this method has NOT been verified end-to-end
    * against a live deployed pipeline in our canary suite. The HTTP envelope
    * matches the OpenAI Images API contract, but you should test against your
    * own deployed model before using in production. Live-canary verification
@@ -1288,8 +1323,6 @@ export class RunInfra {
   };
 
   readonly webhooks: {
-    create: (request?: UnsupportedOperationRequest) => Promise<never>;
-    list: () => Promise<never>;
     verifySignature: typeof verifyWebhookSignature;
     constructEvent: typeof constructWebhookEvent;
   };
@@ -1361,6 +1394,7 @@ export class RunInfra {
       create: (request, requestOptions) => {
         const body = withValidatedModel(request);
         validateEmbeddingInput(body.input);
+        validateEmbeddingResponseOptions(body);
         return this.request("/embeddings", {
           method: "POST",
           body,
@@ -1394,6 +1428,7 @@ export class RunInfra {
       },
       transcriptions: {
         create: (request, requestOptions) => {
+          validateTranscriptionResponseFormat(request);
           const formData = new FormData();
           formData.append("model", validateSdkModel(request.model));
           formData.append(
@@ -1436,14 +1471,6 @@ export class RunInfra {
     this.webhooks = {
       verifySignature: verifyWebhookSignature,
       constructEvent: constructWebhookEvent,
-      create: () =>
-        unsupportedOperation(
-          "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped.",
-        ),
-      list: () =>
-        unsupportedOperation(
-          "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped.",
-        ),
     };
     this.voice = {
       pipeline: {

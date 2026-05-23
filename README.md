@@ -65,16 +65,26 @@ print(response["choices"][0]["message"]["content"])
 
 See each package's own README + CHANGELOG for surface-level docs.
 
-## Modality status (v0.1.3)
+## Modality status (v0.1.4)
 
 | Surface | Status |
 |---|---|
 | Chat completions, Responses, Embeddings | Beta, contract-tested |
 | Images, Audio TTS/ASR | **Experimental**, not live-canary verified |
 | Voice pipeline | **Experimental**, pipeline-scoped route, not live-canary verified |
-| Webhook delivery | Not shipped. Local verification helpers are available in both SDKs |
+| Webhook delivery | Not shipped. Local verification helpers are available in both SDKs; create/list methods are not public SDK surface |
 
 See per-package READMEs and CHANGELOG for the path to v1.0.0 GA.
+The strict multimodal GA canary contract is documented in
+[`LIVE-CANARIES.md`](./LIVE-CANARIES.md).
+
+## Browser security
+
+RunInfra API keys are bearer secrets. Do not put `RUNINFRA_API_KEY` in browser
+code. Browser apps should call your server route or backend proxy first, then
+your server calls RunInfra with the workspace or pipeline-scoped key. Ephemeral
+browser tokens are not shipped in v0.1.4; do not build a direct browser token
+flow until scoped tokens, expiry, audit logging, and live canary coverage exist.
 
 ## License
 
@@ -87,9 +97,22 @@ Each release published from this repo via GitHub Actions OIDC trusted
 publishing carries a Sigstore-backed provenance attestation linking it to a
 specific CI run.
 
+Code scanning runs through GitHub default CodeQL setup and protected branch
+checks. Do not add an advanced CodeQL workflow unless default setup is disabled.
+
 Verify the npm package:
 ```bash
 npm view @runinfra/sdk@latest dist.attestations
+```
+
+Verify registry install/import for an exact release:
+```bash
+node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>
+```
+
+Check strict live-canary readiness without exposing env values:
+```bash
+node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 ```
 
 Verify the PyPI release:
