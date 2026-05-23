@@ -158,6 +158,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Live-gated native SDK subset", readme)
         self.assertIn("will be treated as verified only after the strict live canaries pass", readme)
         self.assertIn("`openai.params.chat.completions`", readme)
+        self.assertIn("`openai.params.chat.stream_options`", readme)
         self.assertIn("`openai.params.responses`", readme)
         self.assertIn("`openai.params.embeddings`", readme)
         self.assertIn("`openai.params.images`", readme)
@@ -175,6 +176,29 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx", readme)
         self.assertIn("error.model.not_found", live_canaries)
         self.assertIn("error.body.unsupported_parameter", live_canaries)
+
+    def test_child_canaries_cover_chat_stream_options_usage_chunks(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        for text in (runner, typescript_canary, python_canary, live_canaries):
+            self.assertIn("openai.params.chat.stream_options", text)
+            self.assertIn("stream_options", text)
+            self.assertIn("include_usage", text)
+        self.assertIn("assertChatStreamUsageEvent", typescript_canary)
+        self.assertIn("assertChatUsageObject", typescript_canary)
+        self.assertIn('"prompt_tokens"', typescript_canary)
+        self.assertIn('"completion_tokens"', typescript_canary)
+        self.assertIn('"total_tokens"', typescript_canary)
+        self.assertIn('usage: "present"', typescript_canary)
+        self.assertIn("assert_chat_stream_usage_event", python_canary)
+        self.assertIn("assert_chat_usage_object", python_canary)
+        self.assertIn('"prompt_tokens"', python_canary)
+        self.assertIn('"completion_tokens"', python_canary)
+        self.assertIn('"total_tokens"', python_canary)
+        self.assertIn('"usage": "present"', python_canary)
 
     def test_child_canaries_cover_live_model_not_found_error_mapping(self):
         runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()

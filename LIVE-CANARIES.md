@@ -81,6 +81,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `models.retrieve.llm`
 - `chat.completions.create`
 - `openai.params.chat.completions`
+- `openai.params.chat.stream_options`
 - `chat.completions.stream.final`
 - `chat.completions.stream.cancel`
 - `chat.completions.stream.slow_consumer`
@@ -125,12 +126,13 @@ Slow-consumer streaming rows drain real chat and Responses SSE streams while
 pausing after each event; reports record only request IDs, event counts, and a
 redacted delay marker. The pause budget is bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`,
 so an excessive valid delay fails closed instead of holding a canary job open. The
-OpenAI parameter rows prove chat
-sampling and metadata pass-through, Responses instructions, metadata,
-temperature, output-token controls, embeddings `encoding_format: "float"` plus
-`dimensions`, exact image `response_format` output matching while sending an
-explicit image `size` to the backend, TTS `response_format` request handling
-with a non-JSON binary audio response, and ASR `language`, fixed `prompt`, plus
+OpenAI parameter rows prove chat sampling and metadata pass-through, chat
+`stream_options.include_usage` usage chunks with numeric token fields but
+without recording token counts, Responses instructions, metadata, temperature,
+output-token controls, embeddings `encoding_format: "float"` plus `dimensions`,
+exact image `response_format` output matching while sending an explicit image
+`size` to the backend, TTS `response_format` request handling with a non-JSON
+binary audio response, and ASR `language`, fixed `prompt`, plus
 `response_format` request handling. The TTS parameter row does not claim exact
 codec or content-type matching because deployments expose model-specific output
 formats. The ASR parameter row does not claim the language hint changed model

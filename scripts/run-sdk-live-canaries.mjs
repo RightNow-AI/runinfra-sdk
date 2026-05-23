@@ -17,6 +17,7 @@ const expectedRows = [
   "models.retrieve.llm",
   "chat.completions.create",
   "openai.params.chat.completions",
+  "openai.params.chat.stream_options",
   "chat.completions.stream.final",
   "chat.completions.stream.cancel",
   "chat.completions.stream.slow_consumer",
@@ -218,6 +219,8 @@ const rowReadinessRequirements = [
   ["models.retrieve.llm", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["chat.completions.create", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["openai.params.chat.completions", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  // Child canaries validate stream_options.include_usage without recording token counts.
+  ["openai.params.chat.stream_options", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["chat.completions.stream.final", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["chat.completions.stream.cancel", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["chat.completions.stream.slow_consumer", () => [

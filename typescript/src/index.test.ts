@@ -187,6 +187,7 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("Live-gated native SDK subset");
     expect(readme).toContain("will be treated as verified only after the strict live canaries pass");
     expect(readme).toContain("`openai.params.chat.completions`");
+    expect(readme).toContain("`openai.params.chat.stream_options`");
     expect(readme).toContain("`openai.params.responses`");
     expect(readme).toContain("`openai.params.embeddings`");
     expect(readme).toContain("`openai.params.images`");
@@ -204,6 +205,34 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
     expect(liveCanaries).toContain("error.model.not_found");
     expect(liveCanaries).toContain("error.body.unsupported_parameter");
+  });
+
+  it("keeps child canaries in parity for chat stream options usage coverage", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    for (const text of [runner, typescriptCanary, pythonCanary, liveCanaries]) {
+      expect(text).toContain("openai.params.chat.stream_options");
+      expect(text).toContain("stream_options");
+      expect(text).toContain("include_usage");
+    }
+    expect(typescriptCanary).toContain("assertChatStreamUsageEvent");
+    expect(typescriptCanary).toMatch(
+      /function assertChatStreamUsageEvent[\s\S]*if \(!Array\.isArray\(event\.choices\) \|\|\s+event\.choices\.length !== 0\)/u,
+    );
+    expect(typescriptCanary).toContain("assertChatUsageObject");
+    expect(typescriptCanary).toContain('"prompt_tokens"');
+    expect(typescriptCanary).toContain('"completion_tokens"');
+    expect(typescriptCanary).toContain('"total_tokens"');
+    expect(typescriptCanary).toContain('usage: "present"');
+    expect(pythonCanary).toContain("assert_chat_stream_usage_event");
+    expect(pythonCanary).toContain("assert_chat_usage_object");
+    expect(pythonCanary).toContain('"prompt_tokens"');
+    expect(pythonCanary).toContain('"completion_tokens"');
+    expect(pythonCanary).toContain('"total_tokens"');
+    expect(pythonCanary).toContain('"usage": "present"');
   });
 
   it("keeps child canaries in parity for live model-not-found error mapping", () => {
@@ -503,6 +532,10 @@ describe("RunInfra TypeScript SDK", () => {
       expect(report.expectedRows).toContain("error.model.not_found");
       expect(
         report.readiness?.rows?.find((row) => row.name === "error.model.not_found")?.missing,
+      ).toEqual([]);
+      expect(report.expectedRows).toContain("openai.params.chat.stream_options");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.chat.stream_options")?.missing,
       ).toEqual([]);
       expect(
         report.readiness?.rows?.find((row) => row.name === "audio.transcriptions.create")?.missing,

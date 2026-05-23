@@ -451,3 +451,41 @@ Current blockers remain:
 - This adds live-gated slow-consumer proof but does not make strict live multimodal canaries green without production canary env/fixtures.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Chat Stream Options Usage Canary Coverage
+
+Added live-gated OpenAI-compatible chat stream-options coverage:
+
+- New strict canary row: `openai.params.chat.stream_options`.
+- TypeScript and Python child canaries now send `stream_options.include_usage: true` with a real streaming chat completion.
+- The row drains the full stream, requires a terminal chat event, and requires a usage chunk with `choices: []`.
+- The usage chunk must contain non-negative integer `prompt_tokens`, `completion_tokens`, and `total_tokens`.
+- Reports record only request ID, event count, and `usage: "present"`; token counts, prompt text, and output text are not written.
+- `LIVE-CANARIES.md` plus TS/Python READMEs document the new row as live-gated proof, not GA completion.
+
+Fresh local verification:
+
+- Added failing TS/Python docs and child-canary parity tests first; they failed on the missing row.
+- Second-opinion review found the initial TS validator rejected valid `choices: []`; fixed and added a regression assertion.
+- Second-opinion review then found the row accepted an empty usage object; fixed both languages to require numeric token fields without recording their values.
+- Targeted chat stream-options tests passed: TS 1 test, Python 1 test.
+- `pnpm --dir typescript install --frozen-lockfile` passed with the existing esbuild ignored-build-script warning.
+- `python -m pip install -r python/requirements-dev.txt` passed with pinned tooling already installed.
+- TS typecheck passed.
+- TS tests passed, 123 tests.
+- Python tests passed, 110 tests plus 105 subtests.
+- Python canary/package syntax passed.
+- Workflow policy and version sync passed for `0.1.4`.
+- TS build and `pnpm --dir typescript pack` passed; npm tarball contents remained limited to changelog, dist, license, package.json, and README.
+- Python wheel/sdist build, Python package verifier, and `twine check` passed.
+- npm package verifier and clean artifact install/import for both npm and Python passed.
+- Source and artifact canary parity passed: TypeScript 7 passed/26 skipped, Python 7 passed/26 skipped, expected rows 33.
+- Strict preflight remains intentionally blocked: 7 ready rows and 26 blocked rows because no scoped live canary env/fixtures are present in this shell. The new row is blocked on `RUNINFRA_API_KEY` and `RUNINFRA_LLM_MODEL`.
+- `git diff --check` passed with CRLF warnings only.
+- Final second-opinion review reported no blockers. CodeRabbit CLI was not installed, so the available subagent review path was used.
+
+Current blockers remain:
+
+- This adds live-gated chat stream-options proof but does not make strict live multimodal canaries green without production canary env/fixtures.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.

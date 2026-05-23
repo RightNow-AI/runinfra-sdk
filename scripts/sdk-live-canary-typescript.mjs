@@ -93,6 +93,12 @@ function assertOptionalNumber(value, label) {
   }
 }
 
+function assertNonNegativeInteger(value, label) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+}
+
 function assertRequestId(value, label) {
   if (!value || typeof value !== "string") {
     throw new Error(`${label} did not expose x-request-id`);
@@ -149,6 +155,31 @@ function assertChatStreamEnvelope(event, label) {
   const choice = assertObject(event.choices[0], `${label}.choices[0]`);
   assertOptionalNumber(choice.index, `${label}.choices[0].index`);
   if (choice.delta !== undefined) assertObject(choice.delta, `${label}.choices[0].delta`);
+}
+
+function isChatStreamUsageEvent(event) {
+  return Array.isArray(event?.choices) &&
+    event.choices.length === 0 &&
+    event.usage !== null &&
+    typeof event.usage === "object";
+}
+
+function assertChatStreamUsageEvent(event, label) {
+  assertOptionalString(event.id, `${label}.id`);
+  assertOptionalString(event.object, `${label}.object`);
+  assertOptionalNumber(event.created, `${label}.created`);
+  assertOptionalString(event.model, `${label}.model`);
+  if (!Array.isArray(event.choices) || event.choices.length !== 0) {
+    throw new Error(`${label}.choices must be an empty array for a chat usage chunk`);
+  }
+  assertChatUsageObject(event.usage, `${label}.usage`);
+}
+
+function assertChatUsageObject(value, label) {
+  const usage = assertObject(value, label);
+  for (const field of ["prompt_tokens", "completion_tokens", "total_tokens"]) {
+    assertNonNegativeInteger(usage[field], `${label}.${field}`);
+  }
 }
 
 function assertResponsesEnvelope(response, label) {
@@ -668,6 +699,32 @@ await record("openai.params.chat.completions", ["RUNINFRA_API_KEY", "RUNINFRA_LL
   assertChatCompletionEnvelope(response, "chat params response");
   assertRequestId(response._request_id, "openai.params.chat.completions");
   return { requestId: response._request_id };
+});
+
+await record("openai.params.chat.stream_options", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
+  const stream = await client().chat.completions.create({
+    model: llmModel,
+    messages: [{ role: "user", content: "Reply with the single word ok." }],
+    temperature: 0,
+    max_tokens: 16,
+    stream: true,
+    stream_options: { include_usage: true },
+  });
+  assertRequestId(stream.requestId, "openai.params.chat.stream_options");
+  const events = await readFullStream(stream, "chat stream options stream", isChatTerminalEvent);
+  let sawUsage = false;
+  events.forEach((event, index) => {
+    if (isChatStreamUsageEvent(event)) {
+      assertChatStreamUsageEvent(event, `chat stream options usage event ${index}`);
+      sawUsage = true;
+      return;
+    }
+    assertChatStreamEnvelope(event, `chat stream options event ${index}`);
+  });
+  if (!sawUsage) {
+    throw new Error("chat stream options did not emit a usage event");
+  }
+  return { requestId: stream.requestId, eventCount: events.length, usage: "present" };
 });
 
 await record("chat.completions.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {

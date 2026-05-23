@@ -82,6 +82,11 @@ def assert_optional_number(value: Any, label: str) -> None:
         raise AssertionError(f"{label} must be a number when present")
 
 
+def assert_non_negative_integer(value: Any, label: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise AssertionError(f"{label} must be a non-negative integer")
+
+
 def assert_request_id(value: Any, label: str) -> None:
     if not isinstance(value, str) or not value:
         raise AssertionError(f"{label} did not expose x-request-id")
@@ -140,6 +145,31 @@ def assert_chat_stream_envelope(event: Dict[str, Any], label: str) -> None:
     assert_optional_number(choice.get("index"), f"{label}.choices[0].index")
     if choice.get("delta") is not None:
         assert_object(choice["delta"], f"{label}.choices[0].delta")
+
+
+def is_chat_stream_usage_event(event: Dict[str, Any]) -> bool:
+    return (
+        isinstance(event.get("choices"), list)
+        and len(event["choices"]) == 0
+        and isinstance(event.get("usage"), dict)
+    )
+
+
+def assert_chat_stream_usage_event(event: Dict[str, Any], label: str) -> None:
+    assert_optional_string(event.get("id"), f"{label}.id")
+    assert_optional_string(event.get("object"), f"{label}.object")
+    assert_optional_number(event.get("created"), f"{label}.created")
+    assert_optional_string(event.get("model"), f"{label}.model")
+    choices = event.get("choices")
+    if not isinstance(choices, list) or choices:
+        raise AssertionError(f"{label}.choices must be an empty list for a chat usage chunk")
+    assert_chat_usage_object(event.get("usage"), f"{label}.usage")
+
+
+def assert_chat_usage_object(value: Any, label: str) -> None:
+    usage = assert_object(value, label)
+    for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        assert_non_negative_integer(usage.get(field), f"{label}.{field}")
 
 
 def assert_responses_envelope(response: Dict[str, Any], label: str) -> None:
@@ -516,6 +546,7 @@ def main() -> int:
     record("models.retrieve.llm", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _model_retrieve(client(), llm_model))
     record("chat.completions.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_create(client(), llm_model))
     record("openai.params.chat.completions", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_params(client(), llm_model))
+    record("openai.params.chat.stream_options", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_options(client(), llm_model))
     record("chat.completions.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_final(client(), llm_model))
     record("chat.completions.stream.cancel", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_cancel(client(), llm_model))
     record("chat.completions.stream.slow_consumer", lambda: slow_stream_requirements(), lambda: _chat_stream_slow_consumer(client(), llm_model))
@@ -651,6 +682,29 @@ def _chat_params(client: RunInfra, model: str) -> Dict[str, Any]:
     assert_chat_completion_envelope(response, "chat params response")
     assert_request_id(response.get("_request_id"), "openai.params.chat.completions")
     return {"requestId": response.get("_request_id")}
+
+
+def _chat_stream_options(client: RunInfra, model: str) -> Dict[str, Any]:
+    stream = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": "Reply with the single word ok."}],
+        temperature=0,
+        max_tokens=16,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+    assert_request_id(stream.request_id, "openai.params.chat.stream_options")
+    events = read_full_stream(stream, "chat stream options stream", is_chat_terminal_event)
+    saw_usage = False
+    for index, event in enumerate(events):
+        if is_chat_stream_usage_event(event):
+            assert_chat_stream_usage_event(event, f"chat stream options usage event {index}")
+            saw_usage = True
+        else:
+            assert_chat_stream_envelope(event, f"chat stream options event {index}")
+    if not saw_usage:
+        raise AssertionError("chat stream options did not emit a usage event")
+    return {"requestId": stream.request_id, "eventCount": len(events), "usage": "present"}
 
 
 def _chat_stream_final(client: RunInfra, model: str) -> Dict[str, Any]:

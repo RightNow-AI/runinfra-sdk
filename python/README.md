@@ -138,8 +138,9 @@ The native SDK validates the minimum request fields locally, then forwards
 OpenAI-style JSON or multipart fields that preserve the typed response shape.
 The GA canary matrix has dedicated live-gated rows for the subset that must
 pass before GA. These rows will be treated as verified only after the strict live canaries pass:
-`openai.params.chat.completions`, `openai.params.responses`, and
-`openai.params.embeddings`, plus the live-gated `openai.params.images` row for
+`openai.params.chat.completions`, `openai.params.chat.stream_options`,
+`openai.params.responses`, and `openai.params.embeddings`, plus the live-gated
+`openai.params.images` row for
 exact output-format coverage while sending an explicit image size to the
 backend, the live-gated `openai.params.audio.speech` row for TTS
 `response_format` request coverage with binary audio output using `mp3`,
@@ -151,7 +152,8 @@ Live-gated native SDK subset:
 
 - Chat Completions: `model`, `messages`, `stream`, `temperature`, `top_p`,
   `max_tokens`, `stop`, `presence_penalty`, `frequency_penalty`, `user`, and
-  `metadata`.
+  `metadata`; streaming usage chunks are covered separately with
+  `stream_options.include_usage`.
 - Responses: `model`, `input`, `stream`, `instructions`, `temperature`,
   `max_output_tokens`, and `metadata`.
 - Embeddings: `model`, `input`, `encoding_format="float"`, and `dimensions`
