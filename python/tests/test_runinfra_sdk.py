@@ -835,6 +835,36 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertEqual(response["_request_id"], "req-server-123")
 
+    def test_request_ids_are_header_case_insensitive(self):
+        transport = RecordingTransport(
+            RunInfraResponse(
+                200,
+                {"content-type": "application/json", "X-REQUEST-ID": "req-json-case"},
+                json.dumps({"object": "list", "data": []}).encode("utf-8"),
+            ),
+            RunInfraResponse(
+                200,
+                {"content-type": "text/event-stream", "X-REQUEST-ID": "req-stream-case"},
+                b'data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+            ),
+            RunInfraResponse(
+                200,
+                {"Content-Type": "audio/mpeg", "X-REQUEST-ID": "req-audio-case"},
+                b"\x01\x02",
+            ),
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        self.assertEqual(client.models.list()["_request_id"], "req-json-case")
+        stream = client.responses.create(model="llama-3.1-8b", input="Hi", stream=True)
+        self.assertEqual(stream.request_id, "req-stream-case")
+        self.assertEqual(
+            list(stream),
+            [{"type": "response.completed", "response": {"status": "completed"}}],
+        )
+        audio = client.audio.speech.create(model="kokoro", input="hello", voice="default")
+        self.assertEqual(audio.request_id, "req-audio-case")
+
     def test_rejects_malformed_json_response_shapes_before_returning_user_data(self):
         transport = RecordingTransport(
             RunInfraResponse(
@@ -1603,6 +1633,38 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             ],
         )
         self.assertIn(b'"stream":true', transport.calls[0].body)
+
+    def test_streaming_preserves_multibyte_utf8_split_across_chunks(self):
+        payload = 'data: {"choices":[{"delta":{"content":"café"}}]}\n\n'.encode("utf-8")
+        split_at = payload.index("é".encode("utf-8")) + 1
+
+        def chunks():
+            yield payload[:split_at]
+            yield payload[split_at:]
+
+        transport = RecordingTransport(
+            RunInfraResponse(
+                200,
+                {"content-type": "text/event-stream", "x-request-id": "req-stream-utf8"},
+                chunks(),
+            )
+        )
+        client = RunInfra(
+            api_key="sk-ri-test",
+            pipeline_id="pipe-stream",
+            transport=transport,
+        )
+
+        stream = client.chat.completions.create(
+            model="llama-3.1-8b",
+            messages=[{"role": "user", "content": "Hi"}],
+            stream=True,
+        )
+
+        self.assertEqual(
+            list(stream),
+            [{"choices": [{"delta": {"content": "café"}}]}],
+        )
 
     def test_chat_streaming_marks_transport_request_and_consumes_incremental_chunks(self):
         def chunks():

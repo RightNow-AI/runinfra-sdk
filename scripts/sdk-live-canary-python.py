@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import math
 import os
@@ -9,8 +11,6 @@ import random
 import re
 import sys
 import time
-import wave
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
@@ -42,16 +42,6 @@ def first_env(*names: str) -> Optional[str]:
 
 def redacted_env(names: Iterable[str]) -> Dict[str, str]:
     return {name: "set_redacted" if env(name) else "missing" for name in names}
-
-
-def silence_wav(seconds: float = 1.0, sample_rate: int = 16_000) -> bytes:
-    output = BytesIO()
-    with wave.open(output, "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(sample_rate)
-        wav.writeframes(b"\x00\x00" * max(1, int(seconds * sample_rate)))
-    return output.getvalue()
 
 
 def assert_object(value: Any, label: str) -> Dict[str, Any]:
@@ -172,6 +162,51 @@ def asr_fixture() -> Dict[str, Any]:
         "filename": resolved.name,
         "content_type": env("RUNINFRA_ASR_FIXTURE_CONTENT_TYPE") or "audio/wav",
     }
+
+
+def voice_pipeline_fixture_path() -> Optional[str]:
+    return first_env("RUNINFRA_VOICE_PIPELINE_AUDIO_PATH", "RUNINFRA_ASR_FIXTURE_PATH")
+
+
+def voice_pipeline_expected_text() -> Optional[str]:
+    return first_env("RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT", "RUNINFRA_ASR_EXPECTED_TEXT")
+
+
+def voice_pipeline_fixture() -> Dict[str, Any]:
+    path = voice_pipeline_fixture_path()
+    if not path:
+        raise AssertionError("voice pipeline fixture missing")
+    resolved = Path(path).resolve()
+    content = resolved.read_bytes()
+    if not content:
+        raise AssertionError("voice pipeline fixture was empty")
+    return {
+        "content": content,
+        "content_type": first_env(
+            "RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE",
+            "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE",
+        ) or "audio/wav",
+    }
+
+
+def assert_voice_pipeline_expected_text(response: Dict[str, Any]) -> Dict[str, str]:
+    expected = normalized_text(voice_pipeline_expected_text())
+    if not expected:
+        raise AssertionError("voice pipeline expected text missing")
+    fields = [
+        "transcript",
+        "text",
+        "responseText",
+        "response",
+        "response_text",
+        "outputText",
+        "output_text",
+    ]
+    for field in fields:
+        actual = normalized_text(get_path_value(response, field))
+        if actual and expected in actual:
+            return {"textEvidenceField": field}
+    raise AssertionError(f"voice pipeline response did not include expected text in: {', '.join(fields)}")
 
 
 def error_summary(error: BaseException) -> Dict[str, Any]:
@@ -308,6 +343,9 @@ def main() -> int:
         "TEST_PIPELINE_ID",
         "RUNINFRA_VOICE_PIPELINE_ID",
         "RUNINFRA_VOICE_PIPELINE_API_KEY",
+        "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH",
+        "RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE",
+        "RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT",
         "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY",
         "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD",
     ]
@@ -376,6 +414,8 @@ def main() -> int:
     record("error.request.invalid_options", [], _invalid_request_options)
     record("webhooks.create.unsupported", [], _webhooks_create_unsupported)
     record("webhooks.list.unsupported", [], _webhooks_list_unsupported)
+    record("webhooks.verify_signature.local", [], _webhooks_verify_signature_local)
+    record("webhooks.construct_event.local", [], _webhooks_construct_event_local)
     record("idempotency.replay.responses", lambda: _idempotency_requirements(), lambda: _idempotency_replay(client(), llm_model))
 
     summary = {
@@ -582,14 +622,22 @@ def _voice_requirements(pipeline_api_key: Optional[str], pipeline_id: Optional[s
         missing_items.append("RUNINFRA_VOICE_PIPELINE_API_KEY or RUNINFRA_PIPELINE_API_KEY or RUNINFRA_API_KEY")
     if not pipeline_id:
         missing_items.append("RUNINFRA_VOICE_PIPELINE_ID or TEST_PIPELINE_ID")
+    if not voice_pipeline_fixture_path():
+        missing_items.append("RUNINFRA_VOICE_PIPELINE_AUDIO_PATH or RUNINFRA_ASR_FIXTURE_PATH")
+    if not voice_pipeline_expected_text():
+        missing_items.append("RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT or RUNINFRA_ASR_EXPECTED_TEXT")
     return missing_items
 
 
 def _voice_pipeline_create(client: RunInfra) -> Dict[str, Any]:
-    response = client.voice.pipeline.create(audio=silence_wav(), mime_type="audio/wav")
+    fixture = voice_pipeline_fixture()
+    response = client.voice.pipeline.create(audio=fixture["content"], mime_type=fixture["content_type"])
     assert_object(response, "voice pipeline response")
     assert_request_id(response.get("_request_id"), "voice.pipeline.create")
-    return {"requestId": response.get("_request_id"), "hasText": bool(response.get("transcript") or response.get("text") or response.get("output_text"))}
+    return {
+        "requestId": response.get("_request_id"),
+        **assert_voice_pipeline_expected_text(response),
+    }
 
 
 def _auth_error(base_url: str) -> Dict[str, Any]:
@@ -647,6 +695,49 @@ def _webhooks_list_unsupported() -> Dict[str, Any]:
             raise AssertionError(f"webhooks.list mapped unexpectedly: {error.status} {error.type}")
         return {"errorType": error.type, "errorStatus": error.status}
     raise AssertionError("webhooks.list unexpectedly succeeded")
+
+
+def _webhook_fixture() -> Dict[str, Any]:
+    timestamp = int(time.time())
+    payload = json.dumps({"type": "sdk.canary", "data": {"ok": True}}, separators=(",", ":"))
+    secret = "whsec_sdk_canary_local"
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        f"{timestamp}.{payload}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        "payload": payload,
+        "secret": secret,
+        "timestamp": timestamp,
+        "signature_header": f"t={timestamp},v1={signature}",
+    }
+
+
+def _webhooks_verify_signature_local() -> Dict[str, Any]:
+    fixture = _webhook_fixture()
+    verified = _local_client().webhooks.verify_signature(
+        payload=fixture["payload"],
+        signature_header=fixture["signature_header"],
+        secret=fixture["secret"],
+        now=fixture["timestamp"],
+    )
+    if verified is not True:
+        raise AssertionError("webhook signature verification did not return True")
+    return {"verified": verified}
+
+
+def _webhooks_construct_event_local() -> Dict[str, Any]:
+    fixture = _webhook_fixture()
+    event = _local_client().webhooks.construct_event(
+        payload=fixture["payload"],
+        signature_header=fixture["signature_header"],
+        secret=fixture["secret"],
+        now=fixture["timestamp"],
+    )
+    assert_object(event, "webhook event")
+    assert_string(event.get("type"), "webhook event.type")
+    return {"eventType": event.get("type")}
 
 
 def _idempotency_requirements() -> List[str]:

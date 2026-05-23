@@ -28,6 +28,8 @@ const expectedRows = [
   "error.request.invalid_options",
   "webhooks.create.unsupported",
   "webhooks.list.unsupported",
+  "webhooks.verify_signature.local",
+  "webhooks.construct_event.local",
   "idempotency.replay.responses",
 ];
 
@@ -224,6 +226,41 @@ function reportRowErrors(report) {
   return errors;
 }
 
+function sensitiveEnvValues() {
+  return Object.entries(process.env)
+    .filter(([name, value]) =>
+      typeof value === "string" &&
+      value.length >= 8 &&
+      /(API[_-]?KEY|TOKEN|SECRET|PASSWORD|NPM|PYPI|TWINE|GITHUB|GH_)/iu.test(name)
+    )
+    .map(([, value]) => value);
+}
+
+function assertReportDoesNotLeak(report) {
+  const serialized = JSON.stringify(report);
+  const forbiddenPatterns = [
+    /C:\\Users\\jaber/iu,
+    /RightNow-Full/iu,
+    /BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY/u,
+    /npm_[A-Za-z0-9]{20,}/u,
+    /pypi-[A-Za-z0-9_-]{40,}/u,
+    /ghp_[A-Za-z0-9_]{20,}/u,
+    /sk-ri-[A-Za-z0-9_-]{20,}/u,
+    /sourceMappingURL/u,
+    /sourcesContent/u,
+    /webpack:\/\//u,
+    /\.npmrc/u,
+  ];
+  const matchedPattern = forbiddenPatterns.find((pattern) => pattern.test(serialized));
+  if (matchedPattern) {
+    throw new Error(`live canary report contains forbidden content: ${matchedPattern}`);
+  }
+  const leakedEnvValue = sensitiveEnvValues().find((value) => serialized.includes(value));
+  if (leakedEnvValue) {
+    throw new Error("live canary report contains a sensitive environment value");
+  }
+}
+
 const parityErrors = [
   ...reportRowErrors(reports.find((report) => report.language === "typescript")),
   ...reportRowErrors(reports.find((report) => report.language === "python")),
@@ -244,6 +281,13 @@ const combined = {
   },
   reports,
 };
+
+try {
+  assertReportDoesNotLeak(combined);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 
 if (reportPath) {
   const absolute = resolve(reportPath);

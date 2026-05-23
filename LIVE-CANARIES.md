@@ -44,6 +44,9 @@ development diagnostics.
 | `RUNINFRA_ASR_EXPECTED_TEXT` | Normalized text that must appear in the ASR transcript |
 | `RUNINFRA_VOICE_PIPELINE_ID` or `TEST_PIPELINE_ID` | Pipeline id for voice pipeline row |
 | `RUNINFRA_VOICE_PIPELINE_API_KEY` or `RUNINFRA_PIPELINE_API_KEY` | Pipeline-scoped key for voice pipeline row |
+| `RUNINFRA_VOICE_PIPELINE_AUDIO_PATH` | Deterministic speech-audio fixture for voice pipeline row. Falls back to `RUNINFRA_ASR_FIXTURE_PATH` |
+| `RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE` | Optional voice pipeline fixture content type. Falls back to `RUNINFRA_ASR_FIXTURE_CONTENT_TYPE` or `audio/wav` |
+| `RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT` | Normalized text that must appear in the voice pipeline response. Falls back to `RUNINFRA_ASR_EXPECTED_TEXT` |
 | `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1` | Explicit opt-in for repeated idempotency replay test |
 | `RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD` | Optional comma-separated response field paths that prove the second idempotent response was replayed |
 
@@ -73,6 +76,8 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `error.request.invalid_options`
 - `webhooks.create.unsupported`
 - `webhooks.list.unsupported`
+- `webhooks.verify_signature.local`
+- `webhooks.construct_event.local`
 - `idempotency.replay.responses`
 
 Each success row asserts `x-request-id` exposure and the relevant
@@ -85,6 +90,10 @@ early to cover consumer cancellation. Unsupported request option and webhook
 delivery rows must fail closed without sending a network request. ASR uploads a
 deterministic speech fixture and requires the normalized transcript to include
 `RUNINFRA_ASR_EXPECTED_TEXT`; silence fixtures are not valid GA proof.
+Voice pipeline rows also require deterministic speech audio and expected text;
+generated silence is not accepted as GA proof.
+Webhook signature rows use installed package artifacts and deterministic local
+payloads because they are verification helpers, not live delivery endpoints.
 
 The idempotency row is intentionally strict. It does not pass merely because
 two calls returned successfully. The second response must expose replay

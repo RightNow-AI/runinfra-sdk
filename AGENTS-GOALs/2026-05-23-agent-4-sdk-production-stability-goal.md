@@ -3,55 +3,47 @@
 Date: 2026-05-23
 Agent: 4
 Repo: `runinfra-sdk`
-Goal: take the TypeScript and Python SDKs from secure beta to production-grade GA without weakening security, release provenance, or live contract coverage.
+Goal: take the TS and Python SDKs from secure beta to production-grade GA without weakening security, provenance, or live contract coverage.
 
 ## Done Means
 
 - TS and Python SDKs match the live RunInfra API contract.
-- Packed artifacts and registry installs work in clean consumer projects.
-- Live canaries prove models, chat, responses, embeddings, images, audio speech, audio transcription, voice pipeline, streaming final/cancel, invalid auth, invalid options, fail-closed webhooks, and idempotency replay.
-- No source maps, local paths, secrets, API keys, `.env` values, private config, or internal-only build artifacts leak into npm, PyPI, CI logs, canary reports, or package metadata.
-- CI gates are green: TS tests/build/package verify, Python tests/build/twine verify, clean installs, workflow policy, version sync, and GitHub default CodeQL analysis.
+- Packed artifacts and registry installs work in clean consumers.
+- Strict live canaries prove models, chat, responses, embeddings, images, TTS, ASR, voice pipeline, streaming final/cancel, errors, fail-closed webhooks, local webhook helpers, and idempotency replay.
+- No source maps, local paths, secrets, API keys, `.env`, `.npmrc`, private config, tests, caches, or internal build artifacts leak into npm, PyPI, CI logs, canary reports, or metadata.
+- CI gates are green: TS tests/build/package verify, Python tests/build/twine verify, clean installs, workflow policy, version sync, and default CodeQL.
 - Trusted publishing stays OIDC/provenance based. No long-lived npm/PyPI publish tokens.
 - Merge happens through protected PR into `main`; local state is reconciled without destructive reset.
 
 ## Current Verified State
 
-- Local SDK `main` is ahead of `origin/main` with GA canary/security commits.
-- PR branch: `hardening/sdk-ga-canary-gates`.
-- PR: `RightNow-AI/runinfra-sdk#9`, "Add SDK GA canary and CodeQL gates".
+- PR branch: `hardening/sdk-ga-canary-gates`; PR: `RightNow-AI/runinfra-sdk#9`.
 - Direct push to `main` is blocked by branch protection, as desired.
-- Local TS/Python package, test, build, clean-install, and artifact canary gates passed before the CodeQL correction.
-- Live canaries enforce expected rows and redacted reports. Some rows were skipped when live env/fixtures were absent; GA still requires strict all-row live execution.
-- GitHub default CodeQL checks passed. A custom advanced CodeQL workflow failed because default setup is enabled, so do not add `.github/workflows/codeql.yml`.
+- Commit `b1f9c09` fixed the CodeQL default-setup conflict by removing the advanced workflow and documenting GitHub default CodeQL. PR checks went green after push.
+- Merge is still blocked by GitHub `REVIEW_REQUIRED`; current auth user is the PR author, and GitHub rejected self-approval.
+- Current checkpoint hardens GA canaries/runtime: local webhook verify/construct rows, combined report leak guard, Python case-insensitive request IDs, Python incremental UTF-8 SSE decoding, and voice pipeline requiring deterministic speech audio plus expected text instead of silence.
+- Local verification passed: TS typecheck/tests/build/pack/package scan/clean install, Python tests/build/twine/package scan/clean install, version sync, workflow policy, diff check, source/artifact canaries, and second-opinion review.
+- Artifact canary proves 20-row parity with 6 local rows passed and 14 live rows skipped because production env is absent. This is progress, not GA.
+- Code scanning API showed 0 open alerts and 0 open high/critical alerts. Default branch still reports 3 moderate Dependabot alerts.
 
-## Immediate Checkpoint
+## Remaining GA Gates
 
-1. Remove the conflicting custom CodeQL workflow.
-2. Update workflow policy/docs to reference GitHub default CodeQL checks.
-3. Keep the hardened parser that catches quoted, unquoted, and shorthand unpinned `uses`.
-4. Re-run policy checks, mutation checks, package checks, and source/secret/package leak scans.
-5. Push to `hardening/sdk-ga-canary-gates`.
-6. Merge only after PR checks and branch protection are green.
-
-## GA Gates
-
-- Strict production live canaries run with all required env and ASR fixture present.
-- Streaming proves final chunks, cancel behavior, no secret leakage, and no unsafe retries for non-idempotent streams.
-- OpenAI-compatible surfaces are tested for supported model parameters across chat, responses, embeddings, images, voice/audio, metadata/tools where implemented, and error envelopes.
-- Unsupported surfaces fail closed with typed errors.
-- Package contents are inspected for source maps, credentials, local absolute paths, caches, secret-bearing fixtures, and private config.
-- Security remains dependency-light, TLS-enforced off localhost, bearer-token-only, no telemetry, no credential URLs, and no raw key echo in errors/logs/reports.
+- Get non-author approval and merge PR #9 through branch protection.
+- Run strict production artifact canaries with all env present, including ASR and voice fixtures/expected text.
+- Prove images, TTS, ASR, and voice pipeline with deployed model/backend coverage before removing experimental labels.
+- Expand OpenAI-compatible parameter coverage: tools/metadata/response format where supported, embeddings dimensions/encoding, image/audio options, and clear unsupported-parameter behavior.
+- Decide GA Python ergonomics: ship `AsyncRunInfra` or keep sync-only documented as a deliberate GA limitation.
+- Keep webhook delivery create/list fail-closed unless real delivery endpoints ship.
 
 ## Do Not Do
 
 - Do not publish with pasted long-lived npm/PyPI tokens.
-- Do not bypass branch protection or force-push `main`.
+- Do not bypass branch protection, self-approve, force-push `main`, or weaken checks.
 - Do not claim GA if any canary row is skipped or unverified.
 - Do not hide contract mismatches by weakening tests.
-- Do not add source maps or internal source bundles to published packages.
+- Do not add source maps or internal source bundles to packages.
 - Do not use destructive git commands to reconcile local `main`.
 
 ## Method
 
-Read real repo state first, patch narrowly, verify locally, run adversarial review for broad changes, then merge only through the protected PR path. If a gate needs missing live credentials or fixtures, mark it blocked instead of calling the SDK production-ready.
+Read current state first, patch narrowly, verify locally, run adversarial review for broad changes, then merge only through the protected PR path. If a gate needs missing live credentials, fixtures, or external approval, mark it explicitly instead of calling the SDK production-ready.

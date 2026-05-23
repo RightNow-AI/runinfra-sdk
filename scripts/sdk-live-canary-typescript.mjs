@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHmac } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -38,26 +39,6 @@ function nowIso() {
 
 function durationMs(started) {
   return Math.round(performance.now() - started);
-}
-
-function silenceWav({ seconds = 1, sampleRate = 16_000 } = {}) {
-  const samples = Math.max(1, Math.floor(seconds * sampleRate));
-  const dataSize = samples * 2;
-  const buffer = Buffer.alloc(44 + dataSize);
-  buffer.write("RIFF", 0);
-  buffer.writeUInt32LE(36 + dataSize, 4);
-  buffer.write("WAVE", 8);
-  buffer.write("fmt ", 12);
-  buffer.writeUInt32LE(16, 16);
-  buffer.writeUInt16LE(1, 20);
-  buffer.writeUInt16LE(1, 22);
-  buffer.writeUInt32LE(sampleRate, 24);
-  buffer.writeUInt32LE(sampleRate * 2, 28);
-  buffer.writeUInt16LE(2, 32);
-  buffer.writeUInt16LE(16, 34);
-  buffer.write("data", 36);
-  buffer.writeUInt32LE(dataSize, 40);
-  return new Uint8Array(buffer);
 }
 
 function errorSummary(error) {
@@ -201,6 +182,49 @@ function asrFixture() {
   };
 }
 
+function voicePipelineFixture() {
+  const path = voicePipelineFixturePath();
+  if (!path) return null;
+  const bytes = readFileSync(resolve(path));
+  if (bytes.length === 0) throw new Error("voice pipeline fixture was empty");
+  return {
+    bytes,
+    contentType: firstEnv(
+      "RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE",
+      "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE",
+    ) ?? "audio/wav",
+  };
+}
+
+function voicePipelineFixturePath() {
+  return firstEnv("RUNINFRA_VOICE_PIPELINE_AUDIO_PATH", "RUNINFRA_ASR_FIXTURE_PATH");
+}
+
+function voicePipelineExpectedText() {
+  return firstEnv("RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT", "RUNINFRA_ASR_EXPECTED_TEXT");
+}
+
+function assertVoicePipelineExpectedText(response) {
+  const expected = normalizedText(voicePipelineExpectedText());
+  if (!expected) throw new Error("voice pipeline expected text missing");
+  const fields = [
+    "transcript",
+    "text",
+    "responseText",
+    "response",
+    "response_text",
+    "outputText",
+    "output_text",
+  ];
+  for (const field of fields) {
+    const actual = normalizedText(getPathValue(response, field));
+    if (actual && actual.includes(expected)) {
+      return { textEvidenceField: field };
+    }
+  }
+  throw new Error(`voice pipeline response did not include expected text in: ${fields.join(", ")}`);
+}
+
 async function readSomeStream(stream, label) {
   const events = [];
   for await (const event of stream) {
@@ -291,6 +315,9 @@ const relevantEnv = [
   "TEST_PIPELINE_ID",
   "RUNINFRA_VOICE_PIPELINE_ID",
   "RUNINFRA_VOICE_PIPELINE_API_KEY",
+  "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH",
+  "RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE",
+  "RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT",
   "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY",
   "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD",
 ];
@@ -536,15 +563,22 @@ await record("voice.pipeline.create", () => {
   const missing = [];
   if (!pipelineApiKey) missing.push("RUNINFRA_VOICE_PIPELINE_API_KEY or RUNINFRA_PIPELINE_API_KEY or RUNINFRA_API_KEY");
   if (!pipelineId) missing.push("RUNINFRA_VOICE_PIPELINE_ID or TEST_PIPELINE_ID");
+  if (!voicePipelineFixturePath()) missing.push("RUNINFRA_VOICE_PIPELINE_AUDIO_PATH or RUNINFRA_ASR_FIXTURE_PATH");
+  if (!voicePipelineExpectedText()) missing.push("RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT or RUNINFRA_ASR_EXPECTED_TEXT");
   return missing;
 }, async () => {
+  const fixture = voicePipelineFixture();
+  if (!fixture) throw new Error("voice pipeline fixture missing");
   const response = await client({ apiKey: pipelineApiKey, pipelineId }).voice.pipeline.create({
-    audio: silenceWav(),
-    mimeType: "audio/wav",
+    audio: fixture.bytes,
+    mimeType: fixture.contentType,
   });
   assertObject(response, "voice pipeline response");
   assertRequestId(response._request_id, "voice.pipeline.create");
-  return { requestId: response._request_id, hasText: Boolean(response.transcript || response.text || response.output_text) };
+  return {
+    requestId: response._request_id,
+    ...assertVoicePipelineExpectedText(response),
+  };
 });
 
 await record("error.auth.invalid_key", [], async () => {
@@ -618,6 +652,48 @@ await record("webhooks.list.unsupported", [], async () => {
     return { errorType: error.type, errorStatus: error.status };
   }
   throw new Error("webhooks.list unexpectedly succeeded");
+});
+
+function webhookFixture() {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const payload = JSON.stringify({ type: "sdk.canary", data: { ok: true } });
+  const secret = "whsec_sdk_canary_local";
+  const signature = createHmac("sha256", secret)
+    .update(`${timestamp}.${payload}`)
+    .digest("hex");
+  return {
+    payload,
+    secret,
+    timestamp,
+    signatureHeader: `t=${timestamp},v1=${signature}`,
+  };
+}
+
+await record("webhooks.verify_signature.local", [], async () => {
+  const fixture = webhookFixture();
+  const verified = client({ apiKey: apiKey ?? "sk-ri-live-canary-local", baseURL: "http://localhost:1/v1" })
+    .webhooks.verifySignature({
+      payload: fixture.payload,
+      signatureHeader: fixture.signatureHeader,
+      secret: fixture.secret,
+      now: fixture.timestamp,
+    });
+  if (verified !== true) throw new Error("webhook signature verification did not return true");
+  return { verified };
+});
+
+await record("webhooks.construct_event.local", [], async () => {
+  const fixture = webhookFixture();
+  const event = client({ apiKey: apiKey ?? "sk-ri-live-canary-local", baseURL: "http://localhost:1/v1" })
+    .webhooks.constructEvent({
+      payload: fixture.payload,
+      signatureHeader: fixture.signatureHeader,
+      secret: fixture.secret,
+      now: fixture.timestamp,
+    });
+  assertObject(event, "webhook event");
+  assertString(event.type, "webhook event.type");
+  return { eventType: event.type };
 });
 
 await record("idempotency.replay.responses", () => {

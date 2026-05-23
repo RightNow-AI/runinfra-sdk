@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import json
 import hashlib
 import hmac
@@ -220,6 +221,7 @@ class RunInfraStream:
     def __iter__(self) -> Iterator[JsonDict]:
         buffer = ""
         data_lines: List[str] = []
+        decoder = codecs.getincrementaldecoder("utf-8")()
 
         def dispatch_event() -> Optional[JsonDict]:
             payload = "\n".join(data_lines).strip()
@@ -257,7 +259,7 @@ class RunInfraStream:
 
         try:
             for chunk in chunks:
-                buffer += chunk.decode("utf-8", errors="replace")
+                buffer += decoder.decode(chunk, final=False)
                 lines = buffer.split("\n")
                 buffer = lines.pop() or ""
                 for line in lines:
@@ -265,6 +267,7 @@ class RunInfraStream:
                     if parsed is not None:
                         yield parsed
 
+            buffer += decoder.decode(b"", final=True)
             parsed = parse_line(buffer)
             if parsed is not None:
                 yield parsed
@@ -829,7 +832,7 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
     except Exception:
         pass
 
-    request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+    request_id = _request_id_from_headers(response.headers)
     if response.status == 401:
         return AuthenticationError(message, status=response.status, error_type="auth_error", request_id=request_id)
     if response.status == 403:
@@ -863,11 +866,11 @@ def _json_body(payload: Mapping[str, Any]) -> bytes:
 def _json_response(response: RunInfraResponse) -> Any:
     payload = response.json()
     if isinstance(payload, dict):
-        request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+        request_id = _request_id_from_headers(response.headers)
         if request_id:
             return {**payload, "_request_id": request_id}
         return payload
-    request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+    request_id = _request_id_from_headers(response.headers)
     raise RunInfraError(
         f"RunInfra JSON response shape error: expected object, got {_json_payload_kind(payload)}.",
         status=response.status,
@@ -1096,7 +1099,7 @@ class _ChatCompletions:
         if stream:
             return RunInfraStream(
                 response.body,
-                response.headers.get("x-request-id") or response.headers.get("X-Request-Id"),
+                _request_id_from_headers(response.headers),
             )
         return _json_response(response)
 
@@ -1124,7 +1127,7 @@ class _Responses:
         if stream:
             return RunInfraStream(
                 response.body,
-                response.headers.get("x-request-id") or response.headers.get("X-Request-Id"),
+                _request_id_from_headers(response.headers),
             )
         return _json_response(response)
 
@@ -1184,7 +1187,7 @@ class _Speech:
             request_options=request_options,
         )
         content_type = response.headers.get("content-type", response.headers.get("Content-Type", "application/octet-stream"))
-        request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+        request_id = _request_id_from_headers(response.headers)
         return AudioResponse(response.body, content_type, request_id)
 
 
