@@ -65,7 +65,7 @@ print(response["choices"][0]["message"]["content"])
 
 See each package's own README + CHANGELOG for surface-level docs.
 
-## Modality status (v0.1.2)
+## Modality status (v0.1.3)
 
 | Surface | Status |
 |---|---|

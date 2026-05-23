@@ -18,7 +18,23 @@ const forbiddenPatterns = [
   /\.test\.[cm]?[jt]sx?$/u,
   /^package\/src\//u,
   /^package\/node_modules\//u,
+  /^package\/\.github\//u,
   /^package\/\.npmrc$/u,
+  /^package\/AGENT-NOTES\.md$/u,
+];
+
+const forbiddenContentPatterns = [
+  /C:\\Users\\jaber/iu,
+  /RightNow-Full/iu,
+  /BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY/u,
+  /npm_[A-Za-z0-9]{20,}/u,
+  /pypi-[A-Za-z0-9_-]{40,}/u,
+  /ghp_[A-Za-z0-9_]{20,}/u,
+  /sk-ri-[A-Za-z0-9_-]{20,}/u,
+  /sourceMappingURL/u,
+  /sourcesContent/u,
+  /webpack:\/\//u,
+  /\.npmrc/u,
 ];
 
 function patternToRegex(pattern) {
@@ -56,6 +72,13 @@ function listTarball(tarball) {
     .sort();
 }
 
+function readTarballFile(tarball, file) {
+  return execFileSync("tar", ["-xOf", tarball, file], {
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024,
+  });
+}
+
 function verifyTarball(tarball) {
   const actualFiles = listTarball(tarball);
   const actualSet = new Set(actualFiles);
@@ -64,12 +87,21 @@ function verifyTarball(tarball) {
   const forbidden = actualFiles.filter((file) =>
     forbiddenPatterns.some((pattern) => pattern.test(file)),
   );
+  const forbiddenContent = [];
+  for (const file of actualFiles) {
+    const content = readTarballFile(tarball, file);
+    const matchedPattern = forbiddenContentPatterns.find((pattern) => pattern.test(content));
+    if (matchedPattern) forbiddenContent.push(`${file}: ${matchedPattern}`);
+  }
 
-  if (missing.length || unexpected.length || forbidden.length) {
+  if (missing.length || unexpected.length || forbidden.length || forbiddenContent.length) {
     console.error(`Package content verification failed for ${tarball}`);
     if (missing.length) console.error(`Missing files:\n${missing.join("\n")}`);
     if (unexpected.length) console.error(`Unexpected files:\n${unexpected.join("\n")}`);
     if (forbidden.length) console.error(`Forbidden files:\n${forbidden.join("\n")}`);
+    if (forbiddenContent.length) {
+      console.error(`Forbidden content:\n${forbiddenContent.join("\n")}`);
+    }
     process.exitCode = 1;
     return;
   }

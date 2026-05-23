@@ -10,7 +10,7 @@ Requires Node.js 18 or newer.
 npm install @runinfra/sdk
 ```
 
-## Modality status (v0.1.2)
+## Modality status (v0.1.3)
 
 This SDK is in **beta**. The surfaces below have different verification levels:
 

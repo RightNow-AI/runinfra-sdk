@@ -3,6 +3,19 @@
 All notable changes to the `runinfra` Python SDK are documented here. This
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-05-23
+
+### Security
+- Hardened the shared release path with pinned CI and publish build tooling,
+  SHA-pinned workflow actions, protected-branch dispatch checks, and an exact
+  version confirmation before any real registry publish.
+- Extended wheel and sdist verification to scan shipped files for source maps,
+  local machine paths, package tokens, private keys, and registry config leaks.
+
+### Changed
+- Added the repository Python dev requirements file used by CI and publish
+  workflows so package builds no longer float on latest build tool releases.
+
 ## [0.1.2] - 2026-05-23
 
 ### Changed
