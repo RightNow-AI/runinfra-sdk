@@ -35,7 +35,7 @@ Agent 4 owns SDK hardening, package safety, live contract proof, and release evi
 1. Need non-author approval before PR #9 can merge into protected `main`.
 2. Strict canary env is missing model IDs, embedding dimensions, image/TTS/ASR/voice coverage, audio fixtures, expected transcripts, and idempotency enablement.
 3. Advanced OpenAI proof still needs tools/schema outputs, stream options, image/audio variants, embedding dimensions/base64, and model-specific options.
-4. Python GA choice remains open: ship `AsyncRunInfra` or document sync-only as intentional.
+4. Python `RunInfra` is documented as sync-only for v0.1.4; `AsyncRunInfra` stays deferred until it has matching unit, streaming, live-canary, and clean-install coverage.
 5. Webhook delivery create/list stays out of the public SDK surface until real delivery endpoints exist.
 
 ## Guardrails
@@ -335,5 +335,19 @@ Fresh local verification:
 Current blockers remain:
 
 - This closes dev-tooling alert exposure but does not prove live multimodal GA readiness.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Python Sync-Only Posture Verified
+
+Verified the Python production-ergonomics decision for v0.1.4:
+
+- `python/README.md` documents that `RunInfra` is intentionally sync-only and tells FastAPI, Starlette, Django ASGI, and asyncio users to run SDK calls in a worker thread, task queue, or background job.
+- The README explicitly says `AsyncRunInfra` is not shipped until it has the same unit, streaming, live-canary, and package-install coverage as the sync client.
+- `python/tests/test_runinfra_sdk.py` includes `test_readme_documents_sync_only_async_runtime_guidance`, so the sync-only guidance remains a tested release artifact.
+
+Current blockers remain:
+
+- This closes the Python async/sync documentation choice for v0.1.4 but does not add an async client.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
