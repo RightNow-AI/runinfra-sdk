@@ -167,6 +167,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("`openai.params.chat.completions`");
     expect(readme).toContain("`openai.params.responses`");
     expect(readme).toContain("`openai.params.embeddings`");
+    expect(readme).toContain("`openai.params.images`");
+    expect(liveCanaries).toContain("openai.params.images");
     expect(readme).toContain("dimension control");
     expect(readme).toContain("`encoding_format` values other than `\"float\"`");
     expect(readme).toContain("`response_format` values other than `\"json\"` or `\"verbose_json\"`");
@@ -352,6 +354,14 @@ describe("RunInfra TypeScript SDK", () => {
       ).toEqual(expect.arrayContaining([
         "RUNINFRA_TTS_MODEL",
         "RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT",
+      ]));
+      expect(report.expectedRows).toContain("openai.params.images");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.images")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_IMAGE_MODEL",
+        "RUNINFRA_IMAGE_SIZE",
+        "RUNINFRA_IMAGE_RESPONSE_FORMAT",
       ]));
       expect(JSON.stringify(report)).not.toContain(fakeKey);
     } finally {

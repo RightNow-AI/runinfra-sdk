@@ -189,6 +189,22 @@ function assertImageEnvelope(response, label) {
   }
 }
 
+function assertImageOutputFormat(response, responseFormat, label) {
+  const first = assertObject(response.data[0], `${label}.data[0]`);
+  if (responseFormat === "url" && typeof first.url !== "string") {
+    throw new Error(`${label}.data[0] missing requested url output`);
+  }
+  if (responseFormat === "b64_json" && typeof first.b64_json !== "string") {
+    throw new Error(`${label}.data[0] missing requested b64_json output`);
+  }
+  if (responseFormat === "url" && typeof first.b64_json === "string") {
+    throw new Error(`${label}.data[0] included b64_json despite requested url output`);
+  }
+  if (responseFormat === "b64_json" && typeof first.url === "string") {
+    throw new Error(`${label}.data[0] included url despite requested b64_json output`);
+  }
+}
+
 function assertAudioContentType(value, label) {
   assertString(value, `${label}.contentType`);
   if (value.toLowerCase().includes("json")) {
@@ -335,6 +351,8 @@ const relevantEnv = [
   "RUNINFRA_EMBEDDING_MODEL",
   "RUNINFRA_EMBEDDING_DIMENSIONS",
   "RUNINFRA_IMAGE_MODEL",
+  "RUNINFRA_IMAGE_SIZE",
+  "RUNINFRA_IMAGE_RESPONSE_FORMAT",
   "RUNINFRA_TTS_MODEL",
   "RUNINFRA_TTS_VOICE",
   "RUNINFRA_TTS_REF_AUDIO",
@@ -407,6 +425,14 @@ function speechVoicePayload() {
     };
   }
   return null;
+}
+
+function imageResponseFormat() {
+  const responseFormat = env("RUNINFRA_IMAGE_RESPONSE_FORMAT");
+  if (!["url", "b64_json"].includes(responseFormat)) {
+    throw new Error("RUNINFRA_IMAGE_RESPONSE_FORMAT must be url or b64_json");
+  }
+  return responseFormat;
 }
 
 function speechRequirements() {
@@ -693,6 +719,22 @@ await record("images.generate", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], as
   assertImageEnvelope(response, "images response");
   assertRequestId(response._request_id, "images.generate");
   return { requestId: response._request_id, output: response.data[0].url ? "url" : "b64_json" };
+});
+
+await record("openai.params.images", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL", "RUNINFRA_IMAGE_SIZE", "RUNINFRA_IMAGE_RESPONSE_FORMAT"], async () => {
+  const responseFormat = imageResponseFormat();
+  const response = await client().images.generate({
+    model: imageModel,
+    prompt: "A small green square on a white background.",
+    n: 1,
+    size: env("RUNINFRA_IMAGE_SIZE"),
+    response_format: responseFormat,
+  });
+  assertObject(response, "images params response");
+  assertImageEnvelope(response, "images params response");
+  assertImageOutputFormat(response, responseFormat, "images params response");
+  assertRequestId(response._request_id, "openai.params.images");
+  return { requestId: response._request_id, output: responseFormat };
 });
 
 await record("audio.speech.create", speechRequirements, async () => {

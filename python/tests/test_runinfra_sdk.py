@@ -150,6 +150,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("`openai.params.chat.completions`", readme)
         self.assertIn("`openai.params.responses`", readme)
         self.assertIn("`openai.params.embeddings`", readme)
+        self.assertIn("`openai.params.images`", readme)
+        self.assertIn("openai.params.images", live_canaries)
         self.assertIn("dimension control", readme)
         self.assertIn('`encoding_format` values other than `"float"`', readme)
         self.assertIn('`response_format` values other than `"json"` or `"verbose_json"`', readme)

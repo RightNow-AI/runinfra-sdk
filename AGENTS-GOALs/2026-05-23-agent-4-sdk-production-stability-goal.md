@@ -120,3 +120,28 @@ Current blockers remain:
 
 - This does not prove live TTS until `RUNINFRA_TTS_MODEL` plus voice or reference-audio inputs are supplied.
 - Strict live canaries still require scoped production canary env and fixtures for the broader multimodal matrix.
+
+## 2026-05-23 Agent 4 Checkpoint: Image OpenAI Parameter Canary Coverage
+
+Added a strict image parameter row for OpenAI-compatible image output coverage:
+
+- New row: `openai.params.images`.
+- Strict readiness now tracks `RUNINFRA_IMAGE_SIZE` and `RUNINFRA_IMAGE_RESPONSE_FORMAT`.
+- TypeScript and Python canaries now send `size` plus `response_format` and assert exact image output matching for `url` versus `b64_json`.
+- TS/Python READMEs and `LIVE-CANARIES.md` now document the live-gated image parameter row.
+
+Fresh local verification:
+
+- Added failing TS preflight assertion first; it failed because `openai.params.images` was absent.
+- Review noted that image dimensions are not exposed in the response, so the row cannot prove the backend honored `size`; docs now state that size is sent under a strict readiness gate while `response_format` is asserted exactly.
+- TS tests passed, 113 tests.
+- Python tests passed, 101 tests plus 88 subtests.
+- TS typecheck and build passed.
+- Workflow policy, version sync, Python canary syntax, and `git diff --check` passed.
+- Source canary report passed parity: TypeScript 8 passed/20 skipped, Python 8 passed/20 skipped, expected rows 28.
+- Strict preflight remains intentionally blocked: 8 ready rows and 20 blocked rows.
+
+Current blockers remain:
+
+- This does not prove live image parameter support until `RUNINFRA_IMAGE_MODEL`, `RUNINFRA_IMAGE_SIZE`, and `RUNINFRA_IMAGE_RESPONSE_FORMAT` are supplied for a deployed image backend.
+- Strict live canaries still require scoped production canary env and fixtures for the broader multimodal matrix.

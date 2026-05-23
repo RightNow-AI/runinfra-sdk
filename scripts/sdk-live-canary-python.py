@@ -176,6 +176,18 @@ def assert_image_envelope(response: Dict[str, Any], label: str) -> None:
         raise AssertionError(f"{label}.data[0] missing url or b64_json")
 
 
+def assert_image_output_format(response: Dict[str, Any], response_format: str, label: str) -> None:
+    first = assert_object(response["data"][0], f"{label}.data[0]")
+    if response_format == "url" and not isinstance(first.get("url"), str):
+        raise AssertionError(f"{label}.data[0] missing requested url output")
+    if response_format == "b64_json" and not isinstance(first.get("b64_json"), str):
+        raise AssertionError(f"{label}.data[0] missing requested b64_json output")
+    if response_format == "url" and isinstance(first.get("b64_json"), str):
+        raise AssertionError(f"{label}.data[0] included b64_json despite requested url output")
+    if response_format == "b64_json" and isinstance(first.get("url"), str):
+        raise AssertionError(f"{label}.data[0] included url despite requested b64_json output")
+
+
 def assert_audio_content_type(value: Any, label: str) -> None:
     assert_string(value, f"{label}.content_type")
     if "json" in value.lower():
@@ -366,6 +378,8 @@ def main() -> int:
         "RUNINFRA_EMBEDDING_MODEL",
         "RUNINFRA_EMBEDDING_DIMENSIONS",
         "RUNINFRA_IMAGE_MODEL",
+        "RUNINFRA_IMAGE_SIZE",
+        "RUNINFRA_IMAGE_RESPONSE_FORMAT",
         "RUNINFRA_TTS_MODEL",
         "RUNINFRA_TTS_VOICE",
         "RUNINFRA_TTS_REF_AUDIO",
@@ -448,6 +462,11 @@ def main() -> int:
         lambda: _embeddings_params(client(), embedding_model),
     )
     record("images.generate", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], lambda: _images_generate(client(), image_model))
+    record(
+        "openai.params.images",
+        ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL", "RUNINFRA_IMAGE_SIZE", "RUNINFRA_IMAGE_RESPONSE_FORMAT"],
+        lambda: _images_params(client(), image_model),
+    )
     record("audio.speech.create", lambda: _speech_requirements(), lambda: _speech_create(client(), tts_model))
     record("audio.speech.binary_interfaces", lambda: _speech_requirements(), lambda: _speech_binary_interfaces(client(), tts_model))
     record(
@@ -673,6 +692,29 @@ def _images_generate(client: RunInfra, model: str) -> Dict[str, Any]:
     assert_image_envelope(response, "images response")
     assert_request_id(response.get("_request_id"), "images.generate")
     return {"requestId": response.get("_request_id"), "output": "url" if response["data"][0].get("url") else "b64_json"}
+
+
+def _image_response_format() -> str:
+    response_format = env("RUNINFRA_IMAGE_RESPONSE_FORMAT")
+    if response_format not in {"url", "b64_json"}:
+        raise AssertionError("RUNINFRA_IMAGE_RESPONSE_FORMAT must be url or b64_json")
+    return response_format
+
+
+def _images_params(client: RunInfra, model: str) -> Dict[str, Any]:
+    response_format = _image_response_format()
+    response = client.images.generate(
+        model=model,
+        prompt="A small green square on a white background.",
+        n=1,
+        size=env("RUNINFRA_IMAGE_SIZE"),
+        response_format=response_format,
+    )
+    assert_object(response, "images params response")
+    assert_image_envelope(response, "images params response")
+    assert_image_output_format(response, response_format, "images params response")
+    assert_request_id(response.get("_request_id"), "openai.params.images")
+    return {"requestId": response.get("_request_id"), "output": response_format}
 
 
 def _speech_requirements() -> List[str]:

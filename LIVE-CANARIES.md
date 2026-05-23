@@ -39,6 +39,8 @@ development diagnostics.
 | `RUNINFRA_EMBEDDING_MODEL` | Model for embeddings row |
 | `RUNINFRA_EMBEDDING_DIMENSIONS` | Positive integer embedding dimension count for the OpenAI parameter row |
 | `RUNINFRA_IMAGE_MODEL` | Model for image generation row |
+| `RUNINFRA_IMAGE_SIZE` | Image size for the OpenAI image parameter row |
+| `RUNINFRA_IMAGE_RESPONSE_FORMAT` | `url` or `b64_json` for the OpenAI image parameter row |
 | `RUNINFRA_TTS_MODEL` | Model for TTS row |
 | `RUNINFRA_TTS_VOICE` | Named TTS voice, if the deployment uses voices |
 | `RUNINFRA_TTS_REF_AUDIO` | Reference-audio URL/string, if the deployment uses voice cloning |
@@ -86,6 +88,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `embeddings.create`
 - `openai.params.embeddings`
 - `images.generate`
+- `openai.params.images`
 - `audio.speech.create`
 - `audio.speech.binary_interfaces`
 - `audio.transcriptions.create`
@@ -112,10 +115,12 @@ terminal events. Cancellation streaming rows consume a prefix and then close
 early to cover consumer cancellation. The
 OpenAI parameter rows prove chat
 sampling and metadata pass-through, Responses instructions, metadata,
-temperature, output-token controls, and embeddings `encoding_format: "float"`
-plus `dimensions`. Unsupported SDK request options and webhook delivery rows
-must fail closed without sending a network request. Webhook verification rows
-exercise both client-attached helpers and top-level package exports. The unsupported
+temperature, output-token controls, embeddings `encoding_format: "float"` plus
+`dimensions`, and exact image `response_format` output matching while sending
+an explicit image `size` to the backend.
+Unsupported SDK request options and webhook delivery rows must fail closed
+without sending a network request. Webhook verification rows exercise both
+client-attached helpers and top-level package exports. The unsupported
 body-parameter row sends a real OpenAI-style request with a RunInfra probe
 parameter and requires a clear traced 400/422 invalid-parameter style error
 instead of success, silent ignore, unrelated auth/credits/rate-limit/model

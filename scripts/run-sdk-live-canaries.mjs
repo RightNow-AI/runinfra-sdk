@@ -25,6 +25,7 @@ const expectedRows = [
   "embeddings.create",
   "openai.params.embeddings",
   "images.generate",
+  "openai.params.images",
   "audio.speech.create",
   "audio.speech.binary_interfaces",
   "audio.transcriptions.create",
@@ -78,6 +79,8 @@ const relevantEnv = [
   "RUNINFRA_EMBEDDING_MODEL",
   "RUNINFRA_EMBEDDING_DIMENSIONS",
   "RUNINFRA_IMAGE_MODEL",
+  "RUNINFRA_IMAGE_SIZE",
+  "RUNINFRA_IMAGE_RESPONSE_FORMAT",
   "RUNINFRA_TTS_MODEL",
   "RUNINFRA_TTS_VOICE",
   "RUNINFRA_TTS_REF_AUDIO",
@@ -154,6 +157,12 @@ function speechRequirements() {
   return missing;
 }
 
+function imageResponseFormatRequirement() {
+  const value = env("RUNINFRA_IMAGE_RESPONSE_FORMAT");
+  if (!value) return ["RUNINFRA_IMAGE_RESPONSE_FORMAT"];
+  return ["url", "b64_json"].includes(value) ? [] : ["RUNINFRA_IMAGE_RESPONSE_FORMAT url or b64_json"];
+}
+
 function voiceRequirements() {
   return [
     ...(!firstEnv("RUNINFRA_VOICE_PIPELINE_API_KEY", "RUNINFRA_PIPELINE_API_KEY", "RUNINFRA_API_KEY")
@@ -190,6 +199,10 @@ const rowReadinessRequirements = [
     ...positiveIntegerRequirement("RUNINFRA_EMBEDDING_DIMENSIONS"),
   ]],
   ["images.generate", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"])],
+  ["openai.params.images", () => [
+    ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL", "RUNINFRA_IMAGE_SIZE"]),
+    ...imageResponseFormatRequirement(),
+  ]],
   ["audio.speech.create", speechRequirements],
   ["audio.speech.binary_interfaces", speechRequirements],
   ["audio.transcriptions.create", () => [

@@ -124,7 +124,9 @@ The native SDK validates the minimum request fields locally, then forwards
 OpenAI-style JSON or multipart fields that preserve the typed response shape.
 The GA canary matrix now has dedicated rows for the verified subset:
 `openai.params.chat.completions`, `openai.params.responses`, and
-`openai.params.embeddings`.
+`openai.params.embeddings`, plus the live-gated `openai.params.images` row for
+exact output-format coverage while sending an explicit image size to the
+backend.
 
 Verified native SDK subset:
 
