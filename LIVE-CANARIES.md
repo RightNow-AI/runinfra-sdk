@@ -92,12 +92,13 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `idempotency.replay.responses`
 
 Each success row asserts `x-request-id` exposure and the relevant
-OpenAI-compatible envelope fields: chat ids/models/choices/messages, Responses
-ids/status/output or semantic stream event type/status, finite embedding
-vectors, image URL/base64 outputs, binary non-JSON TTS responses, and string
-ASR transcripts. Final streaming rows drain real SSE streams and require
-terminal events. Cancellation streaming rows consume a prefix and then close
-early to cover consumer cancellation. The OpenAI parameter rows prove chat
+OpenAI-compatible envelope fields: models list object plus data array, chat
+ids/models/choices/messages, Responses ids/status/output or semantic stream
+event type/status, finite embedding vectors, image URL/base64 outputs, binary
+non-JSON TTS responses, and string ASR transcripts. Final streaming rows drain
+real SSE streams and require terminal events. Cancellation streaming rows
+consume a prefix and then close early to cover consumer cancellation. The
+OpenAI parameter rows prove chat
 sampling and metadata pass-through, Responses instructions, metadata,
 temperature, output-token controls, and embeddings `encoding_format: "float"`
 plus `dimensions`. Unsupported SDK request options and webhook delivery rows

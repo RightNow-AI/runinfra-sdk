@@ -55,6 +55,11 @@ def assert_non_empty_list(value: Any, label: str) -> None:
         raise AssertionError(f"{label} must be a non-empty list")
 
 
+def assert_json_array(value: Any, label: str) -> None:
+    if not isinstance(value, list):
+        raise AssertionError(f"{label} must be an array")
+
+
 def assert_string(value: Any, label: str) -> None:
     if not isinstance(value, str) or not value:
         raise AssertionError(f"{label} must be a non-empty string")
@@ -484,7 +489,7 @@ def main() -> int:
 def _models_list(client: RunInfra) -> Dict[str, Any]:
     response = client.models.list()
     assert_object(response, "models.list response")
-    assert_non_empty_list(response.get("data"), "models.list data")
+    assert_json_array(response.get("data"), "models.list data")
     assert_request_id(response.get("_request_id"), "models.list")
     return {"requestId": response.get("_request_id"), "itemCount": len(response["data"])}
 

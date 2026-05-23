@@ -23,7 +23,7 @@ Goal: take the TS and Python SDKs from secure beta to production-grade GA withou
 - Merge is still blocked by GitHub `REVIEW_REQUIRED`; current auth user is the PR author, and GitHub rejected self-approval.
 - Current checkpoint hardens GA canaries/runtime: local webhook rows, report leak guard, Python request IDs/UTF-8 SSE, deterministic voice fixture proof, OpenAI parameter rows, unsupported body-parameter proof, and native response-shape guards for base64 embeddings / non-JSON ASR.
 - Local verification passed: TS typecheck/tests/build/pack/package scan/clean install, Python tests/build/twine/package scan/clean install, version sync, workflow policy, diff check, source/artifact canaries, and second-opinion review.
-- Canary proves 24-row parity with 6 local rows passed and 18 live rows skipped because prod env is absent. This is progress, not GA.
+- Canary: no-env artifact 6 pass/18 skip; RunPipe env artifact 7 pass/17 skip because model ids/fixtures are absent. Progress, not GA.
 - Code scanning API showed 0 open alerts and 0 open high/critical alerts. Default branch still reports 3 moderate Dependabot alerts.
 
 ## Remaining GA Gates

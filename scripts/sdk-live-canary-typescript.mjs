@@ -69,6 +69,12 @@ function assertArray(value, label) {
   }
 }
 
+function assertJsonArray(value, label) {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array`);
+  }
+}
+
 function assertString(value, label) {
   if (typeof value !== "string" || !value) {
     throw new Error(`${label} must be a non-empty string`);
@@ -421,7 +427,7 @@ async function record(name, requirements, fn) {
 await record("models.list", ["RUNINFRA_API_KEY"], async () => {
   const response = await client().models.list();
   assertObject(response, "models.list response");
-  assertArray(response.data, "models.list data");
+  assertJsonArray(response.data, "models.list data");
   assertRequestId(response._request_id, "models.list");
   return { requestId: response._request_id, itemCount: response.data.length };
 });
