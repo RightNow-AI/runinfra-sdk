@@ -261,6 +261,15 @@ describe("RunInfra TypeScript SDK", () => {
     );
   });
 
+  it("rejects non-boolean browser overrides before any request is sent", () => {
+    for (const dangerouslyAllowBrowser of ["true", "false", "0", 1, {}]) {
+      expect(() => new RunInfra({
+        apiKey: "sk-ri-test",
+        dangerouslyAllowBrowser: dangerouslyAllowBrowser as unknown as boolean,
+      })).toThrow(/dangerouslyAllowBrowser must be a boolean/);
+    }
+  });
+
   it("normalizes environment-style API keys before sending Authorization", async () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({ object: "list", data: [] }));
     const client = new RunInfra({
@@ -368,6 +377,22 @@ describe("RunInfra TypeScript SDK", () => {
     })).toThrow(/pipelineId must not be blank/);
   });
 
+  it("handles long trailing-slash base URLs without regex backtracking risk", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({ object: "list", data: [] }));
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      baseURL: `http://localhost:8787/v1${"/".repeat(10_000)}`,
+      fetch: fetcher,
+    });
+
+    await client.models.list();
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:8787/v1/models",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("does not double-append a pipeline id when baseURL is already scoped", async () => {
     const fetcher = vi.fn().mockResolvedValue(jsonResponse({ object: "list", data: [] }));
     const client = new RunInfra({
@@ -408,6 +433,44 @@ describe("RunInfra TypeScript SDK", () => {
         Object.defineProperty(globalThis, "document", originalDocument);
       } else {
         Reflect.deleteProperty(globalThis, "document");
+      }
+    }
+  });
+
+  it("fails closed in browser worker runtimes unless explicitly allowed", () => {
+    const originalSelf = Object.getOwnPropertyDescriptor(globalThis, "self");
+    const originalWorkerGlobalScope = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "WorkerGlobalScope",
+    );
+    function WorkerGlobalScope() {}
+    const workerGlobal = Object.create(WorkerGlobalScope.prototype);
+    Object.defineProperty(globalThis, "WorkerGlobalScope", {
+      configurable: true,
+      value: WorkerGlobalScope,
+    });
+    Object.defineProperty(globalThis, "self", {
+      configurable: true,
+      value: workerGlobal,
+    });
+
+    try {
+      expect(() => new RunInfra({ apiKey: "sk-ri-test" })).toThrow(
+        /server-side environments/,
+      );
+      expect(() =>
+        new RunInfra({ apiKey: "sk-ri-test", dangerouslyAllowBrowser: true }),
+      ).not.toThrow();
+    } finally {
+      if (originalSelf) {
+        Object.defineProperty(globalThis, "self", originalSelf);
+      } else {
+        Reflect.deleteProperty(globalThis, "self");
+      }
+      if (originalWorkerGlobalScope) {
+        Object.defineProperty(globalThis, "WorkerGlobalScope", originalWorkerGlobalScope);
+      } else {
+        Reflect.deleteProperty(globalThis, "WorkerGlobalScope");
       }
     }
   });

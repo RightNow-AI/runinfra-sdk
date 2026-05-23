@@ -3,6 +3,23 @@
 All notable changes to `@runinfra/sdk` are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-05-23
+
+### Security
+- Hardened browser credential safeguards by requiring
+  `dangerouslyAllowBrowser` to be an actual boolean and by failing closed in
+  browser worker runtimes unless explicitly allowed.
+- Replaced trailing-slash URL regex normalization with a bounded loop to avoid
+  regex backtracking risk on adversarial base URLs.
+
+### Changed
+- Pinned CI and publish build tooling with a TypeScript lockfile and Python
+  dev requirements file, and pinned workflow actions to immutable commits.
+- Made real publish dispatch default to dry-run and require an exact version
+  confirmation on `main`.
+- Extended package verification to scan shipped files for source maps, local
+  machine paths, package tokens, private keys, and registry config leaks.
+
 ## [0.1.2] - 2026-05-23
 
 ### Changed

@@ -14,7 +14,12 @@ constraints around OIDC trusted publishing and registry policy.
 >   package to exist before a Trusted Publisher rule can be added.
 > - **v0.1.1** — published from this repo via OIDC trusted publishing. Has
 >   Sigstore provenance + npm `--provenance` attestations.
-> - **v0.2.0+** — same path as 0.1.1.
+> - **v0.1.2** — hardened release gates, exact artifact allowlists, GitHub
+>   environment protection, and Node 24-compatible workflow actions.
+> - **v0.1.3** — hardened browser runtime guards, avoided URL normalization
+>   regex backtracking, pinned CI build tooling, SHA-pinned workflow actions,
+>   and made real publish dispatch require an exact version confirmation.
+> - **v0.2.0+** — same path as 0.1.3.
 >
 > Both registries' Trusted Publisher rules have been migrated to point at
 > THIS repo. The old rules pointing at `RunInfra-Landing` were removed.
@@ -23,8 +28,8 @@ constraints around OIDC trusted publishing and registry policy.
 
 | Registry | Package | Source dir | Latest |
 |---|---|---|---|
-| npm | `@runinfra/sdk` | `typescript/` | `0.1.1` |
-| PyPI | `runinfra` | `python/` | `0.1.1` |
+| npm | `@runinfra/sdk` | `typescript/` | `0.1.3` |
+| PyPI | `runinfra` | `python/` | `0.1.3` |
 
 Customer install:
 ```
@@ -52,9 +57,10 @@ pip install runinfra
 - `LICENSE`
 - `pyproject.toml`
 
-The CI workflow asserts both inclusions and forbids `.map`, `.env`, `.test.ts`,
-`.pyc` patterns via `tar -tf | grep -qE` checks. Don't widen `files[]` or
-`MANIFEST.in` without understanding what would ship.
+The CI workflow asserts exact allowlists and forbids `.map`, `.env`, tests,
+source folders, caches, `.npmrc`, and bytecode via
+`scripts/verify-npm-package.mjs` and `scripts/verify-python-package.py`. Don't
+widen `files[]` or `MANIFEST.in` without understanding what would ship.
 
 No source maps. `typescript/tsconfig.json` deliberately does NOT emit them.
 
@@ -67,6 +73,10 @@ combination:
 |---|---|
 | npm | `RightNow-AI/runinfra-sdk` + `publish.yml` + env `npm` |
 | PyPI | `RightNow-AI/runinfra-sdk` + `publish.yml` + env `pypi` |
+
+The GitHub `npm` and `pypi` environments require reviewer approval by
+`jaberjaber23`, prevent self-review, are restricted to protected branches,
+and have admin bypass disabled. Main branch protection also enforces admins.
 
 **Critical config gotchas (learned the hard way):**
 
@@ -171,11 +181,12 @@ identical proprietary source-available terms. Customers see them via:
 5. Trigger publish:
    ```
    gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main \
-     -f package=both -f dry_run=false
+     -f package=both -f dry_run=false -f confirm_version=<version>
    ```
 
    - `package`: `both` | `typescript` | `python`
    - `dry_run`: `true` (verify only) | `false` (actually publish)
+   - `confirm_version`: exact package version, required when `dry_run=false`
 
 6. Watch:
    ```

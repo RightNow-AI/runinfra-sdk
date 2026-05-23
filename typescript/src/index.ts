@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const RUNINFRA_SDK_VERSION = "0.1.2";
+export const RUNINFRA_SDK_VERSION = "0.1.3";
 const MAX_AUTOMATIC_RETRY_AFTER_MS = 60_000;
 
 export interface RunInfraOptions {
@@ -611,10 +611,10 @@ function baseUrlAlreadyHasPipelineId(baseURL: string, pipelineId: string): boole
   const encodedPipelineId = encodeURIComponent(pipelineId);
   try {
     const parsed = new URL(baseURL);
-    const lastSegment = parsed.pathname.replace(/\/+$/u, "").split("/").pop();
+    const lastSegment = stripTrailingSlashes(parsed.pathname).split("/").pop();
     return lastSegment === encodedPipelineId || decodeURIComponent(lastSegment ?? "") === pipelineId;
   } catch {
-    const trimmed = baseURL.replace(/\/+$/u, "");
+    const trimmed = stripTrailingSlashes(baseURL);
     return (
       trimmed.endsWith(`/${encodedPipelineId}`) ||
       trimmed.endsWith(`/${pipelineId}`)
@@ -622,11 +622,19 @@ function baseUrlAlreadyHasPipelineId(baseURL: string, pipelineId: string): boole
   }
 }
 
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
 function validateBaseURL(baseURL: unknown): string {
   if (typeof baseURL !== "string") {
     throw invalidRequestOption("baseURL must be a string");
   }
-  const trimmed = baseURL.trim().replace(/\/+$/, "");
+  const trimmed = stripTrailingSlashes(baseURL.trim());
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -1043,6 +1051,12 @@ function validateRunInfraOptions(options: RunInfraOptions): void {
       throw invalidRequestOption(`Unknown RunInfra option: ${key}`);
     }
   }
+  if (
+    options.dangerouslyAllowBrowser !== undefined &&
+    typeof options.dangerouslyAllowBrowser !== "boolean"
+  ) {
+    throw invalidRequestOption("dangerouslyAllowBrowser must be a boolean");
+  }
 }
 
 function generatedClientRequestId(): string {
@@ -1052,7 +1066,32 @@ function generatedClientRequestId(): string {
 }
 
 function isBrowserRuntime(): boolean {
-  return typeof globalThis.window === "object" && typeof globalThis.document === "object";
+  const runtime = globalThis as typeof globalThis & {
+    document?: unknown;
+    self?: unknown;
+    window?: unknown;
+    WorkerGlobalScope?: unknown;
+  };
+  if (
+    typeof runtime.window === "object" &&
+    runtime.window !== null &&
+    typeof runtime.document === "object" &&
+    runtime.document !== null
+  ) {
+    return true;
+  }
+  const workerGlobalScope = runtime.WorkerGlobalScope;
+  if (
+    typeof workerGlobalScope !== "function" ||
+    typeof runtime.self !== "object" ||
+    runtime.self === null
+  ) {
+    return false;
+  }
+  const prototype = (workerGlobalScope as { prototype?: unknown }).prototype;
+  return typeof prototype === "object" &&
+    prototype !== null &&
+    Object.prototype.isPrototypeOf.call(prototype, runtime.self);
 }
 
 function retryAfterMs(response: Response): number | null {
@@ -1215,7 +1254,7 @@ export class RunInfra {
   /**
    * Audio surfaces (text-to-speech + speech-to-text).
    *
-   * @experimental As of v0.1.2, these methods have NOT been verified end-to-end
+   * @experimental As of v0.1.3, these methods have NOT been verified end-to-end
    * against a live deployed pipeline in our canary suite. The HTTP envelope
    * matches the OpenAI Audio API contract and the request/response shapes are
    * stable, but you should test against your own deployed model before using
@@ -1238,7 +1277,7 @@ export class RunInfra {
   /**
    * Image generation surface.
    *
-   * @experimental As of v0.1.2, this method has NOT been verified end-to-end
+   * @experimental As of v0.1.3, this method has NOT been verified end-to-end
    * against a live deployed pipeline in our canary suite. The HTTP envelope
    * matches the OpenAI Images API contract, but you should test against your
    * own deployed model before using in production. Live-canary verification

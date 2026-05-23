@@ -22,6 +22,13 @@ FORBIDDEN_SUFFIXES = (
     ".pyo",
 )
 
+FORBIDDEN_CONTENT_RE = re.compile(
+    r"C:\\Users\\jaber|RightNow-Full|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|"
+    r"npm_[A-Za-z0-9]{20,}|pypi-[A-Za-z0-9_-]{40,}|ghp_[A-Za-z0-9_]{20,}|"
+    r"sk-ri-[A-Za-z0-9_-]{20,}|sourceMappingURL|sourcesContent|webpack://|\\.npmrc",
+    re.IGNORECASE,
+)
+
 SDIST_ALLOWED = {
     "CHANGELOG.md",
     "LICENSE",
@@ -65,9 +72,23 @@ def fail(label: str, messages: list[str]) -> None:
     raise SystemExit(1)
 
 
+def has_forbidden_content(content: bytes) -> bool:
+    try:
+        decoded = content.decode("utf-8")
+    except UnicodeDecodeError:
+        decoded = content.decode("utf-8", errors="ignore")
+    return FORBIDDEN_CONTENT_RE.search(decoded) is not None
+
+
 def verify_wheel(path: Path) -> None:
     with zipfile.ZipFile(path) as wheel:
-        files = sorted(normalize(name) for name in wheel.namelist() if not name.endswith("/"))
+        names = sorted(name for name in wheel.namelist() if not name.endswith("/"))
+        files = [normalize(name) for name in names]
+        forbidden_content = sorted(
+            normalize(name)
+            for name in names
+            if has_forbidden_content(wheel.read(name))
+        )
 
     missing = sorted(file for file in WHEEL_ALLOWED_FIXED if file not in files)
     unexpected = sorted(
@@ -84,6 +105,8 @@ def verify_wheel(path: Path) -> None:
         errors.append("Unexpected files:\n" + "\n".join(unexpected))
     if forbidden:
         errors.append("Forbidden files:\n" + "\n".join(forbidden))
+    if forbidden_content:
+        errors.append("Forbidden content:\n" + "\n".join(forbidden_content))
     if errors:
         fail(str(path), errors)
 
@@ -98,9 +121,16 @@ def strip_sdist_root(path: str) -> str:
 
 def verify_sdist(path: Path) -> None:
     with tarfile.open(path) as sdist:
-        files = sorted(strip_sdist_root(member.name) for member in sdist.getmembers() if member.isfile())
+        members = sorted((member for member in sdist.getmembers() if member.isfile()), key=lambda item: item.name)
+        files = [strip_sdist_root(member.name) for member in members]
+        forbidden_content = []
+        for member in members:
+            extracted = sdist.extractfile(member)
+            if extracted is not None and has_forbidden_content(extracted.read()):
+                forbidden_content.append(strip_sdist_root(member.name))
 
     files = [file for file in files if file]
+    forbidden_content = sorted(file for file in forbidden_content if file)
     missing = sorted(file for file in SDIST_ALLOWED if file not in files)
     unexpected = sorted(file for file in files if file not in SDIST_ALLOWED)
     forbidden = sorted(file for file in files if has_forbidden_path(file))
@@ -112,6 +142,8 @@ def verify_sdist(path: Path) -> None:
         errors.append("Unexpected files:\n" + "\n".join(unexpected))
     if forbidden:
         errors.append("Forbidden files:\n" + "\n".join(forbidden))
+    if forbidden_content:
+        errors.append("Forbidden content:\n" + "\n".join(forbidden_content))
     if errors:
         fail(str(path), errors)
 
