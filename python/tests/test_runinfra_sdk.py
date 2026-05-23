@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import importlib.util
 import json
 import math
 import unittest
@@ -238,6 +239,38 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertNotIn("pnpm verify:sdk-release", readme)
         self.assertNotIn("pnpm test:sdk-canary:live", readme)
         self.assertNotIn("RUNINFRA_SDK_CI_TOKEN", readme)
+
+    def test_python_package_verifier_blocks_broader_secret_and_path_families(self):
+        verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
+        spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        samples = [
+            "github_pat_" + "A" * 82,
+            "ghs_" + "A" * 36,
+            "AKIA" + "A" * 16,
+            "sk_live_" + "A" * 24,
+            "whsec_" + "A" * 32,
+            "eyJ" + "A" * 20 + "." + "B" * 20 + "." + "C" * 20,
+            "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+            "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+            r"C:\Users\someone\project",
+            "/Users/someone/project/.env.local",
+            "/home/someone/project/.env.local",
+            ".npmrc",
+            "package/.npmrc",
+            ".env",
+            ".env.local",
+            "package/.env.local",
+            "/tmp/project/.env.local",
+        ]
+
+        for sample in samples:
+            with self.subTest(sample=sample[:12]):
+                self.assertTrue(verifier.has_forbidden_content(sample.encode("utf-8")))
 
     def test_public_methods_expose_typed_response_annotations(self):
         client = RunInfra(api_key="sk-ri-test", transport=RecordingTransport())

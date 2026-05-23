@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const expectedFiles = new Set([
   "package/CHANGELOG.md",
@@ -21,20 +22,6 @@ const forbiddenPatterns = [
   /^package\/\.github\//u,
   /^package\/\.npmrc$/u,
   /^package\/AGENT-NOTES\.md$/u,
-];
-
-const forbiddenContentPatterns = [
-  /C:\\Users\\jaber/iu,
-  /RightNow-Full/iu,
-  /BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY/u,
-  /npm_[A-Za-z0-9]{20,}/u,
-  /pypi-[A-Za-z0-9_-]{40,}/u,
-  /ghp_[A-Za-z0-9_]{20,}/u,
-  /sk-ri-[A-Za-z0-9_-]{20,}/u,
-  /sourceMappingURL/u,
-  /sourcesContent/u,
-  /webpack:\/\//u,
-  /\.npmrc/u,
 ];
 
 function patternToRegex(pattern) {
@@ -90,8 +77,8 @@ function verifyTarball(tarball) {
   const forbiddenContent = [];
   for (const file of actualFiles) {
     const content = readTarballFile(tarball, file);
-    const matchedPattern = forbiddenContentPatterns.find((pattern) => pattern.test(content));
-    if (matchedPattern) forbiddenContent.push(`${file}: ${matchedPattern}`);
+    const matchedPattern = findForbiddenContent(content);
+    if (matchedPattern) forbiddenContent.push(`${file}: ${matchedPattern.label}`);
   }
 
   if (missing.length || unexpected.length || forbidden.length || forbiddenContent.length) {

@@ -321,6 +321,33 @@ describe("RunInfra TypeScript SDK", () => {
     expect("PIP_FIND_LINKS" in env).toBe(false);
   });
 
+  it("blocks broader credential and local-path families in release scanners", async () => {
+    const { findForbiddenContent } = await import("../../scripts/secret-scan-policy.mjs");
+    const samples = [
+      "github_pat_" + "A".repeat(82),
+      "ghs_" + "A".repeat(36),
+      "AKIA" + "A".repeat(16),
+      "sk_live_" + "A".repeat(24),
+      "whsec_" + "A".repeat(32),
+      "eyJ" + "A".repeat(20) + "." + "B".repeat(20) + "." + "C".repeat(20),
+      "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+      "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+      "C:\\Users\\someone\\project",
+      "/Users/someone/project/.env.local",
+      "/home/someone/project/.env.local",
+      ".npmrc",
+      "package/.npmrc",
+      ".env",
+      ".env.local",
+      "package/.env.local",
+      "/tmp/project/.env.local",
+    ];
+
+    for (const sample of samples) {
+      expect(findForbiddenContent(sample), sample).not.toBeNull();
+    }
+  });
+
   it("writes a redacted strict live-canary preflight report without running live calls", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
     const reportPath = join(tmp, "readiness.json");

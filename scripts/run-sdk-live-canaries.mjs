@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const args = process.argv.slice(2);
 const strict = args.includes("--strict");
@@ -501,22 +502,9 @@ function sensitiveEnvValues() {
 
 function assertReportDoesNotLeak(report) {
   const serialized = JSON.stringify(report);
-  const forbiddenPatterns = [
-    /C:\\Users\\jaber/iu,
-    /RightNow-Full/iu,
-    /BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY/u,
-    /npm_[A-Za-z0-9]{20,}/u,
-    /pypi-[A-Za-z0-9_-]{40,}/u,
-    /ghp_[A-Za-z0-9_]{20,}/u,
-    /sk-ri-[A-Za-z0-9_-]{20,}/u,
-    /sourceMappingURL/u,
-    /sourcesContent/u,
-    /webpack:\/\//u,
-    /\.npmrc/u,
-  ];
-  const matchedPattern = forbiddenPatterns.find((pattern) => pattern.test(serialized));
+  const matchedPattern = findForbiddenContent(serialized);
   if (matchedPattern) {
-    throw new Error(`live canary report contains forbidden content: ${matchedPattern}`);
+    throw new Error(`live canary report contains forbidden content: ${matchedPattern.label}`);
   }
   const leakedEnvValue = sensitiveEnvValues().find((value) => serialized.includes(value));
   if (leakedEnvValue) {

@@ -201,3 +201,40 @@ Current blockers remain:
 
 - This does not prove live TTS parameter support until `RUNINFRA_TTS_MODEL`, valid voice/reference inputs, and a valid `RUNINFRA_TTS_RESPONSE_FORMAT` are supplied for a deployed TTS backend.
 - Strict live canaries still require scoped production canary env and fixtures for the broader multimodal matrix.
+
+## 2026-05-23 Agent 4 Checkpoint: Broader Artifact And Canary Leak Scanners
+
+Added release-gate scanner hardening:
+
+- New shared JS scanner policy: `scripts/secret-scan-policy.mjs`.
+- npm package verification now uses the shared scanner instead of a private narrow regex list.
+- live canary report leak checks now use the same shared scanner before reports are accepted.
+- Python wheel/sdist verification now blocks the same broader credential and local-path families.
+- Added direct TS/Python tests for GitHub fine-grained/session tokens, AWS access keys, Stripe-style keys, webhook signing secrets, JWT-looking values, RunInfra/generic secret keys, Google/Slack token shapes, Windows/macOS/Linux user paths, `.npmrc`, `.env`, `.env.local`, encrypted private keys, and PGP private key blocks.
+
+Review fixes:
+
+- Reviewer found Python scanner parity was broken because `.npmrc` and `.env` were over-escaped; added direct samples and fixed the regex.
+- Reviewer found `whsec_` webhook signing secrets and encrypted/PGP private key headers were not covered; added direct samples and fixed both JS and Python scanners.
+- Reviewer noted broader local-path rules can false-positive future README examples. This is accepted for release artifacts because the current production bar is "fail closed on local paths"; current package artifacts pass.
+
+Fresh local verification:
+
+- TS tests passed, 115 tests.
+- Python tests passed, 102 tests plus 105 subtests.
+- TS typecheck and build passed.
+- Python verifier and live Python canary syntax passed.
+- Workflow policy and version sync passed.
+- Fresh npm tarball built and passed `verify-npm-package`.
+- Fresh Python wheel/sdist built, passed `verify-python-package`, and passed `twine check`.
+- Clean artifact install/import passed for npm and Python.
+- Source canary report passed parity: TypeScript 8 passed/22 skipped, Python 8 passed/22 skipped, expected rows 30.
+- Artifact canary report passed parity with the same 8 passed/22 skipped shape.
+- Strict preflight remains intentionally blocked: 8 ready rows and 22 blocked rows.
+- `git diff --check` passed with CRLF warnings only.
+
+Current blockers remain:
+
+- This scanner checkpoint improves release safety but does not prove live multimodal GA readiness.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, and idempotency replay.
