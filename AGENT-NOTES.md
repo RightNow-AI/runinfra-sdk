@@ -219,10 +219,12 @@ events, and prove idempotency replay with explicit gateway evidence.
 
 7. Verify post-publish:
    ```
+   node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>
    npm view @runinfra/sdk@<version> dist.attestations
    pip index versions runinfra
    ```
 
+   Registry install/import checks must pass for the exact released version.
    `dist.attestations` should be a non-empty JSON blob (Sigstore-signed
    provenance). PyPI provenance is visible at
    https://pypi.org/manage/project/runinfra/publishing/.

@@ -10,6 +10,14 @@ const mode = args.includes("--registry") ? "registry" : optionValue("--mode") ??
 const packageSelection = optionValue("--package") ?? "both";
 const keepTmp = args.includes("--keep-tmp");
 const version = optionValue("--version") ?? readNpmVersion();
+const registryInstallAttempts = parsePositiveInteger(
+  optionValue("--registry-attempts") ?? "6",
+  "--registry-attempts",
+);
+const registryRetryDelayMs = parsePositiveInteger(
+  optionValue("--registry-retry-delay-ms") ?? "10000",
+  "--registry-retry-delay-ms",
+);
 
 if (!["artifact", "registry"].includes(mode)) {
   fail(`Unsupported mode "${mode}". Use --mode artifact or --mode registry.`);
@@ -31,6 +39,13 @@ function readNpmVersion() {
     fail("typescript/package.json is missing a package version.");
   }
   return packageJson.version;
+}
+
+function parsePositiveInteger(value, label) {
+  if (!/^[1-9][0-9]*$/u.test(value)) {
+    fail(`${label} must be a positive integer.`);
+  }
+  return Number(value);
 }
 
 function fail(message) {
@@ -56,7 +71,11 @@ function newestMatching(dir, pattern, label) {
   return matches[0].path;
 }
 
-function run(command, commandArgs, cwd) {
+function sleepMs(delayMs) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+}
+
+function run(command, commandArgs, cwd, options = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd,
     env: {
@@ -68,7 +87,29 @@ function run(command, commandArgs, cwd) {
     stdio: "inherit",
   });
   if (result.error || result.status !== 0) {
+    if (options.allowFailure === true) {
+      return false;
+    }
     fail(`Clean install command failed: ${command} ${commandArgs.slice(0, 2).join(" ")}`.trim());
+  }
+  return true;
+}
+
+function runRegistryInstall(command, commandArgs, cwd, label) {
+  if (mode !== "registry") {
+    run(command, commandArgs, cwd);
+    return;
+  }
+  for (let attempt = 1; attempt <= registryInstallAttempts; attempt += 1) {
+    const isLastAttempt = attempt === registryInstallAttempts;
+    const ok = run(command, commandArgs, cwd, { allowFailure: !isLastAttempt });
+    if (ok) {
+      return;
+    }
+    console.error(
+      `${label} registry install attempt ${attempt}/${registryInstallAttempts} failed; retrying in ${registryRetryDelayMs}ms.`,
+    );
+    sleepMs(registryRetryDelayMs);
   }
 }
 
@@ -111,7 +152,7 @@ function verifyNpm(workspace) {
     : resolve(optionValue("--npm-tarball") ?? newestMatching("typescript", /^runinfra-sdk-.+\.tgz$/u, "npm"));
 
   const npm = npmCommand();
-  run(npm.command, [
+  runRegistryInstall(npm.command, [
     ...npm.prefixArgs,
     "install",
     "--ignore-scripts",
@@ -119,7 +160,7 @@ function verifyNpm(workspace) {
     "--no-fund",
     "--package-lock=false",
     installSpec,
-  ], npmDir);
+  ], npmDir, "npm");
   run(process.execPath, ["--input-type=module", "-e", `
 import { RUNINFRA_SDK_VERSION, RunInfra, UnsupportedOperationError } from "@runinfra/sdk";
 if (RUNINFRA_SDK_VERSION !== "${version}") {
@@ -174,7 +215,7 @@ function verifyPython(workspace) {
         "--no-deps",
         resolve(optionValue("--python-wheel") ?? newestMatching("python/dist", /^runinfra-.+\.whl$/u, "Python wheel")),
       ];
-  run(python, installArgs, pythonDir);
+  runRegistryInstall(python, installArgs, pythonDir, "PyPI");
   run(python, ["-c", `
 from runinfra import RunInfra, UnsupportedOperationError, __version__
 if __version__ != "${version}":

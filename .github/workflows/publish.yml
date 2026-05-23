@@ -112,6 +112,10 @@ jobs:
           npm config set registry https://registry.npmjs.org/
           npm publish runinfra-sdk-*.tgz --access public --provenance
 
+      - name: Verify published npm install/import
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: node scripts/verify-clean-installs.mjs --package typescript --mode registry
+
       - name: Dry-run summary
         if: ${{ github.event.inputs.dry_run == 'true' }}
         working-directory: typescript
@@ -179,6 +183,10 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         with:
           packages-dir: python/dist
+
+      - name: Verify published PyPI install/import
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: node scripts/verify-clean-installs.mjs --package python --mode registry
 
       - name: Dry-run summary
         if: ${{ github.event.inputs.dry_run == 'true' }}

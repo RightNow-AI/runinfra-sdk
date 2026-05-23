@@ -98,6 +98,12 @@ const checks = [
       /verify-clean-installs\.mjs --package python --mode artifact/u.test(publish),
   },
   {
+    label: "publish workflow verifies published registry installs",
+    ok:
+      /Verify published npm install\/import[\s\S]*?github\.event\.inputs\.dry_run != 'true'[\s\S]*?verify-clean-installs\.mjs --package typescript --mode registry/u.test(publishNpmJob) &&
+      /Verify published PyPI install\/import[\s\S]*?github\.event\.inputs\.dry_run != 'true'[\s\S]*?verify-clean-installs\.mjs --package python --mode registry/u.test(publishPypiJob),
+  },
+  {
     label: "workflows use frozen TypeScript lockfile installs",
     ok:
       /pnpm install --frozen-lockfile/u.test(ci) &&

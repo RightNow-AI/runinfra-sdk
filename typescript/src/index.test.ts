@@ -218,6 +218,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode artifact");
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
     expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>");
+    expect(readme).toContain("A real publish must also prove registry install/import");
+    expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>");
     expect(readme).toContain("Run the strict live canary matrix against the exact production gateway");
     expect(readme).toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");

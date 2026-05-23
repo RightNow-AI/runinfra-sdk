@@ -322,6 +322,14 @@ Actual publishing must use the same workflow with `dry_run=false` after CI,
 review, and environment approval. Do not use npm or PyPI tokens. OIDC trusted
 publishing is the only supported publish path.
 
+A real publish must also prove registry install/import of the exact released
+version. The publish workflow runs per-package registry checks after each
+successful publish; for manual post-publish verification:
+
+```bash
+node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>
+```
+
 Run the strict live canary matrix against the exact production gateway,
 workspace key, pipeline key, and deployed models that will serve customers. See
 the root `LIVE-CANARIES.md` for required env vars, strict TS/Python row parity,

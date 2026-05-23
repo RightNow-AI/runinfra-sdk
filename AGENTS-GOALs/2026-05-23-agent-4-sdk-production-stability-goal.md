@@ -3,47 +3,44 @@
 Date: 2026-05-23
 Agent: 4
 Repo: `runinfra-sdk`
-Goal: take the TS and Python SDKs from secure beta to production-grade GA without weakening security, provenance, or live contract coverage.
+Branch/PR: `hardening/sdk-ga-canary-gates`, PR `RightNow-AI/runinfra-sdk#9`
 
-## Done Means
+## Goal
 
-- TS and Python SDKs match the live RunInfra API contract.
-- Packed artifacts and registry installs work in clean consumers.
-- Strict live canaries prove models, chat, responses, embeddings, images, TTS, ASR, voice pipeline, streaming final/cancel, errors, fail-closed webhooks, local webhook helpers, and idempotency replay.
-- No source maps, local paths, secrets, API keys, `.env`, `.npmrc`, private config, tests, caches, or internal build artifacts leak into npm, PyPI, CI logs, canary reports, or metadata.
-- CI gates are green: TS tests/build/package verify, Python tests/build/twine verify, clean installs, workflow policy, version sync, and default CodeQL.
-- Trusted publishing stays OIDC/provenance based. No long-lived npm/PyPI publish tokens.
-- Merge happens through protected PR into `main`; local state is reconciled without destructive reset.
+Move TS/Python SDKs from secure beta to production-grade GA. Done means clean npm/PyPI installs, live API contract match, strict artifact canaries, protected PR merge, OIDC/provenance release, and no leakage of secrets, source maps, internal source, private config, local paths, caches, or fixtures.
 
-## Current Verified State
+Agent 4 owns SDK hardening, package safety, live contract proof, and release evidence. Read state first, patch narrowly, test artifacts, get review for risky changes, and never claim production-ready with skipped or unverified canaries.
 
-- PR branch: `hardening/sdk-ga-canary-gates`; PR: `RightNow-AI/runinfra-sdk#9`.
-- Direct push to `main` is blocked by branch protection, as desired.
-- Commit `b1f9c09` fixed the CodeQL default-setup conflict by removing the advanced workflow and documenting GitHub default CodeQL. PR checks went green after push.
-- Merge is still blocked by GitHub `REVIEW_REQUIRED`; current auth user is the PR author, and GitHub rejected self-approval.
-- Current checkpoint hardens GA canaries/runtime: local webhook rows, report leak guard, Python request IDs/UTF-8 SSE, deterministic voice fixture proof, OpenAI parameter rows, unsupported body-parameter proof, and native response-shape guards for base64 embeddings / non-JSON ASR.
-- Local verification passed: TS typecheck/tests/build/pack/package scan/clean install, Python tests/build/twine/package scan/clean install, version sync, workflow policy, diff check, source/artifact canaries, and second-opinion review.
-- Canary: no-env artifact 6 pass/18 skip; RunPipe env artifact 7 pass/17 skip because model ids/fixtures are absent. Progress, not GA.
-- Code scanning API showed 0 open alerts and 0 open high/critical alerts. Default branch still reports 3 moderate Dependabot alerts.
+## Verified State
 
-## Remaining GA Gates
+- Local `main` is ahead of `origin/main` by 6 commits; PR #9 contains the SDK GA canary/security work.
+- PR checks are green: TS SDK, Python SDK, CodeQL/default code scanning, package/build/test gates.
+- Branch protection is active: merge is blocked by `REVIEW_REQUIRED`; current auth user cannot self-approve.
+- Code scanning showed 0 open alerts and 0 open high/critical alerts. Default branch still has 3 moderate Dependabot alerts.
+- Current RunPipe canary env proves gateway/auth/request-id/models-list shape only. It lacks live model IDs/audio fixtures, so strict GA is incomplete.
+- `/models` returns a valid object with empty `data`; shape proof only, not model coverage.
+- Registry install/import gate is enforced after real publish. Local proof: `node scripts/verify-clean-installs.mjs --package both --mode registry --version 0.1.3 --registry-attempts 1` passed for npm/PyPI 0.1.3.
 
-- Get non-author approval and merge PR #9 through branch protection.
-- Run strict production artifact canaries with all env present, including ASR and voice fixtures/expected text.
-- Prove images, TTS, ASR, and voice pipeline with deployed model/backend coverage before removing experimental labels.
-- Expand strict-live OpenAI-compatible parameter coverage beyond the verified native subset: tools/schema outputs, stream options, embeddings dimensions/base64, image/audio streaming, and model-specific advanced options.
-- Decide GA Python ergonomics: ship `AsyncRunInfra` or keep sync-only documented as a deliberate GA limitation.
-- Keep webhook delivery create/list fail-closed unless real delivery endpoints ship.
+## Production Bar
 
-## Do Not Do
+- Registry consumer installs verify imports and versions for npm and PyPI.
+- SDKs cover/document chat, responses, embeddings, images, TTS, ASR, voice pipeline, streaming, errors, idempotency, request IDs, retries, and fail-closed webhooks.
+- OpenAI-compatible calls prove supported parameters and clear unsupported errors without hiding auth, credit, rate-limit, model, or deployment failures.
+- Strict artifact canaries pass with no required skips for LLM, responses, embeddings, image, TTS, ASR, voice, streaming final/cancel, idempotency replay, error shape, and install/import.
+- Package scans prove no source maps, `.env`, `.npmrc`, secrets, local paths, private config, caches, fixtures, or internal files leak.
 
-- Do not publish with pasted long-lived npm/PyPI tokens.
-- Do not bypass branch protection, self-approve, force-push `main`, or weaken checks.
-- Do not claim GA if any canary row is skipped or unverified.
-- Do not hide contract mismatches by weakening tests.
-- Do not add source maps or internal source bundles to packages.
-- Do not use destructive git commands to reconcile local `main`.
+## Remaining Blockers
 
-## Method
+1. Need non-author approval before PR #9 can merge into protected `main`.
+2. Strict canary env is missing model IDs, embedding dimensions, image/TTS/ASR/voice coverage, audio fixtures, expected transcripts, and idempotency enablement.
+3. Advanced OpenAI proof still needs tools/schema outputs, stream options, image/audio variants, embedding dimensions/base64, and model-specific options.
+4. Python GA choice remains open: ship `AsyncRunInfra` or document sync-only as intentional.
+5. Webhook delivery create/list stays fail-closed until real delivery endpoints exist.
 
-Read current state first, patch narrowly, verify locally, run adversarial review for broad changes, then merge only through the protected PR path. If a gate needs missing live credentials, fixtures, or external approval, mark it explicitly instead of calling the SDK production-ready.
+## Guardrails
+
+Inspect git/PR/checks before claims. Fix only GA-linked contract, security, packaging, canary, or docs gaps. Verify tests, type/build, scans, clean installs, and source/artifact canaries. Review changes over 2 files, over 100 lines, or release/architecture decisions. Merge only through protected PR after non-author approval. Publish only via trusted workflow after merge and strict canary proof. Do not bypass protection, self-approve, force-push `main`, weaken checks/tests, use pasted registry tokens, ship source maps/internal bundles, or run destructive git reconciliation.
+
+## Next Checkpoint
+
+Collect strict production canary env/fixtures, then rerun artifact canaries until every required SDK path is proven. If env stays incomplete, improve redacted preflight/readiness reporting without exposing values.

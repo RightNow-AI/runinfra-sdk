@@ -213,6 +213,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>",
             readme,
         )
+        self.assertIn("A real publish must also prove registry install/import", readme)
+        self.assertIn(
+            "node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>",
+            readme,
+        )
         self.assertIn("Run the strict live canary matrix against the exact production gateway", readme)
         self.assertIn("Do not use npm or PyPI tokens", readme)
         self.assertNotIn("pnpm verify:sdk-release", readme)
