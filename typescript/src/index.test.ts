@@ -307,6 +307,39 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("Python cancellation rows close the active iterator");
   });
 
+  it("keeps child canaries in parity for slow-consumer streaming coverage", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    for (const row of ["chat.completions.stream.slow_consumer", "responses.stream.slow_consumer"]) {
+      expect(runner).toContain(`"${row}"`);
+      expect(typescriptCanary).toContain(`record("${row}"`);
+      expect(pythonCanary).toContain(`"${row}"`);
+      expect(liveCanaries).toContain(row);
+    }
+
+    expect(runner).toContain("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS");
+    expect(typescriptCanary).toContain("slowConsumerDelayMs");
+    expect(typescriptCanary).toMatch(
+      /const relevantEnv = \[[\s\S]*"RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS"/,
+    );
+    expect(typescriptCanary).toContain("function slowStreamRequirements()");
+    expect(typescriptCanary).toContain("sleepWithinDeadline");
+    expect(typescriptCanary).toMatch(
+      /record\("chat\.completions\.stream\.slow_consumer", slowStreamRequirements, async \(\) => \{\s+const delayMs = slowConsumerDelayMs\(\);\s+const stream = await client\(\)\.chat\.completions\.create/,
+    );
+    expect(typescriptCanary).toMatch(
+      /record\("responses\.stream\.slow_consumer", slowStreamRequirements, async \(\) => \{\s+const delayMs = slowConsumerDelayMs\(\);\s+const stream = await client\(\)\.responses\.create/,
+    );
+    expect(pythonCanary).toContain("slow_consumer_delay_seconds");
+    expect(pythonCanary).toContain("def slow_stream_requirements()");
+    expect(liveCanaries).toContain("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS");
+    expect(liveCanaries).toContain("Slow-consumer streaming rows");
+    expect(liveCanaries).toContain("bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`");
+  });
+
   it("documents public-repo production promotion without stale monorepo commands", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
@@ -643,6 +676,93 @@ describe("RunInfra TypeScript SDK", () => {
       } finally {
         rmSync(tmp, { recursive: true, force: true });
       }
+    }
+  });
+
+  it("blocks slow-consumer stream rows on invalid optional delay input", () => {
+    for (const delay of ["not-a-delay", "6000"]) {
+      const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
+      const reportPath = join(tmp, "readiness.json");
+      try {
+        const result = spawnSync(process.execPath, [
+          "../scripts/run-sdk-live-canaries.mjs",
+          "--preflight",
+          "--strict",
+          "--package-source",
+          "source",
+          "--report",
+          reportPath,
+        ], {
+          cwd: new URL("..", import.meta.url),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            RUNINFRA_API_KEY: "sk-ri-preflight-secret-1234567890",
+            RUNINFRA_LLM_MODEL: "llm-preflight-model",
+            RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS: delay,
+            RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "",
+          },
+        });
+
+        expect(result.status).toBe(1);
+        const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+          readiness?: {
+            env?: Record<string, string>;
+            rows?: Array<{ name: string; status: string; missing?: string[] }>;
+          };
+        };
+
+        expect(report.readiness?.env?.RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS).toBe("set_redacted");
+        expect(
+          report.readiness?.rows?.find((row) => row.name === "chat.completions.stream.slow_consumer")?.missing,
+        ).toContain("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000");
+        expect(
+          report.readiness?.rows?.find((row) => row.name === "responses.stream.slow_consumer")?.missing,
+        ).toContain("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000");
+        expect(
+          report.readiness?.rows?.find((row) => row.name === "chat.completions.stream.final")?.missing,
+        ).toEqual([]);
+        expect(JSON.stringify(report)).not.toContain(delay);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("blocks full live-canary runs on invalid optional slow-consumer delay before child canaries spawn", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-canary-config-"));
+    const reportPath = join(tmp, "live-canary.json");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_BASE_URL: "http://localhost:1/v1",
+          RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS: "6000",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+        reports?: unknown[];
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain(
+        "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000",
+      );
+      expect(report.reports).toEqual([]);
+      expect(JSON.stringify(report)).not.toContain("6000");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
   });
 

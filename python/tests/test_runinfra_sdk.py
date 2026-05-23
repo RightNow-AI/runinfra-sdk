@@ -3,6 +3,7 @@ import hmac
 import importlib.util
 import json
 import math
+import os
 import unittest
 from collections import UserDict
 from email.utils import formatdate
@@ -244,6 +245,66 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Streaming transport-level backend cancellation is best effort", readme)
         self.assertRegex(live_canaries, r"TypeScript cancellation rows break out of\s+`for await`")
         self.assertIn("Python cancellation rows close the active iterator", live_canaries)
+
+    def test_child_canaries_cover_slow_consumer_streaming_rows(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+
+        for row in ("chat.completions.stream.slow_consumer", "responses.stream.slow_consumer"):
+            self.assertIn(f'"{row}"', runner)
+            self.assertIn(f'record("{row}"', typescript_canary)
+            self.assertIn(f'"{row}"', python_canary)
+            self.assertIn(row, live_canaries)
+
+        self.assertIn("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS", runner)
+        self.assertIn("slowConsumerDelayMs", typescript_canary)
+        self.assertIn("slow_consumer_delay_seconds", python_canary)
+        self.assertIn("slow_stream_requirements", python_canary)
+        self.assertIn("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS", live_canaries)
+        self.assertIn("Slow-consumer streaming rows", live_canaries)
+        self.assertIn("bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`", live_canaries)
+
+    def test_python_live_canary_validates_slow_consumer_delay_before_opening_stream(self):
+        canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
+        spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        live_canary = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(live_canary)
+
+        class ExplodingCompletions:
+            def create(self, **_kwargs):
+                raise AssertionError("stream opened before delay validation")
+
+        class FakeChat:
+            completions = ExplodingCompletions()
+
+        class FakeClient:
+            chat = FakeChat()
+
+        with patch.dict(os.environ, {"RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS": "6000"}):
+            with self.assertRaisesRegex(AssertionError, "non-negative integer <= 5000"):
+                live_canary._chat_stream_slow_consumer(FakeClient(), "model")
+
+    def test_python_live_canary_bounds_slow_consumer_sleep_to_row_deadline(self):
+        canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
+        spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        live_canary = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(live_canary)
+
+        with patch.dict(
+            os.environ,
+            {
+                "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS": "2",
+                "RUNINFRA_CANARY_TIMEOUT_SECONDS": "0.001",
+            },
+        ):
+            with self.assertRaisesRegex(AssertionError, "slow-consumer timed out"):
+                live_canary.read_slow_stream([{"event": 1}], "test slow stream", lambda _event: True)
 
     def test_python_live_canary_closes_active_stream_iterator_on_cancellation(self):
         canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")

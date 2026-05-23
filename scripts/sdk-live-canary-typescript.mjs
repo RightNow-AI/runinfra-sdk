@@ -298,6 +298,62 @@ async function readFullStream(stream, label, hasTerminalEvent) {
   return events;
 }
 
+const slowConsumerDelayRequirementMessage = "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000";
+
+function slowConsumerDelayRequirement() {
+  const value = env("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS");
+  if (!value) return [];
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    return [slowConsumerDelayRequirementMessage];
+  }
+  return Number(value) <= 5000 ? [] : [slowConsumerDelayRequirementMessage];
+}
+
+function slowConsumerDelayMs() {
+  const value = env("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS");
+  if (!value) return 25;
+  if (slowConsumerDelayRequirement().length) {
+    throw new Error("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS must be a non-negative integer <= 5000");
+  }
+  return Number(value);
+}
+
+function slowStreamRequirements() {
+  return [
+    ...["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"].filter((name) => !env(name)),
+    ...slowConsumerDelayRequirement(),
+  ];
+}
+
+async function sleep(ms) {
+  if (ms <= 0) return;
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+async function sleepWithinDeadline(ms, deadlineMs, label) {
+  if (ms <= 0) return;
+  const remainingMs = Math.ceil(deadlineMs - performance.now());
+  if (remainingMs <= 0 || ms > remainingMs) {
+    throw new Error(`${label} slow-consumer timed out`);
+  }
+  await sleep(ms);
+}
+
+async function readSlowStream(stream, label, hasTerminalEvent, delayMs) {
+  const events = [];
+  const deadlineMs = performance.now() + canaryTimeoutMs();
+  for await (const event of stream) {
+    events.push(assertObject(event, `${label} event`));
+    if (events.length > 200) throw new Error(`${label} exceeded 200 events without ending`);
+    await sleepWithinDeadline(delayMs, deadlineMs, label);
+  }
+  assertArray(events, `${label} events`);
+  if (!events.some(hasTerminalEvent)) {
+    throw new Error(`${label} did not emit a terminal event`);
+  }
+  return { events, delayMs: "set_redacted" };
+}
+
 function isChatTerminalEvent(event) {
   return Boolean(
     event?.choices?.some?.((choice) =>
@@ -347,6 +403,7 @@ const relevantEnv = [
   "RUNINFRA_API_KEY",
   "RUNINFRA_BASE_URL",
   "RUNINFRA_CANARY_TIMEOUT_SECONDS",
+  "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS",
   "RUNINFRA_LLM_MODEL",
   "RUNINFRA_EMBEDDING_MODEL",
   "RUNINFRA_EMBEDDING_DIMENSIONS",
@@ -641,6 +698,22 @@ await record("chat.completions.stream.cancel", ["RUNINFRA_API_KEY", "RUNINFRA_LL
   return { requestId: stream.requestId, eventCount: events.length };
 });
 
+await record("chat.completions.stream.slow_consumer", slowStreamRequirements, async () => {
+  const delayMs = slowConsumerDelayMs();
+  const stream = await client().chat.completions.create({
+    model: llmModel,
+    messages: [{ role: "user", content: "Reply with one short sentence." }],
+    temperature: 0,
+    max_tokens: 32,
+    stream: true,
+  });
+  assertRequestId(stream.requestId, "chat.completions.stream.slow_consumer");
+  const result = await readSlowStream(stream, "chat slow-consumer stream", isChatTerminalEvent, delayMs);
+  const { events } = result;
+  events.forEach((event, index) => assertChatStreamEnvelope(event, `chat slow-consumer stream event ${index}`));
+  return { requestId: stream.requestId, eventCount: events.length, slowConsumerDelayMs: result.delayMs };
+});
+
 await record("responses.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
   const response = await client().responses.create({
     model: llmModel,
@@ -694,6 +767,21 @@ await record("responses.stream.cancel", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL
   const events = await readSomeStream(stream, "responses cancellation stream");
   events.forEach((event, index) => assertResponsesStreamEnvelope(event, `responses cancellation stream event ${index}`));
   return { requestId: stream.requestId, eventCount: events.length };
+});
+
+await record("responses.stream.slow_consumer", slowStreamRequirements, async () => {
+  const delayMs = slowConsumerDelayMs();
+  const stream = await client().responses.create({
+    model: llmModel,
+    input: "Reply with one short sentence.",
+    max_output_tokens: 32,
+    stream: true,
+  });
+  assertRequestId(stream.requestId, "responses.stream.slow_consumer");
+  const result = await readSlowStream(stream, "responses slow-consumer stream", isResponsesTerminalEvent, delayMs);
+  const { events } = result;
+  events.forEach((event, index) => assertResponsesStreamEnvelope(event, `responses slow-consumer stream event ${index}`));
+  return { requestId: stream.requestId, eventCount: events.length, slowConsumerDelayMs: result.delayMs };
 });
 
 await record("embeddings.create", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"], async () => {

@@ -35,6 +35,7 @@ development diagnostics.
 | `RUNINFRA_API_KEY` | Workspace-scoped canary key for flat `/v1/*` routes |
 | `RUNINFRA_BASE_URL` | Optional, defaults to `https://api.runinfra.ai/v1` |
 | `RUNINFRA_CANARY_TIMEOUT_SECONDS` | Optional per-request canary timeout for both SDKs, defaults to 120 |
+| `RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS` | Optional non-negative integer delay from 0 to 5000 after each consumed SSE event in slow-consumer rows, defaults to 25 |
 | `RUNINFRA_LLM_MODEL` | Model for chat, responses, streaming, and idempotency rows |
 | `RUNINFRA_EMBEDDING_MODEL` | Model for embeddings row |
 | `RUNINFRA_EMBEDDING_DIMENSIONS` | Positive integer embedding dimension count for the OpenAI parameter row |
@@ -82,10 +83,12 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `openai.params.chat.completions`
 - `chat.completions.stream.final`
 - `chat.completions.stream.cancel`
+- `chat.completions.stream.slow_consumer`
 - `responses.create`
 - `openai.params.responses`
 - `responses.stream.final`
 - `responses.stream.cancel`
+- `responses.stream.slow_consumer`
 - `embeddings.create`
 - `openai.params.embeddings`
 - `images.generate`
@@ -117,7 +120,11 @@ byte response surface. Final streaming rows drain real SSE streams and require
 terminal events. Cancellation streaming rows consume a prefix and then close
 early to cover consumer cancellation. TypeScript cancellation rows break out of
 `for await`, and Python cancellation rows close the active iterator, so both
-languages release local stream resources after partial consumption. The
+languages release local stream resources after partial consumption.
+Slow-consumer streaming rows drain real chat and Responses SSE streams while
+pausing after each event; reports record only request IDs, event counts, and a
+redacted delay marker. The pause budget is bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`,
+so an excessive valid delay fails closed instead of holding a canary job open. The
 OpenAI parameter rows prove chat
 sampling and metadata pass-through, Responses instructions, metadata,
 temperature, output-token controls, embeddings `encoding_format: "float"` plus

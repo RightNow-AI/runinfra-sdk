@@ -30,6 +30,8 @@ from runinfra import (  # noqa: E402
 
 TTS_RESPONSE_FORMATS = {"mp3", "opus", "aac", "flac", "wav", "pcm"}
 MISSING_MODEL_ID = "runinfra-sdk-canary-missing-model"
+SLOW_CONSUMER_DELAY_REQUIREMENT = "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000"
+SLOW_CONSUMER_DELAY_ERROR = "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS must be a non-negative integer <= 5000"
 
 
 def env(name: str) -> Optional[str]:
@@ -305,6 +307,64 @@ def read_full_stream(stream: Any, label: str, has_terminal_event: Callable[[Dict
     return events
 
 
+def slow_consumer_delay_requirement() -> List[str]:
+    value = env("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS")
+    if not value:
+        return []
+    if not re.fullmatch(r"(?:0|[1-9][0-9]*)", value):
+        return [SLOW_CONSUMER_DELAY_REQUIREMENT]
+    return [] if int(value) <= 5000 else [SLOW_CONSUMER_DELAY_REQUIREMENT]
+
+
+def slow_consumer_delay_seconds() -> float:
+    value = env("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS")
+    if not value:
+        return 0.025
+    if slow_consumer_delay_requirement():
+        raise AssertionError(SLOW_CONSUMER_DELAY_ERROR)
+    return int(value) / 1000
+
+
+def slow_stream_requirements() -> List[str]:
+    return [
+        *[name for name in ("RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL") if not env(name)],
+        *slow_consumer_delay_requirement(),
+    ]
+
+
+def canary_timeout_seconds() -> float:
+    return float(env("RUNINFRA_CANARY_TIMEOUT_SECONDS") or "120")
+
+
+def sleep_within_deadline(delay_seconds: float, deadline: float, label: str) -> None:
+    if delay_seconds <= 0:
+        return
+    remaining = deadline - time.perf_counter()
+    if remaining <= 0 or delay_seconds > remaining:
+        raise AssertionError(f"{label} slow-consumer timed out")
+    time.sleep(delay_seconds)
+
+
+def read_slow_stream(
+    stream: Any,
+    label: str,
+    has_terminal_event: Callable[[Dict[str, Any]], bool],
+    delay_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    events = []
+    delay_seconds = slow_consumer_delay_seconds() if delay_seconds is None else delay_seconds
+    deadline = time.perf_counter() + canary_timeout_seconds()
+    for event in stream:
+        events.append(assert_object(event, f"{label} event"))
+        if len(events) > 200:
+            raise AssertionError(f"{label} exceeded 200 events without ending")
+        sleep_within_deadline(delay_seconds, deadline, label)
+    assert_non_empty_list(events, f"{label} events")
+    if not any(has_terminal_event(event) for event in events):
+        raise AssertionError(f"{label} did not emit a terminal event")
+    return {"events": events, "delay": "set_redacted"}
+
+
 def is_chat_terminal_event(event: Dict[str, Any]) -> bool:
     choices = event.get("choices")
     return isinstance(choices, list) and any(
@@ -380,6 +440,7 @@ def main() -> int:
         "RUNINFRA_API_KEY",
         "RUNINFRA_BASE_URL",
         "RUNINFRA_CANARY_TIMEOUT_SECONDS",
+        "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS",
         "RUNINFRA_LLM_MODEL",
         "RUNINFRA_EMBEDDING_MODEL",
         "RUNINFRA_EMBEDDING_DIMENSIONS",
@@ -457,10 +518,12 @@ def main() -> int:
     record("openai.params.chat.completions", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_params(client(), llm_model))
     record("chat.completions.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_final(client(), llm_model))
     record("chat.completions.stream.cancel", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_cancel(client(), llm_model))
+    record("chat.completions.stream.slow_consumer", lambda: slow_stream_requirements(), lambda: _chat_stream_slow_consumer(client(), llm_model))
     record("responses.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_create(client(), llm_model))
     record("openai.params.responses", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_params(client(), llm_model))
     record("responses.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_stream_final(client(), llm_model))
     record("responses.stream.cancel", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _responses_stream_cancel(client(), llm_model))
+    record("responses.stream.slow_consumer", lambda: slow_stream_requirements(), lambda: _responses_stream_slow_consumer(client(), llm_model))
     record("embeddings.create", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"], lambda: _embeddings_create(client(), embedding_model))
     record(
         "openai.params.embeddings",
@@ -620,6 +683,27 @@ def _chat_stream_cancel(client: RunInfra, model: str) -> Dict[str, Any]:
     return {"requestId": stream.request_id, "eventCount": len(events)}
 
 
+def _chat_stream_slow_consumer(client: RunInfra, model: str) -> Dict[str, Any]:
+    delay_seconds = slow_consumer_delay_seconds()
+    stream = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": "Reply with one short sentence."}],
+        temperature=0,
+        max_tokens=32,
+        stream=True,
+    )
+    assert_request_id(stream.request_id, "chat.completions.stream.slow_consumer")
+    result = read_slow_stream(stream, "chat slow-consumer stream", is_chat_terminal_event, delay_seconds)
+    events = result["events"]
+    for index, event in enumerate(events):
+        assert_chat_stream_envelope(event, f"chat slow-consumer stream event {index}")
+    return {
+        "requestId": stream.request_id,
+        "eventCount": len(events),
+        "slowConsumerDelayMs": result["delay"],
+    }
+
+
 def _responses_create(client: RunInfra, model: str) -> Dict[str, Any]:
     response = client.responses.create(
         model=model,
@@ -675,6 +759,26 @@ def _responses_stream_cancel(client: RunInfra, model: str) -> Dict[str, Any]:
     for index, event in enumerate(events):
         assert_responses_stream_envelope(event, f"responses cancellation stream event {index}")
     return {"requestId": stream.request_id, "eventCount": len(events)}
+
+
+def _responses_stream_slow_consumer(client: RunInfra, model: str) -> Dict[str, Any]:
+    delay_seconds = slow_consumer_delay_seconds()
+    stream = client.responses.create(
+        model=model,
+        input="Reply with one short sentence.",
+        max_output_tokens=32,
+        stream=True,
+    )
+    assert_request_id(stream.request_id, "responses.stream.slow_consumer")
+    result = read_slow_stream(stream, "responses slow-consumer stream", is_responses_terminal_event, delay_seconds)
+    events = result["events"]
+    for index, event in enumerate(events):
+        assert_responses_stream_envelope(event, f"responses slow-consumer stream event {index}")
+    return {
+        "requestId": stream.request_id,
+        "eventCount": len(events),
+        "slowConsumerDelayMs": result["delay"],
+    }
 
 
 def _embeddings_create(client: RunInfra, model: str) -> Dict[str, Any]:

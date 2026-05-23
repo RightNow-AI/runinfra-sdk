@@ -19,10 +19,12 @@ const expectedRows = [
   "openai.params.chat.completions",
   "chat.completions.stream.final",
   "chat.completions.stream.cancel",
+  "chat.completions.stream.slow_consumer",
   "responses.create",
   "openai.params.responses",
   "responses.stream.final",
   "responses.stream.cancel",
+  "responses.stream.slow_consumer",
   "embeddings.create",
   "openai.params.embeddings",
   "images.generate",
@@ -78,6 +80,7 @@ const relevantEnv = [
   "RUNINFRA_API_KEY",
   "RUNINFRA_BASE_URL",
   "RUNINFRA_CANARY_TIMEOUT_SECONDS",
+  "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS",
   "RUNINFRA_LLM_MODEL",
   "RUNINFRA_EMBEDDING_MODEL",
   "RUNINFRA_EMBEDDING_DIMENSIONS",
@@ -130,6 +133,15 @@ function optionalPositiveNumberRequirement(name) {
     return [`${name} positive finite number`];
   }
   return [];
+}
+
+function optionalNonNegativeIntegerRequirement(name) {
+  const value = env(name);
+  if (!value) return [];
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    return [`${name} non-negative integer <= 5000`];
+  }
+  return Number(value) <= 5000 ? [] : [`${name} non-negative integer <= 5000`];
 }
 
 function readableNonEmptyFileRequirement(name) {
@@ -208,10 +220,18 @@ const rowReadinessRequirements = [
   ["openai.params.chat.completions", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["chat.completions.stream.final", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["chat.completions.stream.cancel", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["chat.completions.stream.slow_consumer", () => [
+    ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"]),
+    ...optionalNonNegativeIntegerRequirement("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS"),
+  ]],
   ["responses.create", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["openai.params.responses", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["responses.stream.final", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["responses.stream.cancel", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["responses.stream.slow_consumer", () => [
+    ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"]),
+    ...optionalNonNegativeIntegerRequirement("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS"),
+  ]],
   ["embeddings.create", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])],
   ["openai.params.embeddings", () => [
     ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"]),
@@ -307,6 +327,39 @@ if (preflight) {
   writeReport(combined);
   console.log(JSON.stringify({ readiness: readiness.status, summary: readiness.summary }, null, 2));
   process.exit(strict && readiness.status !== "ready" ? 1 : 0);
+}
+
+function configurationErrors() {
+  return [
+    ...optionalPositiveNumberRequirement("RUNINFRA_CANARY_TIMEOUT_SECONDS"),
+    ...optionalNonNegativeIntegerRequirement("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS"),
+  ];
+}
+
+const configErrors = configurationErrors();
+if (configErrors.length) {
+  const combined = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    strict,
+    packageSource,
+    expectedRows,
+    env: redactedEnv(relevantEnv),
+    parity: {
+      status: "failed",
+      errors: [...new Set(configErrors)],
+    },
+    reports: [],
+  };
+  try {
+    assertReportDoesNotLeak(combined);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+  writeReport(combined);
+  console.error(`Live canary configuration invalid:\n${combined.parity.errors.join("\n")}`);
+  process.exit(1);
 }
 
 function newestMatching(dir, pattern, label) {

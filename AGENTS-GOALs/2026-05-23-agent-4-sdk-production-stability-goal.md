@@ -414,3 +414,40 @@ Current blockers remain:
 - This closes a cancellation canary correctness gap but does not prove live multimodal GA readiness.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Slow-Consumer Streaming Canary Coverage
+
+Added live-gated slow-consumer streaming rows for chat and Responses:
+
+- New strict canary rows: `chat.completions.stream.slow_consumer` and `responses.stream.slow_consumer`.
+- TypeScript and Python child canaries now drain real chat and Responses SSE streams while pausing after each event, assert terminal events, validate stream envelopes, and record only request IDs, event counts, and a redacted delay marker.
+- `RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS` is optional, redacted in parent/child reports, defaults to 25 ms, and is bounded to a non-negative integer from 0 to 5000.
+- Parent canary runner rejects invalid slow-consumer delay before spawning child canaries, so bad config cannot open live streams.
+- Child canary slow rows validate the delay before stream creation in both TypeScript and Python.
+- Slow-consumer sleep is bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`, so a large valid delay fails closed instead of holding live canary jobs open.
+- `LIVE-CANARIES.md` documents the new rows, env variable, redacted evidence, and timeout-bound behavior.
+
+Fresh local verification:
+
+- Added failing TS/Python slow-consumer tests first; they failed on missing rows, invalid-delay acceptance, missing child env redaction, post-open delay validation, and unbounded slow sleep.
+- Targeted slow-consumer tests passed: TS 3 tests, Python 3 tests.
+- `pnpm --dir typescript install --frozen-lockfile` passed with the existing esbuild ignored-build-script warning.
+- `python -m pip install -r python/requirements-dev.txt` passed with pinned tooling already installed.
+- TS typecheck passed.
+- TS tests passed, 122 tests.
+- Python tests passed, 109 tests plus 105 subtests.
+- Python canary/package syntax passed.
+- Workflow policy and version sync passed for `0.1.4`.
+- TS build and `pnpm --dir typescript pack` passed; npm tarball contents remained limited to changelog, dist, license, package.json, and README.
+- Python wheel/sdist build, Python package verifier, and `twine check` passed.
+- npm package verifier and clean artifact install/import for both npm and Python passed.
+- Source and artifact canary parity passed: TypeScript 7 passed/25 skipped, Python 7 passed/25 skipped, expected rows 32.
+- Strict preflight remains intentionally blocked: 7 ready rows and 25 blocked rows because no scoped live canary env/fixtures are present in this shell.
+- `git diff --check` passed with CRLF warnings only.
+- Second-opinion review initially found two blockers: valid delays could exceed the job budget, and invalid delay could be validated after opening streams in direct child runs. Both were fixed and the final second-opinion review reported no blockers.
+
+Current blockers remain:
+
+- This adds live-gated slow-consumer proof but does not make strict live multimodal canaries green without production canary env/fixtures.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
