@@ -119,13 +119,15 @@ console.log(stream.requestId);
 
 The native SDK validates the minimum request fields locally, then forwards
 OpenAI-style JSON or multipart fields that preserve the typed response shape.
-The GA canary matrix now has dedicated rows for the verified subset:
+The GA canary matrix has dedicated live-gated rows for the subset that must
+pass before GA. These rows will be treated as verified only after the strict live canaries pass:
 `openai.params.chat.completions`, `openai.params.responses`, and
 `openai.params.embeddings`, plus the live-gated `openai.params.images` row for
 exact output-format coverage while sending an explicit image size to the
-backend.
+backend, and the live-gated `openai.params.audio.transcriptions` row for ASR
+`language`, `prompt`, and `response_format` request coverage.
 
-Verified native SDK subset:
+Live-gated native SDK subset:
 
 - Chat Completions: `model`, `messages`, `stream`, `temperature`, `top_p`,
   `max_tokens`, `stop`, `presence_penalty`, `frequency_penalty`, `user`, and
@@ -138,8 +140,8 @@ Verified native SDK subset:
   when the deployed image backend advertises them.
 - Audio speech: `model`, `input`, `voice` or `ref_audio` plus `ref_text`, and
   optional `task_type` and `response_format`.
-- Audio transcriptions: `model`, `file`, `filename`, optional `language`, and
-  JSON response formats only.
+- Audio transcriptions: `model`, `file`, `filename`, optional `language`,
+  optional `prompt`, and JSON response formats only.
 
 The native typed helpers do not claim GA support for tool calls, structured
 JSON schema outputs, logprobs, seeds, service tiers, parallel tool calls,

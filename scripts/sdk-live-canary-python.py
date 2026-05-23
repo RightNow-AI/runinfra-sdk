@@ -388,6 +388,7 @@ def main() -> int:
         "RUNINFRA_TTS_RESPONSE_FORMAT",
         "RUNINFRA_ASR_MODEL",
         "RUNINFRA_ASR_LANGUAGE",
+        "RUNINFRA_ASR_RESPONSE_FORMAT",
         "RUNINFRA_ASR_FIXTURE_PATH",
         "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE",
         "RUNINFRA_ASR_EXPECTED_TEXT",
@@ -473,6 +474,18 @@ def main() -> int:
         "audio.transcriptions.create",
         ["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL", "RUNINFRA_ASR_FIXTURE_PATH", "RUNINFRA_ASR_EXPECTED_TEXT"],
         lambda: _transcriptions_create(client(), asr_model),
+    )
+    record(
+        "openai.params.audio.transcriptions",
+        [
+            "RUNINFRA_API_KEY",
+            "RUNINFRA_ASR_MODEL",
+            "RUNINFRA_ASR_LANGUAGE",
+            "RUNINFRA_ASR_RESPONSE_FORMAT",
+            "RUNINFRA_ASR_FIXTURE_PATH",
+            "RUNINFRA_ASR_EXPECTED_TEXT",
+        ],
+        lambda: _transcriptions_params(client(), asr_model),
     )
     record("voice.pipeline.create", lambda: _voice_requirements(pipeline_api_key, pipeline_id), lambda: _voice_pipeline_create(client(api_key=pipeline_api_key, pipeline_id=pipeline_id)))
     record("error.auth.invalid_key", [], lambda: _auth_error(base_url))
@@ -701,6 +714,13 @@ def _image_response_format() -> str:
     return response_format
 
 
+def _asr_response_format() -> str:
+    response_format = env("RUNINFRA_ASR_RESPONSE_FORMAT")
+    if response_format not in {"json", "verbose_json"}:
+        raise AssertionError("RUNINFRA_ASR_RESPONSE_FORMAT must be json or verbose_json")
+    return response_format
+
+
 def _images_params(client: RunInfra, model: str) -> Dict[str, Any]:
     response_format = _image_response_format()
     response = client.images.generate(
@@ -777,6 +797,35 @@ def _transcriptions_create(client: RunInfra, model: str) -> Dict[str, Any]:
         raise AssertionError("ASR transcript did not include expected fixture text")
     assert_request_id(response.get("_request_id"), "audio.transcriptions.create")
     return {"requestId": response.get("_request_id"), "textLength": len(str(response.get("text", "")))}
+
+
+def _transcriptions_params(client: RunInfra, model: str) -> Dict[str, Any]:
+    fixture = asr_fixture()
+    response_format = _asr_response_format()
+    response = client.audio.transcriptions.create(
+        model=model,
+        file=fixture["content"],
+        filename=fixture["filename"],
+        content_type=fixture["content_type"],
+        language=env("RUNINFRA_ASR_LANGUAGE"),
+        prompt="RunInfra SDK ASR parameter canary.",
+        response_format=response_format,
+    )
+    assert_object(response, "ASR params response")
+    assert_string(response.get("text"), "ASR params response.text")
+    expected = normalized_text(env("RUNINFRA_ASR_EXPECTED_TEXT"))
+    actual = normalized_text(response.get("text"))
+    if not expected or expected not in actual:
+        raise AssertionError("ASR params transcript did not include expected fixture text")
+    if response_format == "verbose_json":
+        if (
+            not isinstance(response.get("language"), str)
+            and not isinstance(response.get("duration"), (int, float))
+            and not isinstance(response.get("segments"), list)
+        ):
+            raise AssertionError("ASR verbose_json response did not include verbose fields")
+    assert_request_id(response.get("_request_id"), "openai.params.audio.transcriptions")
+    return {"requestId": response.get("_request_id"), "responseFormat": response_format}
 
 
 def _voice_requirements(pipeline_api_key: Optional[str], pipeline_id: Optional[str]) -> List[str]:

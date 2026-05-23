@@ -145,3 +145,30 @@ Current blockers remain:
 
 - This does not prove live image parameter support until `RUNINFRA_IMAGE_MODEL`, `RUNINFRA_IMAGE_SIZE`, and `RUNINFRA_IMAGE_RESPONSE_FORMAT` are supplied for a deployed image backend.
 - Strict live canaries still require scoped production canary env and fixtures for the broader multimodal matrix.
+
+## 2026-05-23 Agent 4 Checkpoint: ASR OpenAI Parameter Canary Coverage
+
+Added a strict ASR parameter row for OpenAI-compatible audio transcription coverage:
+
+- New row: `openai.params.audio.transcriptions`.
+- Strict readiness now tracks `RUNINFRA_ASR_RESPONSE_FORMAT` and requires `RUNINFRA_ASR_LANGUAGE` for this parameter-specific row.
+- TypeScript and Python canaries now send ASR `language`, a fixed canary `prompt`, and `response_format` as `json` or `verbose_json`.
+- The row requires the deterministic fixture transcript to include `RUNINFRA_ASR_EXPECTED_TEXT`, asserts request ID exposure, and records only request ID plus response format, not transcript text or fixture contents.
+- Docs now phrase ASR parameter coverage as live-gated proof, not already live-verified GA; ASR remains experimental until strict live artifacts pass.
+
+Fresh local verification:
+
+- Added failing TS/Python docs and child-canary parity assertions first; they failed on missing ASR parameter row/docs.
+- TS tests passed, 114 tests.
+- Python tests passed, 101 tests plus 88 subtests.
+- TS typecheck and build passed.
+- Workflow policy, version sync, Python canary syntax, and `git diff --check` passed.
+- Source canary report passed parity: TypeScript 8 passed/21 skipped, Python 8 passed/21 skipped, expected rows 29.
+- Strict preflight remains intentionally blocked: 8 ready rows and 21 blocked rows.
+- Review found two doc precision issues: ASR row wording sounded already verified, and `RUNINFRA_ASR_LANGUAGE` was called optional while required for the new row. Both were fixed.
+- Security/leakage review found no blocking issue and confirmed strict preflight still fails closed without live env.
+
+Current blockers remain:
+
+- This does not prove live ASR parameter support until `RUNINFRA_ASR_MODEL`, `RUNINFRA_ASR_LANGUAGE`, `RUNINFRA_ASR_RESPONSE_FORMAT`, `RUNINFRA_ASR_FIXTURE_PATH`, and `RUNINFRA_ASR_EXPECTED_TEXT` are supplied for a deployed ASR backend.
+- Strict live canaries still require scoped production canary env and fixtures for the broader multimodal matrix.

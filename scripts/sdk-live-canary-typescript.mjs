@@ -361,6 +361,7 @@ const relevantEnv = [
   "RUNINFRA_TTS_RESPONSE_FORMAT",
   "RUNINFRA_ASR_MODEL",
   "RUNINFRA_ASR_LANGUAGE",
+  "RUNINFRA_ASR_RESPONSE_FORMAT",
   "RUNINFRA_ASR_FIXTURE_PATH",
   "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE",
   "RUNINFRA_ASR_EXPECTED_TEXT",
@@ -431,6 +432,14 @@ function imageResponseFormat() {
   const responseFormat = env("RUNINFRA_IMAGE_RESPONSE_FORMAT");
   if (!["url", "b64_json"].includes(responseFormat)) {
     throw new Error("RUNINFRA_IMAGE_RESPONSE_FORMAT must be url or b64_json");
+  }
+  return responseFormat;
+}
+
+function asrResponseFormat() {
+  const responseFormat = env("RUNINFRA_ASR_RESPONSE_FORMAT");
+  if (!["json", "verbose_json"].includes(responseFormat)) {
+    throw new Error("RUNINFRA_ASR_RESPONSE_FORMAT must be json or verbose_json");
   }
   return responseFormat;
 }
@@ -790,6 +799,44 @@ await record("audio.transcriptions.create", [
   }
   assertRequestId(response._request_id, "audio.transcriptions.create");
   return { requestId: response._request_id, textLength: String(response.text ?? "").length };
+});
+
+await record("openai.params.audio.transcriptions", [
+  "RUNINFRA_API_KEY",
+  "RUNINFRA_ASR_MODEL",
+  "RUNINFRA_ASR_LANGUAGE",
+  "RUNINFRA_ASR_RESPONSE_FORMAT",
+  "RUNINFRA_ASR_FIXTURE_PATH",
+  "RUNINFRA_ASR_EXPECTED_TEXT",
+], async () => {
+  const fixture = asrFixture();
+  if (!fixture) throw new Error("ASR fixture missing");
+  const responseFormat = asrResponseFormat();
+  const response = await client().audio.transcriptions.create({
+    model: asrModel,
+    file: new Blob([fixture.bytes], { type: fixture.contentType }),
+    filename: fixture.filename,
+    language: env("RUNINFRA_ASR_LANGUAGE"),
+    prompt: "RunInfra SDK ASR parameter canary.",
+    response_format: responseFormat,
+  });
+  assertObject(response, "ASR params response");
+  assertString(response.text, "ASR params response.text");
+  const expected = normalizedText(env("RUNINFRA_ASR_EXPECTED_TEXT"));
+  const actual = normalizedText(response.text);
+  if (!expected || !actual.includes(expected)) {
+    throw new Error("ASR params transcript did not include expected fixture text");
+  }
+  if (
+    responseFormat === "verbose_json" &&
+    typeof response.language !== "string" &&
+    typeof response.duration !== "number" &&
+    !Array.isArray(response.segments)
+  ) {
+    throw new Error("ASR verbose_json response did not include verbose fields");
+  }
+  assertRequestId(response._request_id, "openai.params.audio.transcriptions");
+  return { requestId: response._request_id, responseFormat };
 });
 
 await record("voice.pipeline.create", () => {

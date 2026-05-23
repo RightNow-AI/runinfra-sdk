@@ -29,6 +29,7 @@ const expectedRows = [
   "audio.speech.create",
   "audio.speech.binary_interfaces",
   "audio.transcriptions.create",
+  "openai.params.audio.transcriptions",
   "voice.pipeline.create",
   "error.auth.invalid_key",
   "error.request.invalid_options",
@@ -89,6 +90,7 @@ const relevantEnv = [
   "RUNINFRA_TTS_RESPONSE_FORMAT",
   "RUNINFRA_ASR_MODEL",
   "RUNINFRA_ASR_LANGUAGE",
+  "RUNINFRA_ASR_RESPONSE_FORMAT",
   "RUNINFRA_ASR_FIXTURE_PATH",
   "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE",
   "RUNINFRA_ASR_EXPECTED_TEXT",
@@ -163,6 +165,12 @@ function imageResponseFormatRequirement() {
   return ["url", "b64_json"].includes(value) ? [] : ["RUNINFRA_IMAGE_RESPONSE_FORMAT url or b64_json"];
 }
 
+function asrResponseFormatRequirement() {
+  const value = env("RUNINFRA_ASR_RESPONSE_FORMAT");
+  if (!value) return ["RUNINFRA_ASR_RESPONSE_FORMAT"];
+  return ["json", "verbose_json"].includes(value) ? [] : ["RUNINFRA_ASR_RESPONSE_FORMAT json or verbose_json"];
+}
+
 function voiceRequirements() {
   return [
     ...(!firstEnv("RUNINFRA_VOICE_PIPELINE_API_KEY", "RUNINFRA_PIPELINE_API_KEY", "RUNINFRA_API_KEY")
@@ -207,6 +215,11 @@ const rowReadinessRequirements = [
   ["audio.speech.binary_interfaces", speechRequirements],
   ["audio.transcriptions.create", () => [
     ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL", "RUNINFRA_ASR_EXPECTED_TEXT"]),
+    ...readableNonEmptyFileRequirement("RUNINFRA_ASR_FIXTURE_PATH"),
+  ]],
+  ["openai.params.audio.transcriptions", () => [
+    ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL", "RUNINFRA_ASR_LANGUAGE", "RUNINFRA_ASR_EXPECTED_TEXT"]),
+    ...asrResponseFormatRequirement(),
     ...readableNonEmptyFileRequirement("RUNINFRA_ASR_FIXTURE_PATH"),
   ]],
   ["voice.pipeline.create", voiceRequirements],

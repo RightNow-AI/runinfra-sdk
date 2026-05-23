@@ -48,7 +48,8 @@ development diagnostics.
 | `RUNINFRA_TTS_TASK_TYPE` | Optional TTS task type, defaults to `Base` |
 | `RUNINFRA_TTS_RESPONSE_FORMAT` | Optional TTS output format |
 | `RUNINFRA_ASR_MODEL` | Model for ASR row |
-| `RUNINFRA_ASR_LANGUAGE` | Optional ASR language hint |
+| `RUNINFRA_ASR_LANGUAGE` | Optional for the base ASR row; required for the OpenAI ASR parameter row |
+| `RUNINFRA_ASR_RESPONSE_FORMAT` | `json` or `verbose_json` for the OpenAI ASR parameter row |
 | `RUNINFRA_ASR_FIXTURE_PATH` | Local deterministic speech-audio fixture path for ASR row |
 | `RUNINFRA_ASR_FIXTURE_CONTENT_TYPE` | Optional ASR fixture content type, defaults to `audio/wav` |
 | `RUNINFRA_ASR_EXPECTED_TEXT` | Normalized text that must appear in the ASR transcript |
@@ -92,6 +93,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `audio.speech.create`
 - `audio.speech.binary_interfaces`
 - `audio.transcriptions.create`
+- `openai.params.audio.transcriptions`
 - `voice.pipeline.create`
 - `error.auth.invalid_key`
 - `error.request.invalid_options`
@@ -116,8 +118,11 @@ early to cover consumer cancellation. The
 OpenAI parameter rows prove chat
 sampling and metadata pass-through, Responses instructions, metadata,
 temperature, output-token controls, embeddings `encoding_format: "float"` plus
-`dimensions`, and exact image `response_format` output matching while sending
-an explicit image `size` to the backend.
+`dimensions`, exact image `response_format` output matching while sending an
+explicit image `size` to the backend, and ASR `language`, fixed `prompt`, plus
+`response_format` request handling. The ASR parameter row does not claim the
+language hint changed model behavior; it requires the transcript match and, for
+`verbose_json`, at least one verbose response field.
 Unsupported SDK request options and webhook delivery rows must fail closed
 without sending a network request. Webhook verification rows exercise both
 client-attached helpers and top-level package exports. The unsupported

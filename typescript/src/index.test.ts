@@ -163,17 +163,34 @@ describe("RunInfra TypeScript SDK", () => {
     const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
 
     expect(readme).toContain("## OpenAI-compatible parameter scope");
-    expect(readme).toContain("Verified native SDK subset");
+    expect(readme).toContain("Live-gated native SDK subset");
+    expect(readme).toContain("will be treated as verified only after the strict live canaries pass");
     expect(readme).toContain("`openai.params.chat.completions`");
     expect(readme).toContain("`openai.params.responses`");
     expect(readme).toContain("`openai.params.embeddings`");
     expect(readme).toContain("`openai.params.images`");
+    expect(readme).toContain("`openai.params.audio.transcriptions`");
     expect(liveCanaries).toContain("openai.params.images");
+    expect(liveCanaries).toContain("openai.params.audio.transcriptions");
+    expect(liveCanaries).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
+    expect(liveCanaries).toContain("Optional for the base ASR row; required for the OpenAI ASR parameter row");
     expect(readme).toContain("dimension control");
     expect(readme).toContain("`encoding_format` values other than `\"float\"`");
     expect(readme).toContain("`response_format` values other than `\"json\"` or `\"verbose_json\"`");
     expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
     expect(liveCanaries).toContain("error.body.unsupported_parameter");
+  });
+
+  it("keeps child canaries in parity for ASR OpenAI parameter coverage", () => {
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+
+    expect(typescriptCanary).toContain('record("openai.params.audio.transcriptions"');
+    expect(typescriptCanary).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
+    expect(typescriptCanary).toContain("response_format: responseFormat");
+    expect(pythonCanary).toContain('"openai.params.audio.transcriptions"');
+    expect(pythonCanary).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
+    expect(pythonCanary).toContain("response_format=response_format");
   });
 
   it("documents local request payload validation before network sends", () => {
@@ -345,6 +362,16 @@ describe("RunInfra TypeScript SDK", () => {
         report.readiness?.rows?.find((row) => row.name === "audio.transcriptions.create")?.missing,
       ).toEqual(expect.arrayContaining([
         "RUNINFRA_ASR_MODEL",
+        "RUNINFRA_ASR_FIXTURE_PATH",
+        "RUNINFRA_ASR_EXPECTED_TEXT",
+      ]));
+      expect(report.expectedRows).toContain("openai.params.audio.transcriptions");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "openai.params.audio.transcriptions")?.missing,
+      ).toEqual(expect.arrayContaining([
+        "RUNINFRA_ASR_MODEL",
+        "RUNINFRA_ASR_LANGUAGE",
+        "RUNINFRA_ASR_RESPONSE_FORMAT",
         "RUNINFRA_ASR_FIXTURE_PATH",
         "RUNINFRA_ASR_EXPECTED_TEXT",
       ]));
