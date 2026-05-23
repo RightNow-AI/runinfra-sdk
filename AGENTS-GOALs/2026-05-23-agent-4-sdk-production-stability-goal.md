@@ -306,3 +306,34 @@ Current blockers remain:
 - This removes a public dead surface but does not prove live multimodal GA readiness.
 - PR #9 still needs non-author approval before protected merge.
 - Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
+
+## 2026-05-23 Agent 4 Checkpoint: Dev Tooling Alert Patch
+
+Patched current moderate dev/build-tooling security alerts without changing SDK runtime dependencies or package allowlists:
+
+- TypeScript test tooling moved to `vitest@3.2.4`.
+- `pnpm` overrides now force `vite@6.4.2` and `esbuild@0.25.12`.
+- Python pinned dev tooling moved to `pytest==9.0.3`.
+- Resolved dependency graph proves `vitest@3.2.4`, `vite@6.4.2`, `esbuild@0.25.12`, and installed Python `pytest 9.0.3`.
+
+Fresh local verification:
+
+- `pnpm --dir typescript install --frozen-lockfile` passed.
+- TS typecheck passed.
+- TS tests passed, 117 tests.
+- Python tests passed, 104 tests plus 105 subtests.
+- Python canary/package syntax passed.
+- Workflow policy and version sync passed for `0.1.4`.
+- Fresh npm tarball `runinfra-sdk-0.1.4.tgz` built and passed `verify-npm-package`.
+- Fresh Python wheel/sdist `runinfra-0.1.4` built, passed `verify-python-package`, and passed `twine check`.
+- Clean artifact install/import passed for npm and Python at `0.1.4`.
+- Source canary report passed parity: TypeScript 7 passed/23 skipped, Python 7 passed/23 skipped.
+- Artifact canary report passed parity with the same 7 passed/23 skipped shape.
+- Strict preflight remains intentionally blocked: 7 ready rows and 23 blocked rows.
+- `git diff --check` passed with CRLF warnings only.
+
+Current blockers remain:
+
+- This closes dev-tooling alert exposure but does not prove live multimodal GA readiness.
+- PR #9 still needs non-author approval before protected merge.
+- Strict live canaries still require scoped production canary env and fixtures for LLM, embeddings, image, TTS, ASR, voice pipeline, unsupported-parameter live error proof, model-not-found live proof, and idempotency replay.
