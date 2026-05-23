@@ -172,20 +172,33 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             readme,
         )
 
+    def test_readme_documents_sync_only_async_runtime_guidance(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+
+        self.assertIn("## Async Python runtimes", readme)
+        self.assertIn("`RunInfra` is intentionally sync-only in v0.1.3", readme)
+        self.assertIn("does not block the event loop", readme)
+        self.assertIn("`AsyncRunInfra` client yet", readme)
+
     def test_readme_documents_public_repo_promotion_without_stale_monorepo_commands(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
         self.assertIn("For production promotion", readme)
-        self.assertIn("This extracted public repo does not define the old monorepo", readme)
+        self.assertIn("This public repo now includes live-canary runners for both SDKs.", readme)
         self.assertIn("node scripts/verify-workflow-policy.mjs", readme)
         self.assertIn("node scripts/verify-version-sync.mjs", readme)
         self.assertIn("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz", readme)
         self.assertIn("python scripts/verify-python-package.py python/dist", readme)
+        self.assertIn("node scripts/verify-clean-installs.mjs --package both --mode artifact", readme)
         self.assertIn(
-            "gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true",
+            "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json",
             readme,
         )
-        self.assertIn("Run live deployment canaries from RunPipe or RunInfra-Engine", readme)
+        self.assertIn(
+            "gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>",
+            readme,
+        )
+        self.assertIn("Run the strict live canary matrix against the exact production gateway", readme)
         self.assertIn("Do not use npm or PyPI tokens", readme)
         self.assertNotIn("pnpm verify:sdk-release", readme)
         self.assertNotIn("pnpm test:sdk-canary:live", readme)

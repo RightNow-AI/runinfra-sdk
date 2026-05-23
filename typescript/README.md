@@ -252,8 +252,9 @@ const client = new OpenAI({
 Local package tests prove SDK shape, retry behavior, streaming parsing, typed
 errors, package contents, version sync, and trusted-publishing workflow policy.
 They do not prove that a newly optimized deployment is ready for customers.
-This extracted public repo does not define the old monorepo live-canary
-commands.
+This public repo now includes live-canary runners for both SDKs. Non-strict
+runs report skipped rows when live model env vars are missing. Strict runs fail
+on any skipped or failed row and are required before GA promotion.
 
 For production promotion from this repo, run these local checks from the
 repository root before opening a release PR:
@@ -261,34 +262,37 @@ repository root before opening a release PR:
 ```bash
 node scripts/verify-workflow-policy.mjs
 node scripts/verify-version-sync.mjs
-pnpm --dir typescript install --lockfile=false
+pnpm --dir typescript install --frozen-lockfile
 pnpm --dir typescript exec tsc -p tsconfig.json --noEmit
 pnpm --dir typescript test
 pnpm --dir typescript build
 pnpm --dir typescript pack
 node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz
-python -m pip install -e python pytest build twine
-python -m pytest python/tests -v
+python -m pip install -r python/requirements-dev.txt
+python -m pytest python/tests -q
 python -m build python
 python scripts/verify-python-package.py python/dist
 python -m twine check python/dist/*
+node scripts/verify-clean-installs.mjs --package both --mode artifact
+node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
 ```
 
 Then trigger a GitHub dry-run publish from `main`:
 
 ```bash
-gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true
+gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>
 ```
 
 Actual publishing must use the same workflow with `dry_run=false` after CI,
 review, and environment approval. Do not use npm or PyPI tokens. OIDC trusted
 publishing is the only supported publish path.
 
-Run live deployment canaries from RunPipe or RunInfra-Engine against the exact
-production gateway, workspace, pipeline keys, and RunPod inventory that will
-serve customers. The SDK repo only proves client artifact integrity. GA still
-requires live coverage for LLM, embeddings, image, TTS, ASR, and voice pipeline
-surfaces, plus explicit evidence that the smoke keys and temporary canary
-resources were removed.
+Run the strict live canary matrix against the exact production gateway,
+workspace key, pipeline key, and deployed models that will serve customers. See
+the root `LIVE-CANARIES.md` for required env vars, strict TS/Python row parity,
+full-stream terminal-event checks, idempotency replay-evidence requirements,
+and redacted report rules. GA still requires live coverage for LLM, embeddings,
+image, TTS, ASR, and voice pipeline surfaces, plus explicit evidence that the
+smoke keys and temporary canary resources were removed.
 
 Co-located voice pipelines are available through the native `client.voice.pipeline.create()` helper on pipeline-scoped keys. The helper posts binary audio to the pipeline-scoped `/pipeline` route and returns the JSON transcript / response envelope. Public webhook create/list calls are intentionally unavailable until their gateway routes are verified, and the SDK throws `UnsupportedOperationError` locally for those webhook capabilities without making a request.

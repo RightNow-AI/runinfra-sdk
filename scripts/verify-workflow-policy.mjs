@@ -66,6 +66,18 @@ const checks = [
     ok: /verify-python-package\.py/u.test(ci),
   },
   {
+    label: "CI verifies clean package installs",
+    ok:
+      /verify-clean-installs\.mjs --package typescript --mode artifact/u.test(ci) &&
+      /verify-clean-installs\.mjs --package python --mode artifact/u.test(ci),
+  },
+  {
+    label: "publish workflow verifies clean package installs",
+    ok:
+      /verify-clean-installs\.mjs --package typescript --mode artifact/u.test(publish) &&
+      /verify-clean-installs\.mjs --package python --mode artifact/u.test(publish),
+  },
+  {
     label: "workflows use frozen TypeScript lockfile installs",
     ok:
       /pnpm install --frozen-lockfile/u.test(ci) &&

@@ -75,6 +75,8 @@ See each package's own README + CHANGELOG for surface-level docs.
 | Webhook delivery | Not shipped. Local verification helpers are available in both SDKs |
 
 See per-package READMEs and CHANGELOG for the path to v1.0.0 GA.
+The strict multimodal GA canary contract is documented in
+[`LIVE-CANARIES.md`](./LIVE-CANARIES.md).
 
 ## License
 

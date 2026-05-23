@@ -119,6 +119,10 @@ and have admin bypass disabled. Main branch protection also enforces admins.
 | `client.webhooks.create` / `.list` | Throws `UnsupportedOperationError` — delivery not shipped |
 | `client.voice.pipeline.create` | **Experimental** - posts binary audio to the pipeline-scoped `/pipeline` route, not live-canary verified |
 
+Python remains sync-only in v0.1.3. Keep FastAPI/async users pointed at worker
+threads, queues, or background jobs until `AsyncRunInfra` ships with matching
+unit, streaming, live-canary, and clean-install coverage.
+
 The READMEs include a Modality Status table that mirrors this. JSDoc
 (`@experimental`) and Python docstrings (`[EXPERIMENTAL]`) on the classes
 drive IDE warnings for customers using experimental surfaces.
@@ -128,6 +132,7 @@ drive IDE warnings for customers using experimental surfaces.
 ```
 runinfra-sdk/
 ├── README.md             — project overview + install
+├── LIVE-CANARIES.md      — strict GA live-canary matrix and env contract
 ├── LICENSE               — proprietary source-available terms
 ├── AGENT-NOTES.md        — this file
 ├── .gitignore
@@ -187,6 +192,19 @@ identical proprietary source-available terms. Customers see them via:
    - `package`: `both` | `typescript` | `python`
    - `dry_run`: `true` (verify only) | `false` (actually publish)
    - `confirm_version`: exact package version, required when `dry_run=false`
+
+Before GA promotion, also run:
+```
+pnpm --dir typescript build
+node scripts/verify-clean-installs.mjs --package both --mode artifact
+node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
+```
+
+Do not graduate image, TTS, ASR, or voice pipeline out of experimental status
+without strict TypeScript + Python live-canary reports for the exact production
+gateway, models, workspace key, and pipeline key. Strict reports must keep
+TS/Python row parity, redact custom base URLs, drain final streams to terminal
+events, and prove idempotency replay with explicit gateway evidence.
 
 6. Watch:
    ```

@@ -194,13 +194,15 @@ describe("RunInfra TypeScript SDK", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
     expect(readme).toContain("For production promotion");
-    expect(readme).toContain("This extracted public repo does not define the old monorepo");
+    expect(readme).toContain("This public repo now includes live-canary runners for both SDKs.");
     expect(readme).toContain("node scripts/verify-workflow-policy.mjs");
     expect(readme).toContain("node scripts/verify-version-sync.mjs");
     expect(readme).toContain("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz");
     expect(readme).toContain("python scripts/verify-python-package.py python/dist");
-    expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true");
-    expect(readme).toContain("Run live deployment canaries from RunPipe or RunInfra-Engine");
+    expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode artifact");
+    expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
+    expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>");
+    expect(readme).toContain("Run the strict live canary matrix against the exact production gateway");
     expect(readme).toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");
     expect(readme).not.toContain("pnpm test:sdk-canary:live");
