@@ -167,12 +167,37 @@ def wheel_metadata_errors(files: list[str], contents: dict[str, bytes]) -> list[
         errors.append(f"Wheel METADATA path must be {expected_prefix}METADATA")
     if metadata_files:
         errors.extend(core_metadata_errors("Wheel METADATA", contents.get(metadata_files[0])))
+    wheel_metadata_file = f"{expected_prefix}WHEEL"
+    wheel_metadata = contents.get(wheel_metadata_file)
+    if wheel_metadata is None:
+        errors.append(f"Wheel metadata file must be {wheel_metadata_file}")
+    else:
+        metadata = Parser().parsestr(decode_text(wheel_metadata))
+        if metadata.get("Root-Is-Purelib") != "true":
+            errors.append("Wheel WHEEL Root-Is-Purelib must be true")
+        if metadata.get_all("Tag", []) != ["py3-none-any"]:
+            errors.append("Wheel WHEEL must declare exactly Tag: py3-none-any")
+
+    top_level_file = f"{expected_prefix}top_level.txt"
+    top_level = contents.get(top_level_file)
+    if top_level is None:
+        errors.append(f"Wheel top-level metadata file must be {top_level_file}")
+    else:
+        top_level_names = [line.strip() for line in decode_text(top_level).splitlines() if line.strip()]
+        if top_level_names != [EXPECTED_NAME]:
+            errors.append("Wheel top_level.txt must contain only runinfra")
     errors.extend(init_version_errors("wheel runinfra/__init__.py", contents.get("runinfra/__init__.py")))
     return errors
 
 
-def sdist_metadata_errors(contents: dict[str, bytes]) -> list[str]:
+def sdist_metadata_errors(root_names: set[str], contents: dict[str, bytes]) -> list[str]:
     errors: list[str] = []
+    expected_root = f"{EXPECTED_NAME}-{EXPECTED_VERSION}"
+    if root_names != {expected_root}:
+        errors.append(
+            f"sdist root directory must be exactly {expected_root}\n"
+            + "\n".join(sorted(root_names or {"<empty archive>"}))
+        )
     errors.extend(core_metadata_errors("PKG-INFO", contents.get("PKG-INFO")))
     errors.extend(
         core_metadata_errors(
@@ -202,7 +227,12 @@ def verify_wheel(path: Path) -> None:
             content = wheel.read(info.filename)
             if has_forbidden_content(content):
                 forbidden_content.append(file)
-            if file == "runinfra/__init__.py" or file.endswith(".dist-info/METADATA"):
+            if (
+                file == "runinfra/__init__.py"
+                or file.endswith(".dist-info/METADATA")
+                or file.endswith(".dist-info/WHEEL")
+                or file.endswith(".dist-info/top_level.txt")
+            ):
                 contents[file] = content
 
     missing = sorted(file for file in WHEEL_ALLOWED_FIXED if file not in files)
@@ -242,9 +272,23 @@ def strip_sdist_root(path: str) -> str:
     return parts[1] if len(parts) == 2 else f"<archive-root>/{normalized}"
 
 
+def sdist_root_names(paths: list[str]) -> set[str]:
+    root_names: set[str] = set()
+    for path in paths:
+        normalized = path.replace("\\", "/")
+        if not normalized.strip("/"):
+            continue
+        if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+            root_names.add(f"<absolute>/{normalize(path)}")
+            continue
+        root_names.add(normalized.split("/", 1)[0])
+    return root_names
+
+
 def verify_sdist(path: Path) -> None:
     with tarfile.open(path) as sdist:
         members = sorted(sdist.getmembers(), key=lambda item: item.name)
+        root_names = sdist_root_names([member.name for member in members])
         file_members = [member for member in members if member.isfile()]
         files = [strip_sdist_root(member.name) for member in file_members]
         contents: dict[str, bytes] = {}
@@ -272,7 +316,7 @@ def verify_sdist(path: Path) -> None:
     duplicates = duplicate_files(files)
     unexpected = sorted(file for file in files if file not in SDIST_ALLOWED)
     forbidden = sorted(file for file in files if has_forbidden_path(file))
-    invalid_metadata = sdist_metadata_errors(contents)
+    invalid_metadata = sdist_metadata_errors(root_names, contents)
 
     errors: list[str] = []
     if missing:

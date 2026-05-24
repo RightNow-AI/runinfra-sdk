@@ -810,6 +810,73 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                         verify_archive(archive_path)
                     self.assertEqual(raised.exception.code, 1)
 
+    def test_python_package_verifier_rejects_wheel_layout_and_sdist_root_metadata(self):
+        verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
+        spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        package_metadata = f"Metadata-Version: 2.4\nName: runinfra\nVersion: {__version__}\n"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            dist_info = f"runinfra-{__version__}.dist-info"
+
+            def write_wheel(path, *, root_is_purelib="true", tag="py3-none-any", top_level="runinfra\n"):
+                with zipfile.ZipFile(path, "w") as wheel:
+                    wheel.writestr("runinfra/__init__.py", f"__version__ = '{__version__}'\n")
+                    wheel.writestr("runinfra/py.typed", "")
+                    wheel.writestr(f"{dist_info}/METADATA", package_metadata)
+                    wheel.writestr(f"{dist_info}/RECORD", "")
+                    wheel.writestr(
+                        f"{dist_info}/WHEEL",
+                        f"Wheel-Version: 1.0\nRoot-Is-Purelib: {root_is_purelib}\nTag: {tag}\n",
+                    )
+                    wheel.writestr(f"{dist_info}/top_level.txt", top_level)
+                    wheel.writestr(f"{dist_info}/licenses/LICENSE", "MIT\n")
+
+            def write_sdist(path, *, root_name):
+                with tarfile.open(path, "w:gz") as sdist:
+                    for name in verifier.SDIST_ALLOWED:
+                        if name in {"PKG-INFO", "runinfra.egg-info/PKG-INFO"}:
+                            add_file(sdist, root_name, name, package_metadata)
+                        elif name == "runinfra/__init__.py":
+                            add_file(sdist, root_name, name, f"__version__ = '{__version__}'\n")
+                        else:
+                            add_file(sdist, root_name, name, "placeholder\n")
+
+            def add_file(sdist, root_name, name, content):
+                payload = content.encode("utf-8")
+                member = tarfile.TarInfo(f"{root_name}/{name}")
+                member.size = len(payload)
+                sdist.addfile(member, io.BytesIO(payload))
+
+            invalid_purelib_wheel = tmp_path.joinpath("runinfra-invalid-purelib.whl")
+            write_wheel(invalid_purelib_wheel, root_is_purelib="false")
+            invalid_tag_wheel = tmp_path.joinpath("runinfra-invalid-tag.whl")
+            write_wheel(invalid_tag_wheel, tag="cp311-cp311-win_amd64")
+            invalid_top_level_wheel = tmp_path.joinpath("runinfra-invalid-top-level.whl")
+            write_wheel(invalid_top_level_wheel, top_level="runinfra_internal\n")
+
+            wrong_root_sdist = tmp_path.joinpath("runinfra-wrong-root.tar.gz")
+            write_sdist(wrong_root_sdist, root_name=f"wrong-runinfra-{__version__}")
+            absolute_root_sdist = tmp_path.joinpath("runinfra-absolute-root.tar.gz")
+            write_sdist(absolute_root_sdist, root_name=f"/runinfra-{__version__}")
+
+            for archive_path, verify_archive in (
+                (invalid_purelib_wheel, verifier.verify_wheel),
+                (invalid_tag_wheel, verifier.verify_wheel),
+                (invalid_top_level_wheel, verifier.verify_wheel),
+                (wrong_root_sdist, verifier.verify_sdist),
+                (absolute_root_sdist, verifier.verify_sdist),
+            ):
+                with self.subTest(archive=archive_path.name):
+                    with self.assertRaises(SystemExit) as raised:
+                        verify_archive(archive_path)
+                    self.assertEqual(raised.exception.code, 1)
+
     def test_python_package_verifier_rejects_non_regular_archive_entries(self):
         root = Path(__file__).resolve().parents[2]
         verifier_path = root.joinpath("scripts", "verify-python-package.py")
@@ -836,9 +903,9 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
             sdist_path = tmp_path.joinpath("runinfra-0.0.0.tar.gz")
             with tarfile.open(sdist_path, "w:gz") as sdist:
-                def add_file(name, content, root_name="runinfra-0.0.0"):
+                def add_file(name, content):
                     payload = content.encode("utf-8")
-                    member = tarfile.TarInfo(f"{root_name}/{name}")
+                    member = tarfile.TarInfo(f"runinfra-0.0.0/{name}")
                     member.size = len(payload)
                     sdist.addfile(member, io.BytesIO(payload))
 

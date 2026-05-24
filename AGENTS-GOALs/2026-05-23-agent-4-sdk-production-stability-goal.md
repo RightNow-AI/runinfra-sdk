@@ -1621,3 +1621,52 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for multimodal, idempotency replay, and remaining live endpoint rows.
 - Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+## 2026-05-24 Agent 4 Checkpoint: Python Wheel And Sdist Identity Gate
+
+Closed another Python artifact-integrity gate before GA:
+
+- Python wheel verification now checks `WHEEL` metadata for `Root-Is-Purelib: true`.
+- Python wheel verification now requires exactly `Tag: py3-none-any`.
+- Python wheel verification now requires `top_level.txt` to contain only `runinfra`.
+- Python sdist verification now requires the raw archive root directory to be exactly `runinfra-<current version>`.
+- Python sdist verification now rejects absolute archive member roots such as `/runinfra-<version>/...` or drive-letter roots before normalization can hide them.
+- Regression tests isolate invalid purelib, tag, top-level metadata, wrong sdist root, and absolute sdist root cases.
+
+TDD and review evidence:
+
+- Initial red run failed because malformed wheel layout metadata and a wrong sdist root were accepted.
+- First second-opinion review returned BLOCK because absolute-path sdist members still bypassed the root gate and the wheel test bundled multiple failure modes.
+- Added isolated wheel metadata subcases and a red absolute-root sdist regression; only the absolute-root sdist subcase still passed before the fix.
+- Fixed root extraction to inspect raw tar member names before path normalization.
+- Re-review returned ALLOW with no findings.
+
+Fresh verification:
+
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k wheel_layout_and_sdist_root_metadata` passed: 1 test, 5 subtests.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k python_package_verifier` passed: 6 tests, 31 subtests.
+- `python -m pytest python\tests -q` passed: 126 tests, 128 subtests.
+- `pnpm --dir typescript test` passed: 165 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node --check scripts\verify-npm-package.mjs` passed.
+- `python -m py_compile scripts\verify-python-package.py` passed.
+- `node scripts\verify-npm-package.mjs artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py artifacts\python-local` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\verify-version-sync.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `pnpm --dir typescript build` passed.
+- `python -m build python --outdir artifacts\python-local` passed.
+- `pnpm --dir typescript pack --pack-destination ..\artifacts\npm-local` passed.
+- `python -m twine check artifacts\python-local\*` passed.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes a Python package identity/integrity gate, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for multimodal, idempotency replay, and remaining live endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 20:17 +03:00.
