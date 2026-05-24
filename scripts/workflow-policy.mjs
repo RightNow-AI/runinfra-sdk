@@ -35,6 +35,17 @@ function jobNeeds(job, jobName) {
   return new RegExp(`needs:\\s*(?:\\[[^\\]]*\\b${jobName}\\b[^\\]]*\\]|${jobName})`, "u").test(job);
 }
 
+function jobHasCommandBetween(job, command, afterMarker, beforeMarkers) {
+  const commandIndex = job.indexOf(command);
+  const afterIndex = job.indexOf(afterMarker);
+  if (commandIndex === -1 || afterIndex === -1 || commandIndex <= afterIndex) return false;
+
+  return beforeMarkers.every((marker) => {
+    const markerIndex = job.indexOf(marker);
+    return markerIndex === -1 || commandIndex < markerIndex;
+  });
+}
+
 function actionUses(workflows) {
   const usesValues = Array.from(
     workflows.matchAll(/^\s*-?\s*uses:\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/gmu),
@@ -68,6 +79,8 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json";
   const strictArtifactCommand =
     "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json";
+  const promotedArtifactLayoutCommand = "node scripts/verify-promoted-artifacts.mjs artifacts";
+  const downloadPromotedArtifactsAction = "uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
 
   return [
     {
@@ -166,6 +179,22 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     {
       label: "non-publishing promotion jobs use read-only contents permission",
       ok: jobHasReadOnlyContentsPermission(buildArtifactsJob) && jobHasReadOnlyContentsPermission(promotionGateJob),
+    },
+    {
+      label: "publish workflow verifies downloaded promoted artifact layout",
+      ok:
+        jobHasCommandBetween(promotionGateJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
+          "Prepare exact artifacts and canary fixtures",
+          strictArtifactCommand,
+        ]) &&
+        jobHasCommandBetween(publishNpmJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
+          "Verify exact npm artifact contents (no leaks)",
+          "npm publish artifacts/npm-local/runinfra-sdk-*.tgz --access public --provenance",
+        ]) &&
+        jobHasCommandBetween(publishPypiJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
+          "Verify exact Python artifacts (no leaks)",
+          "packages-dir: artifacts/python-local",
+        ]),
     },
     {
       label: "workflows use frozen TypeScript lockfile installs",

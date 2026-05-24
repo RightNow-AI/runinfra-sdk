@@ -194,6 +194,9 @@ jobs:
           name: runinfra-sdk-promoted-artifacts
           path: artifacts
 
+      - name: Verify promoted artifact download layout
+        run: node scripts/verify-promoted-artifacts.mjs artifacts
+
       - name: Prepare exact artifacts and canary fixtures
         run: |
           mkdir -p typescript python/dist artifacts/sdk
@@ -260,6 +263,9 @@ jobs:
         with:
           name: runinfra-sdk-promoted-artifacts
           path: artifacts
+
+      - name: Verify promoted artifact download layout
+        run: node scripts/verify-promoted-artifacts.mjs artifacts
 
       - name: Verify exact npm artifact contents (no leaks)
         run: |
@@ -332,6 +338,9 @@ jobs:
         with:
           name: runinfra-sdk-promoted-artifacts
           path: artifacts
+
+      - name: Verify promoted artifact download layout
+        run: node scripts/verify-promoted-artifacts.mjs artifacts
 
       - name: Verify exact Python artifacts (no leaks)
         run: |

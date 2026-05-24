@@ -1151,6 +1151,42 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
+## 2026-05-24 Agent 4 Checkpoint: Promoted Artifact Layout Verification
+
+Closed a trusted-publish release-gate gap before GA promotion:
+
+- Added `scripts/verify-promoted-artifacts.mjs` to validate the exact post-download artifact layout used by promotion and publish jobs.
+- The verifier accepts exactly one npm tarball at `npm-local/runinfra-sdk-*.tgz`, one Python wheel at `python-local/runinfra-*-py3-none-any.whl`, and one Python sdist at `python-local/runinfra-*.tar.gz`.
+- The verifier rejects missing roots, non-directory roots, unexpected files, duplicate/missing expected artifacts, and non-regular entries without printing raw Node stack traces.
+- `publish.yml` now runs the verifier immediately after every `actions/download-artifact` of `runinfra-sdk-promoted-artifacts`, before canary fixture prep, npm artifact scanning/publish, or PyPI artifact scanning/publish.
+- Workflow policy now fails if the verifier is absent from any promotion/publish job or moved after the first artifact-use step.
+
+TDD and review evidence:
+
+- Focused promoted-artifact tests failed before `scripts/verify-promoted-artifacts.mjs` existed.
+- Non-directory root regression failed with a raw Node `ENOTDIR` stack before controlled root inspection was added.
+- Order-sensitive policy regression failed while policy only checked verifier presence, then passed after enforcing verifier placement before artifact use.
+- Initial second-opinion review found one blocker: the workflow referenced the new verifier while the file was still untracked. The intended file set now stages the verifier explicitly.
+- Follow-up second-opinion review returned `ALLOW` but flagged the presence-only policy residual. The order-sensitive policy fix closed that residual.
+- Final second-opinion re-review returned `ALLOW` with no blockers. Residual: policy parsing is still string-marker based rather than YAML-AST based, and CodeRabbit CLI was not available to that reviewer.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "promoted artifact"` passed: 3 tests passed, 157 skipped.
+- `pnpm --dir typescript test` passed: 160 tests.
+- `python -m pytest python\tests -q` passed: 123 tests, 119 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node scripts\verify-workflow-policy.mjs` passed, including `publish workflow verifies downloaded promoted artifact layout`.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `node scripts\verify-version-sync.mjs` passed: 0.1.4.
+- `node --check scripts\workflow-policy.mjs` and `node --check scripts\verify-promoted-artifacts.mjs` passed.
+
+Remaining blockers are unchanged:
+
+- This closes a trusted-publish artifact-layout guard, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
 ## 2026-05-24 Agent 4 Checkpoint: Trusted Publish Strict Promotion Gate
 
 Hardened the trusted publish path so real registry publishes cannot outrun

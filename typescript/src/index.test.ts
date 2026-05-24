@@ -1220,6 +1220,117 @@ class RunInfra:
       .toBe(false);
   });
 
+  it("verifies downloaded promoted artifact layout before promotion and publishing", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
+
+    expect(checks.find((check) => check.label === "publish workflow verifies downloaded promoted artifact layout")?.ok)
+      .toBe(true);
+
+    const withoutLayoutVerifier = publish.replaceAll(
+      "node scripts/verify-promoted-artifacts.mjs artifacts",
+      "echo skipped promoted artifact layout verification",
+    );
+    expect(withoutLayoutVerifier).not.toBe(publish);
+
+    const mutatedChecks = evaluateWorkflowPolicy({
+      publish: withoutLayoutVerifier,
+      ci,
+      hasCustomCodeqlWorkflow: false,
+    });
+    expect(mutatedChecks.find((check) => check.label === "publish workflow verifies downloaded promoted artifact layout")?.ok)
+      .toBe(false);
+
+    const movedAfterNpmArtifactUse = publish.replace(
+      [
+        "      - name: Verify promoted artifact download layout",
+        "        run: node scripts/verify-promoted-artifacts.mjs artifacts",
+        "",
+        "      - name: Verify exact npm artifact contents (no leaks)",
+      ].join("\n"),
+      [
+        "      - name: Verify exact npm artifact contents (no leaks)",
+        "        run: |",
+        "          TGZ=$(ls artifacts/npm-local/runinfra-sdk-*.tgz)",
+        "          echo \"=== Tarball: $TGZ ===\"",
+        "          node scripts/verify-npm-package.mjs \"$TGZ\"",
+        "",
+        "      - name: Verify promoted artifact download layout",
+        "        run: node scripts/verify-promoted-artifacts.mjs artifacts",
+      ].join("\n"),
+    );
+    expect(movedAfterNpmArtifactUse).not.toBe(publish);
+
+    const movedChecks = evaluateWorkflowPolicy({
+      publish: movedAfterNpmArtifactUse,
+      ci,
+      hasCustomCodeqlWorkflow: false,
+    });
+    expect(movedChecks.find((check) => check.label === "publish workflow verifies downloaded promoted artifact layout")?.ok)
+      .toBe(false);
+  });
+
+  it("rejects malformed promoted artifact download layouts", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promoted-artifacts-"));
+    try {
+      const artifactRoot = join(tmp, "artifacts");
+      mkdirSync(join(artifactRoot, "npm-local"), { recursive: true });
+      mkdirSync(join(artifactRoot, "python-local"), { recursive: true });
+      writeFileSync(join(artifactRoot, "npm-local", "runinfra-sdk-0.1.4.tgz"), "npm artifact");
+      writeFileSync(join(artifactRoot, "python-local", "runinfra-0.1.4-py3-none-any.whl"), "wheel artifact");
+      writeFileSync(join(artifactRoot, "python-local", "runinfra-0.1.4.tar.gz"), "sdist artifact");
+
+      const valid = spawnSync(process.execPath, [
+        "../scripts/verify-promoted-artifacts.mjs",
+        artifactRoot,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+      expect(valid.status, valid.stdout + valid.stderr).toBe(0);
+      expect(valid.stdout).toContain("Verified promoted artifact layout");
+
+      writeFileSync(join(artifactRoot, "runinfra-sdk-0.1.4.tgz"), "flattened duplicate");
+      const malformed = spawnSync(process.execPath, [
+        "../scripts/verify-promoted-artifacts.mjs",
+        artifactRoot,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+      expect(malformed.status, malformed.stdout + malformed.stderr).toBe(1);
+      expect(malformed.stderr).toContain("unexpected promoted artifact file");
+      expect(malformed.stderr).toContain("runinfra-sdk-0.1.4.tgz");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a non-directory promoted artifact root without a stack trace", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promoted-artifacts-root-"));
+    try {
+      const artifactRoot = join(tmp, "artifacts");
+      writeFileSync(artifactRoot, "not a directory");
+
+      const malformed = spawnSync(process.execPath, [
+        "../scripts/verify-promoted-artifacts.mjs",
+        artifactRoot,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(malformed.status, malformed.stdout + malformed.stderr).toBe(1);
+      expect(malformed.stderr).toContain("promoted artifact root is not a directory");
+      expect(malformed.stderr).not.toContain("Error:");
+      expect(malformed.stderr).not.toContain("at ");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("pins registry clean-install checks to canonical npm and PyPI indexes", async () => {
     const { canonicalRegistryInstallEnv, npmRegistryInstallArgs, pythonRegistryInstallArgs } =
       await import("../../scripts/clean-install-policy.mjs");
