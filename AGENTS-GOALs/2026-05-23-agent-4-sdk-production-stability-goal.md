@@ -993,3 +993,52 @@ Remaining blockers are unchanged:
 - The production gateway does not yet include RunPipe commit `a28f9f2b`, so LLM streaming/unsupported-parameter production canaries cannot be considered closed.
 - Multimodal live rows still need deployed/catalog-listed embeddings, images, TTS, ASR, voice fixtures, and idempotency replay proof.
 - `0.1.4` remains unpublished to npm/PyPI by design until strict production evidence is green.
+
+## 2026-05-24 Agent 4 Checkpoint: Publish Path And GitHub State
+
+Current state: publish security posture is healthy for beta, but current local `0.1.4` commits have not run protected-branch CI because they are still local and unpushed.
+
+Local workflow/policy verification:
+
+- `node scripts\verify-workflow-policy.mjs` passed all policy checks:
+  - npm and PyPI publish jobs use protected environments.
+  - publish jobs request OIDC `id-token: write`.
+  - no long-lived registry token references are present in workflows.
+  - npm publish uses `--provenance`.
+  - PyPI publish uses the pinned trusted-publishing action.
+  - workflow actions are SHA-pinned.
+  - publish defaults to dry run and real publish requires version confirmation.
+  - publish jobs are branch-locked to `refs/heads/main`.
+- `node scripts\verify-version-sync.mjs` passed: SDK version `0.1.4`.
+
+Live GitHub repository state from `gh`:
+
+- Repository: `RightNow-AI/runinfra-sdk`, public, default branch `main`.
+- `main` branch protection is enabled:
+  - required status checks are strict.
+  - required checks: `TypeScript SDK`, `Python SDK`, `Analyze (javascript-typescript)`, `Analyze (actions)`, `Analyze (python)`.
+  - code-owner review required with one approving review.
+  - stale reviews dismissed.
+  - admin enforcement enabled.
+  - force pushes and deletions disabled.
+  - linear history and conversation resolution required.
+- Latest remote `main` SHA observed: `b2d91fdc97465e39e9555bf1066a87ba48a48510`.
+- Required checks on that remote SHA were all successful:
+  - `TypeScript SDK`
+  - `Python SDK`
+  - `Analyze (javascript-typescript)`
+  - `Analyze (actions)`
+  - `Analyze (python)`
+- Code scanning state: 1 open alert total, 0 open high/critical alerts.
+
+Live registry state:
+
+- npm `@runinfra/sdk` latest: `0.1.3`.
+- PyPI `runinfra` latest: `0.1.3`.
+- Local SDK version is `0.1.4`; it is intentionally not published until strict live canaries and protected CI pass.
+
+Remaining publish blockers:
+
+- Push/PR has not happened for the local `0.1.4` commits, so protected-branch CI is not green for this exact local state.
+- Registry clean-install checks for `0.1.4` cannot run until `0.1.4` is actually published through trusted publishing.
+- Publishing remains blocked by strict live canary failures/skips and by the production RunPipe gateway patch not being deployed.
