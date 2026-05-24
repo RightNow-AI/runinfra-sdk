@@ -2446,3 +2446,47 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-25 00:04 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: TypeScript Auxiliary Embedding And Audio Parameter Typing
+
+Closed another TypeScript/Python SDK surface-parity gap before GA:
+
+- `EmbeddingRequest` now explicitly types the OpenAI-style `user` parameter already exposed by the Python SDK.
+- `SpeechRequest` now explicitly types the OpenAI-style TTS `speed` parameter already exposed by the Python SDK.
+- `TranscriptionRequest` now explicitly types the OpenAI-style ASR `temperature` parameter already exposed by the Python SDK.
+- Runtime behavior is unchanged. Embeddings and speech already forward JSON request fields, and ASR already appends extra typed request fields into multipart form data.
+- TS/Python READMEs document these fields as typed pass-through options for SDK parity, not GA-verified backend support.
+- The TypeScript changelog records the typing/API-surface parity change.
+
+TDD evidence:
+
+- Added a failing TypeScript regression first. It proved `EmbeddingRequest`, `SpeechRequest`, and `TranscriptionRequest` omitted `user`, `speed`, and `temperature`.
+- Implemented the minimal interface fields plus conservative README/changelog wording.
+- The first focused green run caught a brittle exact README substring assertion because Markdown line wrapping split the sentence; the test was tightened to match the intended wording across whitespace.
+- Focused green pass: `pnpm --dir typescript exec vitest run src/index.test.ts -t "types TypeScript embeddings and audio auxiliary OpenAI-compatible parameters"` passed.
+
+Fresh verification:
+
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test` passed: 189 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript build` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\verify-version-sync.mjs` passed.
+- `git diff --check` passed with only expected Windows CRLF working-copy warnings.
+
+Review status:
+
+- Read-only second-opinion subagents `019e5bd6-d605-7170-ac1f-802e66de01ce` and `019e5bd6-ed29-7bf3-8aad-ee887ae4c865` found no P0/P1/P2 blockers.
+- Review checked TS/Python parity, unchanged runtime pass-through behavior, conservative docs, regression-test value, and no package/security leakage impact.
+- CodeRabbit CLI was still not installed locally.
+
+Remaining blockers are unchanged:
+
+- This improves OpenAI-compatible SDK parameter smoothness, but it does not prove live embedding, TTS, or ASR GA readiness.
+- Strict production live canaries still need green evidence for these pass-through fields before those behaviors can be called GA-verified.
+- `0.1.4` is still not published to npm/PyPI, so exact registry install/import remains blocked.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 00:14 +03:00.

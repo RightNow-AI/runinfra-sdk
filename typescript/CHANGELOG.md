@@ -20,6 +20,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 - Added explicit TypeScript request typing for OpenAI-style chat completions
   and Responses adapter parameters that were already pass-through compatible
   at runtime.
+- Added explicit TypeScript request typing for auxiliary embedding and audio
+  parameters `user`, `speed`, and `temperature`, matching the Python SDK.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but

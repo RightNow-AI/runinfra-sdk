@@ -155,6 +155,7 @@ export interface EmbeddingRequest extends Record<string, unknown> {
   input: string | string[];
   encoding_format?: "float" | string;
   dimensions?: number;
+  user?: string;
 }
 
 export interface EmbeddingObject extends Record<string, unknown> {
@@ -178,6 +179,7 @@ export interface SpeechRequest extends Record<string, unknown> {
   ref_text?: string;
   task_type?: string;
   response_format?: string;
+  speed?: number;
 }
 
 export interface TranscriptionRequest extends Record<string, unknown> {
@@ -187,6 +189,7 @@ export interface TranscriptionRequest extends Record<string, unknown> {
   language?: string;
   prompt?: string;
   response_format?: "json" | "verbose_json" | string;
+  temperature?: number;
 }
 
 export interface TranscriptionResponse extends RunInfraRequestMetadata {

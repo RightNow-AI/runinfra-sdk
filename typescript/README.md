@@ -182,6 +182,9 @@ gateway error before GA.
 
 LLM pass-through options are typed for parity with the Python SDK and OpenAI-style
 request shapes, but are not GA-verified until strict canary rows assert backend support for each behavior.
+Embedding `user`, TTS `speed`, and ASR `temperature` are typed pass-through
+options for SDK parity, but are not GA-verified until strict modality canaries
+assert backend support.
 
 ## Text to speech
 

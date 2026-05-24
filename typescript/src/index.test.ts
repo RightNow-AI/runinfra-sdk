@@ -1741,6 +1741,26 @@ class RunInfra:
     expect(readme).toContain("not GA-verified until strict canary rows assert backend support");
   });
 
+  it("types TypeScript embeddings and audio auxiliary OpenAI-compatible parameters", () => {
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const embeddingRequest = source.match(
+      /export interface EmbeddingRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+    )?.[0];
+    const speechRequest = source.match(
+      /export interface SpeechRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+    )?.[0];
+    const transcriptionRequest = source.match(
+      /export interface TranscriptionRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+    )?.[0];
+
+    expect(embeddingRequest).toContain("user?: string;");
+    expect(speechRequest).toContain("speed?: number;");
+    expect(transcriptionRequest).toContain("temperature?: number;");
+    expect(readme).toContain("Embedding `user`, TTS `speed`, and ASR `temperature` are typed pass-through");
+    expect(readme).toMatch(/not GA-verified until strict modality canaries\s+assert backend support/u);
+  });
+
   it("documents local request payload validation before network sends", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
