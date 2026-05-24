@@ -156,6 +156,19 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
         promotionGateJob.includes(promotionReportCommand),
     },
     {
+      label: "promotion gate stages every promoted artifact for strict canaries",
+      ok:
+        jobHasCommandBetween(promotionGateJob, "cp artifacts/npm-local/runinfra-sdk-*.tgz typescript/", "Prepare exact artifacts and canary fixtures", [
+          strictArtifactCommand,
+        ]) &&
+        jobHasCommandBetween(promotionGateJob, "cp artifacts/python-local/runinfra-*-py3-none-any.whl python/dist/", "Prepare exact artifacts and canary fixtures", [
+          strictArtifactCommand,
+        ]) &&
+        jobHasCommandBetween(promotionGateJob, "cp artifacts/python-local/runinfra-*.tar.gz python/dist/", "Prepare exact artifacts and canary fixtures", [
+          strictArtifactCommand,
+        ]),
+    },
+    {
       label: "publish jobs use the exact promoted package artifacts",
       ok:
         jobNeeds(publishNpmJob, "build-artifacts") &&

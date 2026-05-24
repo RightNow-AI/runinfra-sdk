@@ -484,6 +484,7 @@ describe("RunInfra TypeScript SDK", () => {
         artifacts: [
           { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
           { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
+          { name: "pythonSdist", fileName: `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`, sha256: "d".repeat(64) },
         ],
       },
       expectedRows,
@@ -569,6 +570,7 @@ describe("RunInfra TypeScript SDK", () => {
         artifacts: [
           { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
           { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
+          { name: "pythonSdist", fileName: `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`, sha256: "d".repeat(64) },
         ],
       },
       expectedRows,
@@ -786,6 +788,11 @@ describe("RunInfra TypeScript SDK", () => {
     const expectedRows = matrix.expectedRows;
     const surfaces = coverageManifest.publicSurfaceCoverage.map((entry) => entry.surface);
     const sourceFileCount = sourceManifest.sourceDigestFileLabels.length;
+    const liveArtifacts = [
+      { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
+      { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
+      { name: "pythonSdist", fileName: `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`, sha256: "d".repeat(64) },
+    ];
     const surfaceCoverage = {
       status: "passed",
       errors: [],
@@ -827,10 +834,7 @@ describe("RunInfra TypeScript SDK", () => {
         sourceDigestSha256: digest,
         sourceFileCount,
         artifactDigestsChecked: true,
-        artifacts: [
-          { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
-          { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
-        ],
+        artifacts: liveArtifacts,
       },
       expectedRows,
       surfaceCoverage,
@@ -1047,6 +1051,100 @@ describe("RunInfra TypeScript SDK", () => {
 
       expect(result.status).toBe(1);
       expect(`${result.stdout}${result.stderr}`).toContain("candidate sourceFileCount must match the canonical live canary source file count");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects promotion reports that omit the Python sdist artifact digest", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-missing-sdist-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const livePath = join(tmp, "live.json");
+    const digest = "a".repeat(64);
+    const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const coverageManifest = await import("../../scripts/live-canary-surface-coverage.mjs") as {
+      publicSurfaceCoverage: Array<{ surface: string }>;
+    };
+    const sourceManifest = await import("../../scripts/live-canary-source-files.mjs") as {
+      sourceDigestFileLabels: string[];
+    };
+    const expectedRows = matrix.expectedRows;
+    const surfaces = coverageManifest.publicSurfaceCoverage.map((entry) => entry.surface);
+    const surfaceCoverage = {
+      status: "passed",
+      errors: [],
+      uncoveredSurfaces: [],
+      uncoveredRows: [],
+      surfaces,
+      surfaceCount: surfaces.length,
+      rowCount: matrix.expectedRows.length,
+    };
+    const readiness = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: sourceManifest.sourceDigestFileLabels.length,
+        artifactDigestsChecked: false,
+        artifacts: [],
+      },
+      expectedRows,
+      readiness: {
+        status: "ready",
+        missing: [],
+        rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
+      },
+      surfaceCoverage,
+      parity: { status: "not_run", errors: [] },
+      reports: [],
+    };
+    const live = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: sourceManifest.sourceDigestFileLabels.length,
+        artifactDigestsChecked: true,
+        artifacts: [
+          { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
+          { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
+        ],
+      },
+      expectedRows,
+      surfaceCoverage,
+      parity: { status: "passed", errors: [] },
+      reports: ["typescript", "python"].map((language) => ({
+        language,
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        strict: true,
+        baseURL: "https://api.runinfra.ai/v1",
+        results: expectedRows.map((name) => ({ name, status: "passed" })),
+      })),
+    };
+
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
+      writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain("candidate artifacts must be npm, pythonWheel, and pythonSdist");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1738,6 +1836,30 @@ class RunInfra:
       hasCustomCodeqlWorkflow: false,
     });
     expect(mutatedChecks.find((check) => check.label === "publish workflow gates real publishes on strict promotion reports")?.ok)
+      .toBe(false);
+  });
+
+  it("stages every promoted artifact before the strict artifact canary", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
+
+    expect(checks.find((check) => check.label === "promotion gate stages every promoted artifact for strict canaries")?.ok)
+      .toBe(true);
+
+    const withoutSdistStaging = publish.replace(
+      /\n\s+cp artifacts\/python-local\/runinfra-\*\.tar\.gz python\/dist\//u,
+      "",
+    );
+    expect(withoutSdistStaging).not.toBe(publish);
+
+    const mutatedChecks = evaluateWorkflowPolicy({
+      publish: withoutSdistStaging,
+      ci,
+      hasCustomCodeqlWorkflow: false,
+    });
+    expect(mutatedChecks.find((check) => check.label === "promotion gate stages every promoted artifact for strict canaries")?.ok)
       .toBe(false);
   });
 
@@ -2435,10 +2557,12 @@ class RunInfra:
     try {
       const npmName = `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`;
       const wheelName = `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`;
+      const sdistName = `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`;
       mkdirSync(join(tmp, "typescript"), { recursive: true });
       mkdirSync(join(tmp, "python", "dist"), { recursive: true });
       writeFileSync(join(tmp, "typescript", npmName), "not a valid npm tarball");
       writeFileSync(join(tmp, "python", "dist", wheelName), "not a valid Python wheel");
+      writeFileSync(join(tmp, "python", "dist", sdistName), "not a valid Python sdist");
 
       const result = spawnSync(process.execPath, [
         runnerPath,
@@ -2465,7 +2589,7 @@ class RunInfra:
       };
       expect(report.candidate?.packageSource).toBe("artifact");
       expect(report.candidate?.artifactDigestsChecked).toBe(true);
-      expect(report.candidate?.artifacts?.map((artifact) => artifact.fileName)).toEqual([npmName, wheelName]);
+      expect(report.candidate?.artifacts?.map((artifact) => artifact.fileName)).toEqual([npmName, wheelName, sdistName]);
       for (const artifact of report.candidate?.artifacts ?? []) {
         expect(artifact.fileName).not.toMatch(/[\\/]/u);
         expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/u);

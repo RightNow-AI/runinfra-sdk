@@ -2019,3 +2019,54 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 21:54 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Python Sdist Promotion Evidence Gate
+
+Closed a trusted-publish promotion-evidence gap before GA:
+
+- `scripts/run-sdk-live-canaries.mjs` now includes the Python sdist in artifact-mode candidate identity, alongside the npm tarball and Python wheel.
+- `scripts/verify-promotion-reports.mjs` now rejects live artifact reports unless `candidate.artifacts` proves all three shipped artifact names: `npm`, `pythonWheel`, and `pythonSdist`.
+- `.github/workflows/publish.yml` now stages the downloaded Python sdist into `python/dist` before the strict artifact live canary runs, matching the runner's artifact lookup path.
+- `scripts/workflow-policy.mjs` now has an explicit policy check preventing promotion-gate from losing npm, wheel, or sdist staging before strict artifact canaries.
+- `LIVE-CANARIES.md` and the root README now document that promotion reports must include npm tarball, Python wheel, and Python sdist digests.
+- TypeScript regression coverage now proves a two-artifact live report is rejected, a valid three-artifact report is accepted, artifact setup failure reports write all three digest rows after artifacts resolve, and the publish workflow stages all three promoted artifacts before strict canaries.
+
+TDD evidence:
+
+- Red test: `pnpm --dir typescript test --run -t "Python sdist artifact digest"` failed because the verifier accepted a live report containing only npm and Python wheel artifacts.
+- Focused green: `pnpm --dir typescript test --run -t "Python sdist artifact digest|promotion reports use the same candidate digest|artifact digests into artifact setup failure reports"` passed: 3 tests.
+- Review-fix red test: `pnpm --dir typescript test --run -t "stages every promoted artifact"` failed because workflow policy had no check for sdist staging.
+- Review-fix green test: `pnpm --dir typescript test --run -t "stages every promoted artifact"` passed after adding sdist staging and policy coverage.
+
+Fresh verification:
+
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `node --check scripts\verify-promotion-reports.mjs` passed.
+- `node --check scripts\workflow-policy.mjs` passed.
+- `node scripts\verify-workflow-policy.mjs` passed, including the new `promotion gate stages every promoted artifact for strict canaries` check.
+- `pnpm --dir typescript test` passed: 179 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- Non-strict artifact-mode local probe against the current local npm tarball, Python wheel, and Python sdist wrote `candidate.artifactDigestsChecked=true` with `npm,pythonWheel,pythonSdist` and pathless SHA-256 artifact rows.
+- `pnpm --dir typescript build` passed.
+- `python -m build python` built the wheel and sdist.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist` passed for the wheel and sdist.
+- `python -m twine check python\dist\*` passed for the wheel and sdist.
+- `git diff --check` passed with only Windows CRLF normalization warnings.
+
+Review status:
+
+- Read-only second-opinion review `019e5b63-4869-78f1-ac83-0f88b1c3a936` initially found one P1: the publish workflow did not copy the downloaded Python sdist into `python/dist` before the strict artifact canary.
+- The P1 was fixed with workflow staging plus workflow-policy regression coverage.
+- Re-review reported no P0/P1/P2 findings.
+
+Remaining blockers are unchanged:
+
+- This closes another local promotion-evidence integrity gap, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and all required live endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 22:13 +03:00.

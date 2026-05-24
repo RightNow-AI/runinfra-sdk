@@ -650,7 +650,7 @@ function baseCandidateIdentity(fields = {}) {
   };
 }
 
-function artifactCandidateIdentity(npmArtifact, pythonWheel) {
+function artifactCandidateIdentity(npmArtifact, pythonWheel, pythonSdist) {
   return baseCandidateIdentity({
     artifactDigestsChecked: true,
     artifacts: [
@@ -663,6 +663,11 @@ function artifactCandidateIdentity(npmArtifact, pythonWheel) {
         name: "pythonWheel",
         fileName: basename(pythonWheel),
         sha256: sha256File(pythonWheel, "Python wheel"),
+      },
+      {
+        name: "pythonSdist",
+        fileName: basename(pythonSdist),
+        sha256: sha256File(pythonSdist, "Python sdist"),
       },
     ],
   });
@@ -802,6 +807,14 @@ function expectedPythonWheel() {
   ));
 }
 
+function expectedPythonSdist() {
+  return resolve(newestMatching(
+    "python/dist",
+    new RegExp(`^runinfra-${escapeRegExp(expectedSdkVersion)}\\.tar\\.gz$`, "u"),
+    `Python sdist for SDK version ${expectedSdkVersion}`,
+  ));
+}
+
 function npmCommand() {
   const npmCli = join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
   if (existsSync(npmCli)) return { command: process.execPath, prefixArgs: [npmCli] };
@@ -832,7 +845,8 @@ function installArtifactCanaryPackages() {
   const venvDir = resolve(pythonDir, "venv");
   const npmArtifact = expectedNpmArtifact();
   const pythonWheel = expectedPythonWheel();
-  const candidate = artifactCandidateIdentity(npmArtifact, pythonWheel);
+  const pythonSdist = expectedPythonSdist();
+  const candidate = artifactCandidateIdentity(npmArtifact, pythonWheel, pythonSdist);
   resolvedArtifactCandidate = candidate;
   mkdirSync(npmDir, { recursive: true });
   mkdirSync(pythonDir, { recursive: true });

@@ -177,13 +177,16 @@ function artifactCandidateErrors(label, candidate) {
   if (candidate.artifactDigestsChecked !== true) {
     reportErrors.push(`${label} artifactDigestsChecked must be true`);
   }
-  if (!Array.isArray(candidate.artifacts) || candidate.artifacts.length !== 2) {
-    reportErrors.push(`${label} candidate must contain npm and Python wheel artifacts`);
+  if (!Array.isArray(candidate.artifacts)) {
+    reportErrors.push(`${label} candidate must contain npm, Python wheel, and Python sdist artifacts`);
     return reportErrors;
   }
+  if (candidate.artifacts.length !== 3) {
+    reportErrors.push(`${label} candidate artifacts must be npm, pythonWheel, and pythonSdist`);
+  }
   const artifactNames = candidate.artifacts.map((artifact) => artifact?.name).sort();
-  if (artifactNames.join(",") !== "npm,pythonWheel") {
-    reportErrors.push(`${label} candidate artifacts must be npm and pythonWheel`);
+  if (artifactNames.join(",") !== "npm,pythonSdist,pythonWheel") {
+    reportErrors.push(`${label} candidate artifacts must be npm, pythonWheel, and pythonSdist`);
   }
   for (const artifact of candidate.artifacts) {
     if (typeof artifact?.fileName !== "string" || !artifact.fileName.trim()) {

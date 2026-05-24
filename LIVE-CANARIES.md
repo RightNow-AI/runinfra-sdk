@@ -49,10 +49,10 @@ shell-env precedence, and report redaction inside the canary runner.
 Without `--strict`, missing model credentials are reported as skipped rows.
 With `--strict`, any skipped or failed row exits non-zero. Use strict mode for
 release promotion. The default `--package-source artifact` mode installs the
-packed npm tarball and Python wheel into disposable consumer environments
-before it starts live canaries, so strict reports prove the shipped artifacts,
-not only the source checkout. Use `--package-source source` only for local SDK
-development diagnostics.
+packed npm tarball and Python wheel into disposable consumer environments and
+records the Python sdist digest before it starts live canaries, so strict
+reports prove every shipped artifact, not only the source checkout. Use
+`--package-source source` only for local SDK development diagnostics.
 
 In the trusted-publish workflow, `build-artifacts` creates the npm tarball,
 Python wheel, and Python sdist once and uploads them as
@@ -125,14 +125,14 @@ and record only package file names plus SHA-256 values in `candidate.artifacts`;
 preflight reports do not require built artifacts and leave that list empty.
 `verify-promotion-reports.mjs` is the release gate that compares the readiness
 and live reports, requires the same candidate source digest, requires the live
-artifact report to include npm and Python wheel hashes, and fails if either
-language has skipped or failed rows. It also requires `expectedRows` to match
-the canonical live canary matrix exactly, so a shortened self-consistent report
-cannot satisfy the gate. The report's candidate source file count must also
-match the canonical live-canary source file manifest. Promotion evidence must
-come from strict child canaries against `https://api.runinfra.ai/v1`; reports
-generated with any other custom `RUNINFRA_BASE_URL` are useful for staging
-smoke tests but cannot satisfy the real publish gate.
+artifact report to include npm, Python wheel, and Python sdist hashes, and
+fails if either language has skipped or failed rows. It also requires
+`expectedRows` to match the canonical live canary matrix exactly, so a shortened
+self-consistent report cannot satisfy the gate. The report's candidate source
+file count must also match the canonical live-canary source file manifest.
+Promotion evidence must come from strict child canaries against `https://api.runinfra.ai/v1`;
+reports generated with any other custom `RUNINFRA_BASE_URL` are useful for
+staging smoke tests but cannot satisfy the real publish gate.
 
 ## Matrix Rows
 
