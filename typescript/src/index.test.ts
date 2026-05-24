@@ -1310,6 +1310,38 @@ describe("RunInfra TypeScript SDK", () => {
     }
   });
 
+  it("fails oversized clean-install command timeout before creating workspaces", () => {
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "typescript",
+        "--mode",
+        "artifact",
+        "--npm-tarball",
+        join(repoRoot, "missing.tgz"),
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS: "999999999999999999999999",
+        },
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(output).toContain("RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS must be no greater than 3600000.");
+      expect(output).not.toContain("Clean install command failed");
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
   it("times out stalled clean-install commands without leaking workspace paths", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-clean-install-timeout-"));
     const repoRoot = join(process.cwd(), "..");

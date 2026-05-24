@@ -2946,3 +2946,37 @@ Remaining blockers are unchanged:
 - npm and PyPI latest are still `0.1.3`; local `0.1.4` still needs trusted publishing and registry install/import proof.
 
 Checkpoint timestamp: 2026-05-25 02:05 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: Clean-Install Timeout Bound Tightening
+
+Closed the remaining clean-install timeout parser edge case found during second-opinion review:
+
+- `RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS` is now capped at 3600000 ms.
+- Oversized numeric values fail before `.clean-install-tmp` workspaces are created.
+- The parser still rejects non-positive values, non-integers, and unsafe integers before any verifier workspace is created.
+
+TDD evidence:
+
+- Added a regression for an oversized timeout env value before implementation.
+- The regression failed against the prior parser by reaching the npm clean-install path instead of failing at timeout parsing.
+- After implementation, the focused timeout regressions passed.
+
+Fresh verification at this checkpoint:
+
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "invalid clean-install command timeout|oversized clean-install command timeout|stalled clean-install commands" --reporter dot --testTimeout 5000` passed: 3 selected tests.
+- `git diff --check` passed with only expected Windows CRLF working-copy warnings.
+- `node --check scripts\verify-clean-installs.mjs` passed.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` passed: 196 tests.
+- `node scripts\verify-clean-installs.mjs --package typescript --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `node scripts\verify-clean-installs.mjs --package python --mode artifact --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\verify-version-sync.mjs` passed.
+
+Remaining blockers are unchanged:
+
+- Strict production live canaries are still blocked by missing scoped canary env/fixtures.
+- npm and PyPI latest are still `0.1.3`; local `0.1.4` still needs trusted publishing and registry install/import proof.
+- The production RunPipe gateway still needs deployment before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 02:13 +03:00.

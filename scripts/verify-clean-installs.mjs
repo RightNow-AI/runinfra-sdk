@@ -27,9 +27,11 @@ const registryRetryDelayMs = parsePositiveInteger(
   optionValue("--registry-retry-delay-ms") ?? "10000",
   "--registry-retry-delay-ms",
 );
+const maxCleanInstallCommandTimeoutMs = 3_600_000;
 const cleanInstallCommandTimeoutMs = parsePositiveInteger(
   process.env.RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS ?? "120000",
   "RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS",
+  { max: maxCleanInstallCommandTimeoutMs },
 );
 const webhookDeliverySurfaceRow = "webhooks.delivery_surface.absent";
 const tempRoot = resolve(repoRoot, ".clean-install-tmp");
@@ -56,11 +58,18 @@ function readNpmVersion() {
   return packageJson.version;
 }
 
-function parsePositiveInteger(value, label) {
+function parsePositiveInteger(value, label, options = {}) {
   if (!/^[1-9][0-9]*$/u.test(value)) {
     fail(`${label} must be a positive integer.`);
   }
-  return Number(value);
+  const parsed = Number(value);
+  if (typeof options.max === "number" && parsed > options.max) {
+    fail(`${label} must be no greater than ${options.max}.`);
+  }
+  if (!Number.isSafeInteger(parsed)) {
+    fail(`${label} must be a safe integer.`);
+  }
+  return parsed;
 }
 
 function fail(message) {
