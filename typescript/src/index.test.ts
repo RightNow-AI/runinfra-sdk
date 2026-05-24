@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -889,6 +889,36 @@ describe("RunInfra TypeScript SDK", () => {
     }
   });
 
+  it("removes parent live-canary temporary child reports when artifact failure report writing fails", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-artifact-report-write-failure-"));
+    const reportParent = join(tmp, "not-a-directory");
+    const reportPath = join(reportParent, "live-canary.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    try {
+      writeFileSync(reportParent, "blocks report directory creation");
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "artifact",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails parent live-canary parity when child reports use the wrong SDK version", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-child-version-"));
     const reportPath = join(tmp, "live-canary.json");
@@ -933,6 +963,54 @@ with open(report, "w", encoding="utf-8") as handle:
       };
       expect(report.parity?.errors).toContain(`typescript SDK version 0.0.0 != ${RUNINFRA_SDK_VERSION}`);
       expect(report.parity?.errors).toContain(`python SDK version 0.0.0 != ${RUNINFRA_SDK_VERSION}`);
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("removes parent live-canary temporary child reports when final report writing fails", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-report-write-failure-"));
+    const reportParent = join(tmp, "not-a-directory");
+    const reportPath = join(reportParent, "live-canary.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    try {
+      mkdirSync(join(tmp, "scripts"), { recursive: true });
+      writeFileSync(reportParent, "blocks report directory creation");
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-typescript.mjs"), `
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+const report = process.argv[process.argv.indexOf("--report") + 1];
+mkdirSync(dirname(report), { recursive: true });
+writeFileSync(report, JSON.stringify({ language: "typescript", sdkVersion: "${RUNINFRA_SDK_VERSION}", results: [] }));
+`);
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-python.py"), `
+import json
+import os
+import sys
+report = sys.argv[sys.argv.index("--report") + 1]
+os.makedirs(os.path.dirname(report), exist_ok=True)
+with open(report, "w", encoding="utf-8") as handle:
+    json.dump({"language": "python", "sdkVersion": "${RUNINFRA_SDK_VERSION}", "results": []}, handle)
+`);
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

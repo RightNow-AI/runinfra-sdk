@@ -1151,6 +1151,46 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
+## 2026-05-24 Agent 4 Checkpoint: Canary Temp Report Cleanup
+
+Closed a canary-runner hygiene gap before GA promotion:
+
+- Parent live-canary runs now remove their per-run `.canary-tmp/<timestamp-pid>` child report directory after full-run completion.
+- The `.canary-tmp` root is removed only when empty, preserving concurrent sibling canary runs.
+- Cleanup now runs on parity failures, final combined-report write failures, artifact setup failures, and early failure-report write/leak-scan failures after temp creation.
+- Stale generated `.canary-tmp` directories from prior local runs were removed after verifying the resolved path was inside the `runinfra-sdk` repo.
+
+TDD and review evidence:
+
+- Added a parity-failure cleanup assertion and confirmed it failed before root cleanup was added.
+- Added a final report-write failure regression and confirmed it failed before final report writing was cleanup-guarded.
+- Second-opinion review found one blocker: artifact setup failure plus failed failure-report write still bypassed cleanup.
+- Added an artifact failure-report write regression and confirmed it failed before guarding `surfaceCoverageFailureReport()`.
+- After the helper cleanup patch, all three focused cleanup regressions passed.
+- Second-opinion re-review returned `ALLOW` with no critical, important, or minor findings.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "artifact failure report writing fails"` passed: 1 test passed, 143 skipped.
+- `pnpm --dir typescript test --run -t "final report writing fails|parent live-canary parity"` passed: 2 tests passed, 142 skipped.
+- `pnpm --dir typescript test` passed: 144 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `python -m pytest python\tests -q` passed: 123 tests, 119 subtests.
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `node --check scripts\sdk-live-canary-typescript.mjs` passed.
+- `python -m py_compile scripts\sdk-live-canary-python.py` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 45 rows, 0 uncovered surfaces.
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --report artifacts\sdk\live-canary-readiness-current.json` remained blocked as expected: 19 ready, 26 blocked.
+- `node scripts\run-sdk-live-canaries.mjs --package-source artifact --report artifacts\sdk\live-canary-artifact-no-env-current.json` passed in no-env mode: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- A post-run filesystem check confirmed `.canary-tmp` was absent after the artifact no-env canary.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes canary-runner hygiene, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
 ## 2026-05-24 Agent 4 Checkpoint: Idempotency Evidence Field Validation
 
 Closed a live-canary report-leak and false-readiness gap for the idempotency replay row:

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
@@ -17,7 +17,8 @@ const envFilePath = scriptEnvFilePath ?? nodeEnvFilePath;
 const envFileMayAlreadyBeLoaded = !scriptEnvFilePath && Boolean(nodeEnvFilePath);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const expectedSdkVersion = readExpectedSdkVersion();
-const tempDir = resolve(".canary-tmp", `${Date.now()}-${process.pid}`);
+const tempRoot = resolve(".canary-tmp");
+const tempDir = join(tempRoot, `${Date.now()}-${process.pid}`);
 const tsReport = resolve(tempDir, "typescript.json");
 const pyReport = resolve(tempDir, "python.json");
 const expectedRows = [
@@ -734,6 +735,17 @@ function writeReport(report) {
   writeFileSync(absolute, `${JSON.stringify(report, null, 2)}\n`);
 }
 
+function cleanupTempDir() {
+  rmSync(tempDir, { recursive: true, force: true });
+  try {
+    if (existsSync(tempRoot) && readdirSync(tempRoot).length === 0) {
+      rmdirSync(tempRoot);
+    }
+  } catch {
+    // Another concurrent canary process may still be using the temp root.
+  }
+}
+
 function surfaceCoverageFailureReport(errors, fields = {}) {
   const surfaceCoverage = buildSurfaceCoverage();
   const combined = {
@@ -753,10 +765,17 @@ function surfaceCoverageFailureReport(errors, fields = {}) {
   try {
     assertReportDoesNotLeak(combined);
   } catch (error) {
+    cleanupTempDir();
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
-  writeReport(combined);
+  try {
+    writeReport(combined);
+  } catch (error) {
+    cleanupTempDir();
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
   return combined;
 }
 
@@ -977,6 +996,7 @@ try {
     ? `artifact canary package setup failed: ${error.message}`
     : "artifact canary package setup failed";
   surfaceCoverageFailureReport([errorMessage]);
+  cleanupTempDir();
   console.error("Live canary artifact package setup failed. Build npm and Python artifacts first.");
   process.exit(1);
 }
@@ -1079,16 +1099,18 @@ const combined = {
 
 try {
   assertReportDoesNotLeak(combined);
+  if (reportPath) {
+    const absolute = resolve(reportPath);
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, `${JSON.stringify(combined, null, 2)}\n`);
+  }
 } catch (error) {
+  cleanupTempDir();
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
 
-if (reportPath) {
-  const absolute = resolve(reportPath);
-  mkdirSync(dirname(absolute), { recursive: true });
-  writeFileSync(absolute, `${JSON.stringify(combined, null, 2)}\n`);
-}
+cleanupTempDir();
 
 const failed = runs.filter((run) => run.status !== 0);
 if (failed.length || parityErrors.length) {
