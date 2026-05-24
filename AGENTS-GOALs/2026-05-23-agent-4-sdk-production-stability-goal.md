@@ -1042,3 +1042,23 @@ Remaining publish blockers:
 - Push/PR has not happened for the local `0.1.4` commits, so protected-branch CI is not green for this exact local state.
 - Registry clean-install checks for `0.1.4` cannot run until `0.1.4` is actually published through trusted publishing.
 - Publishing remains blocked by strict live canary failures/skips and by the production RunPipe gateway patch not being deployed.
+
+## 2026-05-24 Agent 4 Checkpoint: RunPod Canary Inventory
+
+RunPod state was inspected without provisioning new paid resources.
+
+Current reusable canary infrastructure:
+
+- One existing serverless SDK LLM canary endpoint is present for `Qwen/Qwen2.5-0.5B-Instruct`, using one L4 GPU, workers min `0`, workers max `1`, idle timeout `120`.
+- No active RunPod pods are present.
+- Existing templates include stock SGLang, TEI, and vLLM templates plus the SDK LLM canary template.
+
+Not found:
+
+- No existing embeddings canary endpoint.
+- No existing image canary endpoint.
+- No existing TTS canary endpoint.
+- No existing ASR canary endpoint.
+- No existing voice pipeline canary endpoint.
+
+Decision: do not provision new paid canary endpoints from template names alone. The next paid/provisioning step should be tied to a verified deployment path or model/backend command for each modality, then cataloged in RunPipe and wired into the SDK canary env file without printing secrets.
