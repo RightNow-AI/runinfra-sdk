@@ -3,10 +3,10 @@
 ## Goal
 Make RunInfra SDKs production-grade and GA-ready for npm and PyPI without weakening security, breaking contract, leaking secrets/source maps, or pretending unverified behavior is done.
 
-Target packages:
-- npm: `runinfra`
+Targets:
+- npm: `@runinfra/sdk`
 - PyPI: `runinfra`
-- Live API target: `https://api.runinfra.ai/v1`
+- API: `https://api.runinfra.ai/v1`
 
 ## Done Means
 The SDK is ready only when all of these are true:

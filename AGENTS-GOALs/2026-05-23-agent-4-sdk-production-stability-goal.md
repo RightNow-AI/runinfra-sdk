@@ -2321,3 +2321,46 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 23:33 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Canary Timeout Bound Gate
+
+Closed another live-canary runner safety gap before GA:
+
+- `RUNINFRA_CANARY_TIMEOUT_SECONDS` is now capped at 600 seconds in the parent runner.
+- The same bounded validation runs in strict readiness preflight and full live-canary configuration validation.
+- Excessive values fail before child canaries spawn, before artifact setup work, and before any live requests.
+- Timeout validation reports a generic requirement string and does not write the rejected value to readiness reports, live reports, stdout, or stderr.
+- `LIVE-CANARIES.md` documents the default 120 second timeout and the 600 second maximum.
+- The optimal GA goal file now names the npm package correctly as `@runinfra/sdk`.
+
+TDD evidence:
+
+- Added failing regressions first. Strict preflight accepted `RUNINFRA_CANARY_TIMEOUT_SECONDS=601`, and full live-canary execution did not fail with the bounded timeout requirement before child work.
+- Implemented the minimal parent-runner bound and updated stale tests/docs to the new bounded requirement string.
+- Focused green pass: `pnpm --dir typescript exec vitest run src/index.test.ts -t "timeout"` passed with 8 selected tests.
+
+Fresh verification:
+
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `pnpm --dir typescript test` passed: 186 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript build` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --package-source source --report artifacts\sdk\live-canary-readiness-local.json` failed closed as expected because live canary env is absent; readiness was blocked with 19 ready rows, 30 blocked rows, `rowCoverageErrors=0`, source file count 14, and surface coverage passed.
+- `git diff --check` passed with only expected Windows CRLF working-copy warnings.
+
+Review status:
+
+- CodeRabbit CLI was not installed locally, so the default code-review skill could not run.
+- Read-only second-opinion subagent `019e5bbe-4ca8-7cb0-a743-44727f7e3a12` found no P0/P1/P2 blockers. It checked bounded validation, preflight/full-run fail-closed ordering, value redaction, docs, and npm/PyPI package-name alignment.
+
+Remaining blockers are unchanged:
+
+- This makes live-canary execution safer, but it does not prove live SDK GA readiness.
+- `0.1.4` is still not published to npm/PyPI, so exact registry install/import remains blocked.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and all required live endpoint rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 23:51 +03:00.

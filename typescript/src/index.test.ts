@@ -1750,6 +1750,7 @@ class RunInfra:
     expect(pythonCanary).toContain("def slow_stream_requirements()");
     expect(liveCanaries).toContain("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS");
     expect(liveCanaries).toContain("Slow-consumer streaming rows");
+    expect(liveCanaries).toContain("defaults to 120 and must be <= 600");
     expect(liveCanaries).toContain("bounded by `RUNINFRA_CANARY_TIMEOUT_SECONDS`");
   });
 
@@ -2694,7 +2695,7 @@ class RunInfra:
       expect(configReport.surfaceCoverage?.status).toBe("passed");
       expect(configReport.surfaceCoverage?.uncoveredSurfaces).toEqual([]);
       expect(configReport.parity?.errors).toEqual(expect.arrayContaining([
-        "RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number",
+        "RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number <= 600",
       ]));
 
       const artifactFailure = spawnSync(process.execPath, [
@@ -3545,10 +3546,65 @@ with open(report, "w", encoding="utf-8") as handle:
             missing?: string[];
           };
         };
-        expect(report.readiness?.missing).toContain("RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number");
+        expect(report.readiness?.missing).toContain("RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number <= 600");
       } finally {
         rmSync(tmp, { recursive: true, force: true });
       }
+    }
+  });
+
+  it("blocks strict live-canary preflight on excessive timeout readiness inputs", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-timeout-bound-"));
+    const reportPath = join(tmp, "readiness.json");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "preflight-api-key-placeholder",
+          RUNINFRA_CANARY_TIMEOUT_SECONDS: "601",
+          RUNINFRA_LLM_MODEL: "llm-preflight-model",
+          RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
+          RUNINFRA_EMBEDDING_DIMENSIONS: "128",
+          RUNINFRA_IMAGE_MODEL: "image-preflight-model",
+          RUNINFRA_IMAGE_SIZE: "1024x1024",
+          RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
+          RUNINFRA_TTS_MODEL: "tts-preflight-model",
+          RUNINFRA_TTS_VOICE: "voice-preflight",
+          RUNINFRA_TTS_RESPONSE_FORMAT: "mp3",
+          RUNINFRA_ASR_MODEL: "asr-preflight-model",
+          RUNINFRA_ASR_LANGUAGE: "en",
+          RUNINFRA_ASR_RESPONSE_FORMAT: "json",
+          RUNINFRA_ASR_FIXTURE_PATH: __filename,
+          RUNINFRA_ASR_EXPECTED_TEXT: "hello",
+          TEST_PIPELINE_ID: "pipeline-preflight",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "1",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          missing?: string[];
+          rows?: Array<{ name: string; missing?: string[] }>;
+        };
+      };
+      expect(report.readiness?.missing).toEqual(["RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number <= 600"]);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "models.list")?.missing,
+      ).toEqual(["RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number <= 600"]);
+      expect(JSON.stringify(report)).not.toContain("601");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
   });
 
@@ -3736,6 +3792,41 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(report.reports).toEqual([]);
       expect(JSON.stringify(report)).not.toContain(unsafeBaseURL);
       expect(`${result.stdout}${result.stderr}`).not.toContain(unsafeBaseURL);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks full live-canary runs on excessive timeout inputs before child canaries spawn", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-canary-timeout-bound-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const timeoutError = "RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number <= 600";
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_CANARY_TIMEOUT_SECONDS: "601",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+        reports?: unknown[];
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain(timeoutError);
+      expect(report.reports).toEqual([]);
+      expect(JSON.stringify(report)).not.toContain("601");
+      expect(`${result.stdout}${result.stderr}`).not.toContain("601");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

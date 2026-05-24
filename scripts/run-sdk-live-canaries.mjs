@@ -204,6 +204,7 @@ const ttsResponseFormats = ["mp3", "opus", "aac", "flac", "wav", "pcm"];
 const idempotencyEvidenceFieldRequirementMessage =
   "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths";
 const idempotencyEvidenceFieldPattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/u;
+const maxCanaryTimeoutSeconds = 600;
 
 function missingEnv(names) {
   return names.filter((name) => !env(name));
@@ -215,16 +216,18 @@ function positiveIntegerRequirement(name) {
   return /^[1-9][0-9]*$/u.test(value) ? [] : [`${name} positive integer`];
 }
 
-function optionalPositiveNumberRequirement(name) {
+function optionalCanaryTimeoutRequirement() {
+  const name = "RUNINFRA_CANARY_TIMEOUT_SECONDS";
   const value = env(name);
   if (!value) return [];
   const parsed = Number(value);
   if (
     !/^(?:[1-9][0-9]*|0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*\.[0-9]+)$/u.test(value) ||
     !Number.isFinite(parsed) ||
-    parsed <= 0
+    parsed <= 0 ||
+    parsed > maxCanaryTimeoutSeconds
   ) {
-    return [`${name} positive finite number`];
+    return [`${name} positive finite number <= ${maxCanaryTimeoutSeconds}`];
   }
   return [];
 }
@@ -419,7 +422,7 @@ const rowReadinessRequirements = [
 
 function buildReadiness() {
   const globalMissing = [
-    ...optionalPositiveNumberRequirement("RUNINFRA_CANARY_TIMEOUT_SECONDS"),
+    ...optionalCanaryTimeoutRequirement(),
     ...optionalBaseURLRequirement(),
   ];
   const rows = rowReadinessRequirements.map(([name, requirements]) => {
@@ -777,7 +780,7 @@ if (preflight) {
 
 function configurationErrors() {
   return [
-    ...optionalPositiveNumberRequirement("RUNINFRA_CANARY_TIMEOUT_SECONDS"),
+    ...optionalCanaryTimeoutRequirement(),
     ...optionalBaseURLRequirement(),
     ...optionalNonNegativeIntegerRequirement("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS"),
     ...optionalIdempotencyEvidenceFieldRequirement(),
