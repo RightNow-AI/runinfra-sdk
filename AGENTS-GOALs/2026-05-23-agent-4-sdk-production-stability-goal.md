@@ -1151,6 +1151,53 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
+## 2026-05-24 Agent 4 Checkpoint: Canary Candidate Digest Evidence
+
+Closed a release-evidence gap in live canary reports:
+
+- Parent live-canary preflight and full-run reports now include a `candidate` object with SDK version, package source, source SHA-256 digest, source-file count, artifact digest status, and artifact entries.
+- Source/preflight candidate digests use checked-in source and canary files, not generated TypeScript `dist`, so preflight remains a no-build readiness check.
+- Full artifact canary reports record only package file names and SHA-256 hashes for the npm tarball and Python wheel.
+- Artifact setup failure reports preserve resolved artifact file names and SHA-256s when package files were found before setup failed.
+- Report leak checks still run over the combined report before write.
+- `LIVE-CANARIES.md` documents `candidate.sourceDigestSha256`, `candidate.artifactDigestsChecked`, and `candidate.artifacts`.
+
+TDD and review evidence:
+
+- Added a red preflight report regression; it failed because `report.candidate` was absent.
+- Added a red documentation regression; it failed because `LIVE-CANARIES.md` did not describe candidate evidence.
+- Second-opinion review blocked because the first digest file list required generated `typescript/dist` during preflight.
+- Added a red regression forbidding generated TypeScript dist in preflight candidate digests, then switched the digest input to `typescript/src/index.ts`.
+- Second-opinion re-review blocked because artifact setup failure reports still dropped artifact hashes after package files resolved.
+- Added a red temp-artifact failure regression, then preserved the resolved artifact candidate for failure reports.
+- Final second-opinion re-review returned `ALLOW` with no blocking findings.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "writes a redacted strict live-canary preflight report"` failed first on missing candidate evidence.
+- `pnpm --dir typescript test --run -t "documents public-repo production promotion"` failed first on missing docs.
+- `pnpm --dir typescript test --run -t "preflight candidate digests"` failed first while the runner still referenced generated dist.
+- `pnpm --dir typescript test --run -t "artifact digests into artifact setup failure"` failed first while setup failure reports were source-only.
+- `pnpm --dir typescript test --run -t "artifact digests into artifact setup failure"` passed after the failure-report fix.
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test` passed: 154 tests.
+- `python -m pytest python\tests -q` passed: 123 tests, 119 subtests.
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --report artifacts\sdk\live-canary-readiness-candidate-current.json` remained blocked as expected: 19 ready, 30 blocked, candidate verified.
+- `node scripts\run-sdk-live-canaries.mjs --package-source artifact --report artifacts\sdk\live-canary-artifact-candidate-current.json` passed no-env mode: TypeScript 19 passed/30 skipped, Python 19 passed/30 skipped, artifact candidate verified.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist artifacts\python-local` passed.
+- `.canary-tmp` was absent after report-producing canary runs.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes release evidence and same-candidate traceability, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for multimodal, idempotency replay, and remaining live endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+
 ## 2026-05-24 Agent 4 Checkpoint: Multimodal Model Retrieve Canary Rows
 
 Expanded live model-catalog proof beyond the LLM-only retrieve row:

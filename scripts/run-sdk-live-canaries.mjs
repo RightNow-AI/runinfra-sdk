@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
@@ -21,6 +22,17 @@ const tempRoot = resolve(".canary-tmp");
 const tempDir = join(tempRoot, `${Date.now()}-${process.pid}`);
 const tsReport = resolve(tempDir, "typescript.json");
 const pyReport = resolve(tempDir, "python.json");
+let resolvedArtifactCandidate;
+const sourceDigestFiles = [
+  ["typescript/package.json", join(repositoryRoot, "typescript", "package.json")],
+  ["typescript/src/index.ts", join(repositoryRoot, "typescript", "src", "index.ts")],
+  ["python/pyproject.toml", join(repositoryRoot, "python", "pyproject.toml")],
+  ["python/runinfra/__init__.py", join(repositoryRoot, "python", "runinfra", "__init__.py")],
+  ["scripts/run-sdk-live-canaries.mjs", join(repositoryRoot, "scripts", "run-sdk-live-canaries.mjs")],
+  ["scripts/sdk-live-canary-typescript.mjs", join(repositoryRoot, "scripts", "sdk-live-canary-typescript.mjs")],
+  ["scripts/sdk-live-canary-python.py", join(repositoryRoot, "scripts", "sdk-live-canary-python.py")],
+  ["LIVE-CANARIES.md", join(repositoryRoot, "LIVE-CANARIES.md")],
+];
 const expectedRows = [
   "models.list",
   "models.retrieve.llm",
@@ -764,6 +776,63 @@ function cleanupTempDir() {
   }
 }
 
+function sha256File(filePath, label) {
+  try {
+    return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+  } catch {
+    throw new Error(`candidate file missing or unreadable: ${label}`);
+  }
+}
+
+function sourceDigestSha256() {
+  const digest = createHash("sha256");
+  for (const [label, filePath] of sourceDigestFiles) {
+    digest.update(label);
+    digest.update("\0");
+    digest.update(readFileForDigest(filePath, label));
+    digest.update("\0");
+  }
+  return digest.digest("hex");
+}
+
+function readFileForDigest(filePath, label) {
+  try {
+    return readFileSync(filePath);
+  } catch {
+    throw new Error(`candidate source file missing or unreadable: ${label}`);
+  }
+}
+
+function baseCandidateIdentity(fields = {}) {
+  return {
+    sdkVersion: expectedSdkVersion,
+    packageSource,
+    sourceDigestSha256: sourceDigestSha256(),
+    sourceFileCount: sourceDigestFiles.length,
+    artifactDigestsChecked: false,
+    artifacts: [],
+    ...fields,
+  };
+}
+
+function artifactCandidateIdentity(npmArtifact, pythonWheel) {
+  return baseCandidateIdentity({
+    artifactDigestsChecked: true,
+    artifacts: [
+      {
+        name: "npm",
+        fileName: basename(npmArtifact),
+        sha256: sha256File(npmArtifact, "npm artifact"),
+      },
+      {
+        name: "pythonWheel",
+        fileName: basename(pythonWheel),
+        sha256: sha256File(pythonWheel, "Python wheel"),
+      },
+    ],
+  });
+}
+
 function surfaceCoverageFailureReport(errors, fields = {}) {
   const surfaceCoverage = buildSurfaceCoverage();
   const combined = {
@@ -771,6 +840,7 @@ function surfaceCoverageFailureReport(errors, fields = {}) {
     generatedAt: new Date().toISOString(),
     strict,
     packageSource,
+    candidate: baseCandidateIdentity(),
     expectedRows,
     ...fields,
     surfaceCoverage,
@@ -817,6 +887,7 @@ if (preflight) {
     generatedAt: new Date().toISOString(),
     strict,
     packageSource,
+    candidate: baseCandidateIdentity(),
     expectedRows,
     readiness,
     surfaceCoverage,
@@ -926,6 +997,8 @@ function installArtifactCanaryPackages() {
   const venvDir = resolve(pythonDir, "venv");
   const npmArtifact = expectedNpmArtifact();
   const pythonWheel = expectedPythonWheel();
+  const candidate = artifactCandidateIdentity(npmArtifact, pythonWheel);
+  resolvedArtifactCandidate = candidate;
   mkdirSync(npmDir, { recursive: true });
   mkdirSync(pythonDir, { recursive: true });
   writeFileSync(
@@ -970,6 +1043,7 @@ function installArtifactCanaryPackages() {
 
   return {
     python,
+    candidate,
     env: {
       RUNINFRA_CANARY_TS_MODULE: resolve(npmDir, "node_modules", "@runinfra", "sdk", "dist", "index.js"),
       RUNINFRA_CANARY_PYTHON_IMPORT_MODE: "installed",
@@ -1004,7 +1078,11 @@ function canonicalEnvOverrides(names = relevantEnv) {
 mkdirSync(tempDir, { recursive: true });
 
 const commonArgs = strict ? ["--strict"] : [];
-let artifactRuntime = { python: optionValue("--python") ?? "python", env: {} };
+let artifactRuntime = {
+  python: optionValue("--python") ?? "python",
+  candidate: baseCandidateIdentity(),
+  env: {},
+};
 try {
   if (packageSource === "artifact") {
     artifactRuntime = installArtifactCanaryPackages();
@@ -1013,7 +1091,7 @@ try {
   const errorMessage = error instanceof Error
     ? `artifact canary package setup failed: ${error.message}`
     : "artifact canary package setup failed";
-  surfaceCoverageFailureReport([errorMessage]);
+  surfaceCoverageFailureReport([errorMessage], resolvedArtifactCandidate ? { candidate: resolvedArtifactCandidate } : {});
   cleanupTempDir();
   console.error("Live canary artifact package setup failed. Build npm and Python artifacts first.");
   process.exit(1);
@@ -1106,6 +1184,7 @@ const combined = {
   generatedAt: new Date().toISOString(),
   strict,
   packageSource,
+  candidate: artifactRuntime.candidate,
   expectedRows,
   surfaceCoverage,
   parity: {

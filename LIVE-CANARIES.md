@@ -98,6 +98,12 @@ The report stores only `set_redacted` or `missing` for environment variables.
 Custom `RUNINFRA_BASE_URL` values are recorded only as `custom_set_redacted`.
 Reports must not contain API keys, registry tokens, local absolute paths,
 request payload secrets, source maps, or private repo metadata.
+Every preflight and full report includes `candidate.sourceDigestSha256` plus
+the SDK version and package source so release reviewers can prove which source
+state generated the canary evidence without recording local paths. Full
+`--package-source artifact` reports also set `candidate.artifactDigestsChecked`
+and record only package file names plus SHA-256 values in `candidate.artifacts`;
+preflight reports do not require built artifacts and leave that list empty.
 
 ## Matrix Rows
 

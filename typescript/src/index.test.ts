@@ -957,10 +957,21 @@ class RunInfra:
     expect(readme).toContain("Run the surface-coverage check before preflight");
     expect(readme).toContain("Then run the strict preflight");
     expect(readme).toContain("Then run the strict live canary matrix against the exact production gateway");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    expect(liveCanaries).toContain("candidate.sourceDigestSha256");
+    expect(liveCanaries).toContain("candidate.artifacts");
     expect(readme).toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");
     expect(readme).not.toContain("pnpm test:sdk-canary:live");
     expect(readme).not.toContain("RUNINFRA_SDK_CI_TOKEN");
+  });
+
+  it("keeps preflight candidate digests independent of generated TypeScript dist artifacts", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+
+    expect(runner).toContain('"typescript/src/index.ts"');
+    expect(runner).not.toContain('"typescript/dist/index.js"');
+    expect(runner).not.toContain('"typescript/dist/index.d.ts"');
   });
 
   it("documents the safe live-canary env-file flag instead of Node's flag", () => {
@@ -1294,6 +1305,53 @@ class RunInfra:
     }
   });
 
+  it("writes artifact digests into artifact setup failure reports after artifacts resolve", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-artifact-digest-failure-"));
+    const reportPath = join(tmp, "artifact-report.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    try {
+      const npmName = `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`;
+      const wheelName = `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`;
+      mkdirSync(join(tmp, "typescript"), { recursive: true });
+      mkdirSync(join(tmp, "python", "dist"), { recursive: true });
+      writeFileSync(join(tmp, "typescript", npmName), "not a valid npm tarball");
+      writeFileSync(join(tmp, "python", "dist", wheelName), "not a valid Python wheel");
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "artifact",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        candidate?: {
+          packageSource?: string;
+          artifactDigestsChecked?: boolean;
+          artifacts?: Array<{ fileName?: string; sha256?: string }>;
+        };
+      };
+      expect(report.candidate?.packageSource).toBe("artifact");
+      expect(report.candidate?.artifactDigestsChecked).toBe(true);
+      expect(report.candidate?.artifacts?.map((artifact) => artifact.fileName)).toEqual([npmName, wheelName]);
+      for (const artifact of report.candidate?.artifacts ?? []) {
+        expect(artifact.fileName).not.toMatch(/[\\/]/u);
+        expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/u);
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("removes parent live-canary temporary child reports when artifact failure report writing fails", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-artifact-report-write-failure-"));
     const reportParent = join(tmp, "not-a-directory");
@@ -1454,6 +1512,14 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(result.status).toBe(1);
       const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
         expectedRows?: string[];
+        candidate?: {
+          sdkVersion?: string;
+          packageSource?: string;
+          sourceDigestSha256?: string;
+          sourceFileCount?: number;
+          artifactDigestsChecked?: boolean;
+          artifacts?: unknown[];
+        };
         readiness?: {
           status?: string;
           env?: Record<string, string>;
@@ -1463,6 +1529,14 @@ with open(report, "w", encoding="utf-8") as handle:
         reports?: unknown[];
       };
       expect(report.reports).toEqual([]);
+      expect(report.candidate).toMatchObject({
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "source",
+        artifactDigestsChecked: false,
+        artifacts: [],
+      });
+      expect(report.candidate?.sourceDigestSha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(report.candidate?.sourceFileCount).toBeGreaterThanOrEqual(8);
       expect(report.readiness?.status).toBe("blocked");
       expect(report.readiness?.rows?.map((row) => row.name)).toEqual(report.expectedRows);
       expect(report.expectedRows).toEqual(expect.arrayContaining([
