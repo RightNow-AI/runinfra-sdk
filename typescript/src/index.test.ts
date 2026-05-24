@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { createHmac } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -698,7 +698,7 @@ describe("RunInfra TypeScript SDK", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
     const reportPath = join(tmp, "readiness.json");
     try {
-      const fakeKey = "sk-ri-preflight-secret-1234567890";
+      const fakeKey = "preflight-api-key-placeholder";
       const result = spawnSync(process.execPath, [
         "../scripts/run-sdk-live-canaries.mjs",
         "--preflight",
@@ -840,7 +840,7 @@ describe("RunInfra TypeScript SDK", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-aliases-"));
     const reportPath = join(tmp, "readiness.json");
     try {
-      const fakeKey = "sk-ri-preflight-secret-1234567890";
+      const fakeKey = "preflight-api-key-placeholder";
       const result = spawnSync(process.execPath, [
         "../scripts/run-sdk-live-canaries.mjs",
         "--preflight",
@@ -896,6 +896,234 @@ describe("RunInfra TypeScript SDK", () => {
       expect(JSON.stringify(report)).not.toContain("llm-alias-model");
       expect(JSON.stringify(report)).not.toContain("pipeline-alias");
       expect(JSON.stringify(report)).not.toContain(__filename);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("loads strict preflight inputs from --runinfra-env-file without leaking values", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-env-file-"));
+    const reportPath = join(tmp, "readiness.json");
+    const envPath = join(tmp, ".env.sdk-live.local");
+    try {
+      const fakeKey = "env-file-api-key-placeholder";
+      writeFileSync(envPath, [
+        `RUNINFRA_API_KEY=${fakeKey}`,
+        "TEST_MODEL=llm-env-file-model",
+        "TEST_EMBEDDING_MODEL=embedding-env-file-model",
+        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
+        "TEST_IMAGE_MODEL=image-env-file-model",
+        "RUNINFRA_IMAGE_SIZE=1024x1024",
+        "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
+        "TEST_TTS_MODEL=tts-env-file-model",
+        "TEST_TTS_VOICE=alloy",
+        "RUNINFRA_TTS_RESPONSE_FORMAT=mp3",
+        "TEST_ASR_MODEL=asr-env-file-model",
+        `TEST_ASR_FILE=${__filename}`,
+        "RUNINFRA_ASR_EXPECTED_TEXT=env-file transcript",
+        "RUNINFRA_ASR_LANGUAGE=en",
+        "RUNINFRA_ASR_RESPONSE_FORMAT=json",
+        "TEST_PIPELINE_ID=pipeline-env-file",
+        "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1",
+        "",
+      ].join("\n"));
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--runinfra-env-file",
+        envPath,
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+          RUNINFRA_LLM_MODEL: "",
+          RUNINFRA_EMBEDDING_MODEL: "",
+          RUNINFRA_IMAGE_MODEL: "",
+          RUNINFRA_TTS_MODEL: "shell-tts-model",
+          RUNINFRA_ASR_MODEL: "",
+          RUNINFRA_VOICE_PIPELINE_ID: "",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          status?: string;
+          env?: Record<string, string>;
+          missing?: string[];
+          rows?: Array<{ status: string }>;
+          aliases?: Record<string, string[]>;
+        };
+      };
+      expect(report.readiness?.status).toBe("ready");
+      expect(report.readiness?.missing).toEqual([]);
+      expect(report.readiness?.rows?.every((row) => row.status === "ready")).toBe(true);
+      expect(report.readiness?.env?.RUNINFRA_API_KEY).toBe("set_redacted");
+      expect(report.readiness?.env?.RUNINFRA_LLM_MODEL).toBe("set_redacted");
+      expect(report.readiness?.aliases?.RUNINFRA_LLM_MODEL).toContain("TEST_MODEL");
+      expect(report.readiness?.aliases?.RUNINFRA_TTS_MODEL).toBeUndefined();
+      expect(JSON.stringify(report)).not.toContain(fakeKey);
+      expect(JSON.stringify(report)).not.toContain("env-file transcript");
+      expect(JSON.stringify(report)).not.toContain(__filename);
+      expect(JSON.stringify(report)).not.toContain("shell-tts-model");
+      expect(JSON.stringify(report)).not.toContain("tts-env-file-model");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("lets explicit shell aliases override canonical values from --runinfra-env-file", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-env-file-alias-"));
+    const reportPath = join(tmp, "readiness.json");
+    const envPath = join(tmp, ".env.sdk-live.local");
+    const missingFixturePath = join(tmp, "missing-audio.wav");
+    try {
+      writeFileSync(envPath, [
+        "RUNINFRA_API_KEY=env-file-api-key-placeholder",
+        "RUNINFRA_LLM_MODEL=llm-env-file-model",
+        "RUNINFRA_EMBEDDING_MODEL=embedding-env-file-model",
+        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
+        "RUNINFRA_IMAGE_MODEL=image-env-file-model",
+        "RUNINFRA_IMAGE_SIZE=1024x1024",
+        "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
+        "RUNINFRA_TTS_MODEL=tts-env-file-model",
+        "RUNINFRA_TTS_VOICE=alloy",
+        "RUNINFRA_TTS_RESPONSE_FORMAT=mp3",
+        "RUNINFRA_ASR_MODEL=asr-env-file-model",
+        `RUNINFRA_ASR_FIXTURE_PATH=${missingFixturePath}`,
+        "RUNINFRA_ASR_EXPECTED_TEXT=env-file transcript",
+        "RUNINFRA_ASR_LANGUAGE=en",
+        "RUNINFRA_ASR_RESPONSE_FORMAT=json",
+        "RUNINFRA_VOICE_PIPELINE_ID=pipeline-env-file",
+        "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1",
+        "",
+      ].join("\n"));
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--runinfra-env-file",
+        envPath,
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_ASR_FIXTURE_PATH: "",
+          TEST_ASR_FILE: __filename,
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          status?: string;
+          aliases?: Record<string, string[]>;
+        };
+      };
+      expect(report.readiness?.status).toBe("ready");
+      expect(report.readiness?.aliases?.RUNINFRA_ASR_FIXTURE_PATH).toContain("TEST_ASR_FILE");
+      expect(JSON.stringify(report)).not.toContain(missingFixturePath);
+      expect(JSON.stringify(report)).not.toContain(__filename);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves explicit shell aliases when Node consumes --env-file with inline comments", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-node-env-file-"));
+    const reportPath = join(tmp, "readiness.json");
+    const envPath = join(tmp, ".env.sdk-live.local");
+    const missingFixturePath = join(tmp, "missing-audio.wav");
+    try {
+      writeFileSync(envPath, [
+        "RUNINFRA_API_KEY=env-file-api-key-placeholder",
+        "RUNINFRA_LLM_MODEL=llm-env-file-model",
+        "RUNINFRA_EMBEDDING_MODEL=embedding-env-file-model",
+        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
+        "RUNINFRA_IMAGE_MODEL=image-env-file-model",
+        "RUNINFRA_IMAGE_SIZE=1024x1024",
+        "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
+        "RUNINFRA_TTS_MODEL=tts-env-file-model",
+        "RUNINFRA_TTS_VOICE=alloy",
+        "RUNINFRA_TTS_RESPONSE_FORMAT=mp3",
+        "RUNINFRA_ASR_MODEL=asr-env-file-model",
+        `RUNINFRA_ASR_FIXTURE_PATH=${missingFixturePath} # ignored by Node env-file parsing`,
+        "RUNINFRA_ASR_EXPECTED_TEXT=env-file transcript",
+        "RUNINFRA_ASR_LANGUAGE=en",
+        "RUNINFRA_ASR_RESPONSE_FORMAT=json",
+        "RUNINFRA_VOICE_PIPELINE_ID=pipeline-env-file",
+        "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1",
+        "",
+      ].join("\n"));
+
+      const result = spawnSync(process.execPath, [
+        "--env-file",
+        envPath,
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_ASR_FIXTURE_PATH: "",
+          TEST_ASR_FILE: __filename,
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          status?: string;
+          aliases?: Record<string, string[]>;
+        };
+      };
+      expect(report.readiness?.status).toBe("ready");
+      expect(report.readiness?.aliases?.RUNINFRA_ASR_FIXTURE_PATH).toContain("TEST_ASR_FILE");
+      expect(JSON.stringify(report)).not.toContain(missingFixturePath);
+      expect(JSON.stringify(report)).not.toContain(__filename);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("redacts missing --runinfra-env-file paths from stderr", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-missing-env-file-"));
+    const envPath = join(tmp, "private-canary-env");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--runinfra-env-file",
+        envPath,
+        "--preflight",
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("--runinfra-env-file does not exist");
+      expect(result.stderr).not.toContain(envPath);
+      expect(result.stderr).not.toContain("private-canary-env");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -962,7 +1190,7 @@ describe("RunInfra TypeScript SDK", () => {
         encoding: "utf8",
         env: {
           ...process.env,
-          RUNINFRA_API_KEY: "sk-ri-preflight-secret-1234567890",
+          RUNINFRA_API_KEY: "preflight-api-key-placeholder",
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
           RUNINFRA_EMBEDDING_DIMENSIONS: "not-a-positive-integer",
@@ -1011,7 +1239,7 @@ describe("RunInfra TypeScript SDK", () => {
           encoding: "utf8",
           env: {
             ...process.env,
-            RUNINFRA_API_KEY: "sk-ri-preflight-secret-1234567890",
+            RUNINFRA_API_KEY: "preflight-api-key-placeholder",
             RUNINFRA_CANARY_TIMEOUT_SECONDS: timeout,
             RUNINFRA_LLM_MODEL: "llm-preflight-model",
             RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
@@ -1058,7 +1286,7 @@ describe("RunInfra TypeScript SDK", () => {
           encoding: "utf8",
           env: {
             ...process.env,
-            RUNINFRA_API_KEY: "sk-ri-preflight-secret-1234567890",
+            RUNINFRA_API_KEY: "preflight-api-key-placeholder",
             RUNINFRA_LLM_MODEL: "llm-preflight-model",
             RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS: delay,
             RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "",

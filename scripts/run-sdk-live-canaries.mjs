@@ -11,6 +11,10 @@ const preflight = args.includes("--preflight");
 const verifySurfaceCoverage = args.includes("--verify-surface-coverage");
 const reportPath = optionValue("--report");
 const packageSource = optionValue("--package-source") ?? "artifact";
+const scriptEnvFilePath = optionValue("--runinfra-env-file") ?? optionValue("--env-file");
+const nodeEnvFilePath = optionValueFrom(process.execArgv, "--env-file");
+const envFilePath = scriptEnvFilePath ?? nodeEnvFilePath;
+const envFileMayAlreadyBeLoaded = !scriptEnvFilePath && Boolean(nodeEnvFilePath);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tempDir = resolve(".canary-tmp", `${Date.now()}-${process.pid}`);
 const tsReport = resolve(tempDir, "typescript.json");
@@ -168,16 +172,44 @@ const publicSurfaceCoverage = [
   { surface: "authentication error mapping", rows: ["error.auth.invalid_key"] },
 ];
 
-function optionValue(name) {
-  const exact = args.find((arg) => arg.startsWith(`${name}=`));
+function optionValueFrom(values, name) {
+  const exact = values.find((arg) => arg.startsWith(`${name}=`));
   if (exact) return exact.slice(name.length + 1);
-  const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] : undefined;
+  const index = values.indexOf(name);
+  return index >= 0 ? values[index + 1] : undefined;
+}
+
+function optionValue(name) {
+  return optionValueFrom(args, name);
 }
 
 if (!["artifact", "source"].includes(packageSource)) {
   console.error(`Unsupported package source "${packageSource}". Use --package-source artifact or --package-source source.`);
   process.exit(2);
+}
+
+function parseEnvFileContent(content) {
+  const parsed = {};
+  for (const line of content.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/u);
+    if (!match) continue;
+    const key = match[1];
+    parsed[key] = parseEnvFileValue(match[2] ?? "");
+  }
+  return parsed;
+}
+
+function parseEnvFileValue(rawValue) {
+  const value = rawValue.trimStart();
+  const quote = value[0];
+  if (quote === '"' || quote === "'") {
+    const end = value.indexOf(quote, 1);
+    return end >= 0 ? value.slice(1, end) : value.slice(1);
+  }
+  const commentIndex = value.indexOf("#");
+  return (commentIndex >= 0 ? value.slice(0, commentIndex) : value).trimEnd();
 }
 
 const canonicalEnvAliases = new Map([
@@ -193,6 +225,54 @@ const canonicalEnvAliases = new Map([
   ["RUNINFRA_ASR_FIXTURE_PATH", ["TEST_ASR_FILE"]],
   ["RUNINFRA_VOICE_PIPELINE_ID", ["TEST_PIPELINE_ID"]],
 ]);
+
+loadEnvFileIntoProcessEnv(envFilePath, envFileMayAlreadyBeLoaded);
+
+function logicalEnvGroup(name) {
+  const names = new Set([name]);
+  for (const [canonical, aliases] of canonicalEnvAliases.entries()) {
+    if (canonical === name || aliases.includes(name)) {
+      names.add(canonical);
+      for (const alias of aliases) names.add(alias);
+    }
+  }
+  return names;
+}
+
+function nonEmptyProcessEnvNames(parsed, envFileMayAlreadyBeLoaded) {
+  const names = new Set(Object.keys(process.env).filter((name) => process.env[name]?.trim()));
+  if (!envFileMayAlreadyBeLoaded) return names;
+  for (const [key, value] of Object.entries(parsed)) {
+    if (process.env[key]?.trim() === value.trim()) names.delete(key);
+  }
+  return names;
+}
+
+function explicitProcessEnvProtectsKey(key, explicitNames) {
+  for (const name of logicalEnvGroup(key)) {
+    if (explicitNames.has(name)) return true;
+  }
+  return false;
+}
+
+function loadEnvFileIntoProcessEnv(filePath, envFileMayAlreadyBeLoaded) {
+  if (!filePath) return;
+  const envPath = resolve(filePath);
+  if (!existsSync(envPath)) {
+    console.error("--runinfra-env-file does not exist");
+    process.exit(2);
+  }
+  const parsed = parseEnvFileContent(readFileSync(envPath, "utf8"));
+  const explicitNames = nonEmptyProcessEnvNames(parsed, envFileMayAlreadyBeLoaded);
+  for (const [key, value] of Object.entries(parsed)) {
+    const loadedByNodeEnvFile = envFileMayAlreadyBeLoaded && process.env[key]?.trim() === value.trim();
+    if (explicitProcessEnvProtectsKey(key, explicitNames)) {
+      if (loadedByNodeEnvFile && !explicitNames.has(key)) delete process.env[key];
+      continue;
+    }
+    process.env[key] = value;
+  }
+}
 
 function rawEnv(name) {
   const value = process.env[name]?.trim();

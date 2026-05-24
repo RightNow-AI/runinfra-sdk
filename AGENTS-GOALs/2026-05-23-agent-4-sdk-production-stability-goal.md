@@ -671,3 +671,76 @@ Current blockers remain:
 - The scoped canary workspace still lacks active verified deployments/catalog entries for the configured model, so live LLM/chat/Responses rows fail.
 - Strict live canaries still need deployed and catalog-listed LLM, embeddings, image, TTS, ASR, and voice resources plus deterministic fixtures and idempotency replay evidence.
 - PR #9 still needs non-author approval before protected merge.
+
+## 2026-05-24 Agent 4 Checkpoint: Env-File Preflight Fix And Fresh Package Gates
+
+Fixed production-readiness bugs in the SDK live-canary runner:
+
+- `scripts/run-sdk-live-canaries.mjs` now loads `--runinfra-env-file` before strict preflight and before child canaries spawn.
+- The runner still tolerates legacy `--env-file` when it reaches the script, but `--runinfra-env-file` is the safe project flag because Node 24 can consume `--env-file` before script argument parsing.
+- Env-file values are only applied when the current process env does not already contain a non-empty value in the same canonical/alias group, so explicit shell env still wins.
+- Added a TypeScript regression test proving strict preflight can become ready from a temporary `.env.sdk-live.local` file without leaking the fake API key, transcript text, fixture path, model IDs, or pipeline ID.
+- Added a regression proving an explicit shell alias such as `TEST_ASR_FILE` wins over a canonical env-file value such as `RUNINFRA_ASR_FIXTURE_PATH`.
+- Added a regression for the Node-consumed `--env-file` path with inline comments, so fallback parsing matches Node's env-file values when deciding whether to remove env-file canonical keys behind explicit aliases.
+- Added a regression proving missing env-file errors do not print the supplied local path.
+- Replaced secret-shaped fake test API keys with non-token-shaped placeholders so source/report scans do not produce avoidable false positives.
+
+Fresh TDD evidence:
+
+- New regression failed first because the runner ignored script-level env-file loading.
+- Hubble second-opinion review found a real blocker: env-file canonical keys could mask explicit shell aliases. Added the failing alias-precedence regression, fixed the loader, and reran the target.
+- Hubble re-review found a second blocker in the Node-consumed `--env-file` path with inline comments. Matched Node's unquoted-comment parsing and added a regression for that path.
+- Hubble final re-review after the `process.execArgv` coverage fix returned `NO BLOCKERS`.
+- `pnpm --dir typescript test --run -t "runinfra-env-file|Node consumes|redacts missing"` passed after the fix: 4 targeted tests.
+
+Fresh local verification after the fix:
+
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test` passed: 134 tests.
+- `python -m pytest python\tests -q` passed: 114 tests plus 105 subtests.
+- `python -m py_compile scripts\sdk-live-canary-python.py scripts\verify-python-package.py` passed.
+- `pnpm --dir typescript build` passed.
+- `pnpm --dir typescript pack --pack-destination ..\artifacts\npm-local` passed. Tarball contents remain limited to changelog, dist, license, package.json, and README.
+- `python -m build python --outdir artifacts\python-local` passed.
+- `node scripts\verify-npm-package.mjs artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py artifacts\python-local` passed.
+- `python -m twine check artifacts\python-local\*` passed.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 26 mapped surfaces, 45 rows, 0 uncovered surfaces.
+- Source no-env canaries passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- Artifact no-env canaries passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- Workflow policy passed with OIDC/provenance/SHA-pinned/no long-lived registry token checks.
+- Version sync passed for `0.1.4`.
+
+Registry state:
+
+- npm registry currently exposes `@runinfra/sdk` versions `0.1.0`, `0.1.1`, `0.1.2`, and `0.1.3`; `0.1.4` is not published.
+- PyPI currently exposes `runinfra` versions `0.1.0`, `0.1.1`, `0.1.2`, and `0.1.3`; `0.1.4` is not published.
+- Registry clean-install for `0.1.4` cannot pass until trusted publishing publishes that version.
+- Registry clean-install for `0.1.3` fails the current GA surface gate because published `0.1.3` still exposes webhook delivery `create/list`. This is expected and is why local artifact `0.1.4` must be published through the protected trusted path after live gates are green.
+
+RunPipe env preflight after the env-file fix:
+
+- `node scripts/run-sdk-live-canaries.mjs --runinfra-env-file ..\RunPipe\.env.sdk-live.local --preflight --strict --package-source source --report artifacts/sdk/live-canary-preflight-current.json` now reads the env file correctly without relying on Node's own `--env-file` option.
+- Result: blocked, 34 ready rows and 11 blocked rows.
+- Alias keys used: `RUNINFRA_LLM_MODEL`, `RUNINFRA_TTS_TASK_TYPE`, and `RUNINFRA_VOICE_PIPELINE_ID`.
+- Remaining blocked rows:
+  - `embeddings.create`
+  - `openai.params.embeddings`
+  - `images.generate`
+  - `openai.params.images`
+  - `audio.speech.create`
+  - `openai.params.audio.speech`
+  - `audio.speech.binary_interfaces`
+  - `audio.transcriptions.create`
+  - `openai.params.audio.transcriptions`
+  - `voice.pipeline.create`
+  - `idempotency.replay.responses`
+
+Current blockers remain:
+
+- This fixes the env-file readiness gate and proves local artifacts, but does not make strict live multimodal canaries green.
+- `0.1.4` is not on npm/PyPI yet.
+- Live embeddings/image/TTS/ASR/voice/idempotency replay proof remains missing.
+- RunPipe production still needs the gateway contract patch deployed before production source canaries can turn the known streaming/unsupported-parameter rows green.
+- Do not call SDK GA and do not publish a GA release until strict live canaries, registry install/import, CodeQL/security checks, docs, and independent review are all green.
