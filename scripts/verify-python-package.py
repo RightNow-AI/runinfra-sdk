@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import stat
 import sys
 import tarfile
 import zipfile
@@ -97,14 +98,25 @@ def duplicate_files(files: list[str]) -> list[str]:
     return sorted(duplicates)
 
 
+def zip_info_is_regular_file(info: zipfile.ZipInfo) -> bool:
+    mode = info.external_attr >> 16
+    file_type = stat.S_IFMT(mode)
+    return file_type in (0, stat.S_IFREG)
+
+
 def verify_wheel(path: Path) -> None:
     with zipfile.ZipFile(path) as wheel:
-        names = sorted(name for name in wheel.namelist() if not name.endswith("/"))
-        files = [normalize(name) for name in names]
+        infos = sorted((info for info in wheel.infolist() if not info.is_dir()), key=lambda item: item.filename)
+        files = [normalize(info.filename) for info in infos]
+        non_regular = sorted(
+            normalize(info.filename)
+            for info in infos
+            if not zip_info_is_regular_file(info)
+        )
         forbidden_content = sorted(
-            normalize(name)
-            for name in names
-            if has_forbidden_content(wheel.read(name))
+            normalize(info.filename)
+            for info in infos
+            if zip_info_is_regular_file(info) and has_forbidden_content(wheel.read(info.filename))
         )
 
     missing = sorted(file for file in WHEEL_ALLOWED_FIXED if file not in files)
@@ -121,6 +133,8 @@ def verify_wheel(path: Path) -> None:
         errors.append("Missing files:\n" + "\n".join(missing))
     if duplicates:
         errors.append("Duplicate files:\n" + "\n".join(duplicates))
+    if non_regular:
+        errors.append("Non-regular files:\n" + "\n".join(non_regular))
     if unexpected:
         errors.append("Unexpected files:\n" + "\n".join(unexpected))
     if forbidden:
@@ -136,20 +150,27 @@ def verify_wheel(path: Path) -> None:
 def strip_sdist_root(path: str) -> str:
     normalized = normalize(path)
     parts = normalized.split("/", 1)
-    return parts[1] if len(parts) == 2 else ""
+    return parts[1] if len(parts) == 2 else f"<archive-root>/{normalized}"
 
 
 def verify_sdist(path: Path) -> None:
     with tarfile.open(path) as sdist:
-        members = sorted((member for member in sdist.getmembers() if member.isfile()), key=lambda item: item.name)
-        files = [strip_sdist_root(member.name) for member in members]
+        members = sorted(sdist.getmembers(), key=lambda item: item.name)
+        file_members = [member for member in members if member.isfile()]
+        files = [strip_sdist_root(member.name) for member in file_members]
+        non_regular = sorted(
+            strip_sdist_root(member.name)
+            for member in members
+            if not member.isfile() and not member.isdir()
+        )
         forbidden_content = []
-        for member in members:
+        for member in file_members:
             extracted = sdist.extractfile(member)
             if extracted is not None and has_forbidden_content(extracted.read()):
                 forbidden_content.append(strip_sdist_root(member.name))
 
     files = [file for file in files if file]
+    non_regular = [file for file in non_regular if file]
     forbidden_content = sorted(file for file in forbidden_content if file)
     missing = sorted(file for file in SDIST_ALLOWED if file not in files)
     duplicates = duplicate_files(files)
@@ -161,6 +182,8 @@ def verify_sdist(path: Path) -> None:
         errors.append("Missing files:\n" + "\n".join(missing))
     if duplicates:
         errors.append("Duplicate files:\n" + "\n".join(duplicates))
+    if non_regular:
+        errors.append("Non-regular files:\n" + "\n".join(non_regular))
     if unexpected:
         errors.append("Unexpected files:\n" + "\n".join(unexpected))
     if forbidden:

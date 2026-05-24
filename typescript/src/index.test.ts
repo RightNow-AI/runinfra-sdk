@@ -45,6 +45,56 @@ function jsonReadFailureResponse(message: string, init: ResponseInit = {}): Resp
   );
 }
 
+interface TarEntry {
+  name: string;
+  content?: string;
+  type?: "0" | "2";
+  linkname?: string;
+}
+
+function tarOctal(value: number, length: number): string {
+  return value.toString(8).padStart(length - 1, "0").slice(-(length - 1)) + "\0";
+}
+
+function writeTarString(header: Buffer, value: string, offset: number, length: number): void {
+  header.write(value.slice(0, length), offset, length, "ascii");
+}
+
+function tarHeader(entry: TarEntry): Buffer {
+  const payloadLength = Buffer.byteLength(entry.content ?? "", "utf8");
+  const header = Buffer.alloc(512, 0);
+  writeTarString(header, entry.name, 0, 100);
+  writeTarString(header, tarOctal(0o644, 8), 100, 8);
+  writeTarString(header, tarOctal(0, 8), 108, 8);
+  writeTarString(header, tarOctal(0, 8), 116, 8);
+  writeTarString(header, tarOctal(entry.type === "2" ? 0 : payloadLength, 12), 124, 12);
+  writeTarString(header, tarOctal(0, 12), 136, 12);
+  header.fill(" ", 148, 156);
+  writeTarString(header, entry.type ?? "0", 156, 1);
+  if (entry.linkname) writeTarString(header, entry.linkname, 157, 100);
+  writeTarString(header, "ustar\0", 257, 6);
+  writeTarString(header, "00", 263, 2);
+  const checksum = [...header].reduce((sum, byte) => sum + byte, 0);
+  const checksumText = checksum.toString(8).padStart(6, "0").slice(-6) + "\0 ";
+  writeTarString(header, checksumText, 148, 8);
+  return header;
+}
+
+function writeTarball(path: string, entries: TarEntry[]): void {
+  const blocks: Buffer[] = [];
+  for (const entry of entries) {
+    const payload = Buffer.from(entry.content ?? "", "utf8");
+    blocks.push(tarHeader(entry));
+    if ((entry.type ?? "0") === "0") {
+      blocks.push(payload);
+      const padding = (512 - (payload.length % 512)) % 512;
+      if (padding > 0) blocks.push(Buffer.alloc(padding, 0));
+    }
+  }
+  blocks.push(Buffer.alloc(1024, 0));
+  writeFileSync(path, Buffer.concat(blocks));
+}
+
 describe("RunInfra TypeScript SDK", () => {
   it("builds fresh dist files before package publication", () => {
     const packageJson = JSON.parse(
@@ -644,6 +694,35 @@ describe("RunInfra TypeScript SDK", () => {
 
       expect(result.status, result.stdout + result.stderr).toBe(1);
       expect(result.stderr).toContain("Duplicate files:");
+      expect(result.stderr).toContain("package/README.md");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects npm package tarballs with non-regular file entries", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-npm-nonregular-"));
+    try {
+      const tarball = join(tmp, "nonregular-package.tar");
+      writeTarball(tarball, [
+        { name: "package/CHANGELOG.md", content: "# Changelog\n" },
+        { name: "package/LICENSE", content: "MIT\n" },
+        { name: "package/dist/index.d.ts", content: "export declare const value: string;\n" },
+        { name: "package/dist/index.js", content: "export const value = 'ok';\n" },
+        { name: "package/package.json", content: "{\"name\":\"@runinfra/sdk\",\"version\":\"0.0.0\"}\n" },
+        { name: "package/README.md", type: "2", linkname: "LICENSE" },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-npm-package.mjs",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      expect(result.stderr).toContain("Non-regular files:");
       expect(result.stderr).toContain("package/README.md");
     } finally {
       rmSync(tmp, { recursive: true, force: true });

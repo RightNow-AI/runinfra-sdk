@@ -51,12 +51,20 @@ function expandInputs(inputs) {
   return expanded;
 }
 
-function listTarball(tarball) {
-  return execFileSync("tar", ["-tf", tarball], { encoding: "utf8" })
+function tarOutputLines(tarball, args) {
+  return execFileSync("tar", [...args, tarball], { encoding: "utf8" })
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .sort();
+    .filter(Boolean);
+}
+
+function listTarballEntries(tarball) {
+  const files = tarOutputLines(tarball, ["-tf"]);
+  const details = tarOutputLines(tarball, ["-tvf"]);
+  return files.map((file, index) => ({
+    file,
+    type: details[index]?.charAt(0) ?? "",
+  }));
 }
 
 function readTarballFile(tarball, file) {
@@ -77,16 +85,25 @@ function duplicateFiles(files) {
 }
 
 function verifyTarball(tarball) {
-  const actualFiles = listTarball(tarball);
+  const entries = listTarballEntries(tarball);
+  const actualFiles = entries.map((entry) => entry.file).sort();
   const actualSet = new Set(actualFiles);
   const missing = [...expectedFiles].filter((file) => !actualSet.has(file));
   const duplicates = duplicateFiles(actualFiles);
+  const nonRegular = entries
+    .filter((entry) => entry.type !== "-")
+    .map((entry) => entry.file)
+    .sort();
   const unexpected = actualFiles.filter((file) => !expectedFiles.has(file));
   const forbidden = actualFiles.filter((file) =>
     forbiddenPatterns.some((pattern) => pattern.test(file)),
   );
   const forbiddenContent = [];
-  for (const file of actualFiles) {
+  const regularFiles = entries
+    .filter((entry) => entry.type === "-")
+    .map((entry) => entry.file)
+    .sort();
+  for (const file of regularFiles) {
     const content = readTarballFile(tarball, file);
     const matchedPattern = findForbiddenContent(content);
     if (matchedPattern) forbiddenContent.push(`${file}: ${matchedPattern.label}`);
@@ -95,6 +112,7 @@ function verifyTarball(tarball) {
   if (
     missing.length ||
     duplicates.length ||
+    nonRegular.length ||
     unexpected.length ||
     forbidden.length ||
     forbiddenContent.length
@@ -102,6 +120,7 @@ function verifyTarball(tarball) {
     console.error(`Package content verification failed for ${tarball}`);
     if (missing.length) console.error(`Missing files:\n${missing.join("\n")}`);
     if (duplicates.length) console.error(`Duplicate files:\n${duplicates.join("\n")}`);
+    if (nonRegular.length) console.error(`Non-regular files:\n${nonRegular.join("\n")}`);
     if (unexpected.length) console.error(`Unexpected files:\n${unexpected.join("\n")}`);
     if (forbidden.length) console.error(`Forbidden files:\n${forbidden.join("\n")}`);
     if (forbiddenContent.length) {

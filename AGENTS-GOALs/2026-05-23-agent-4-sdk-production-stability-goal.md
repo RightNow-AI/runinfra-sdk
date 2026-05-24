@@ -1150,3 +1150,50 @@ Remaining blockers are unchanged:
 - This closes a package-safety release-gate gap, not live SDK GA readiness.
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+## 2026-05-24 Agent 4 Checkpoint: Non-Regular Archive Entry Rejection
+
+Closed another package-scanner bypass class before GA promotion:
+
+- npm package verification now rejects non-regular tarball entries such as symlinks and hardlinks.
+- Python wheel verification now rejects non-regular zip entries while still accepting Windows-created regular entries with mode `0`.
+- Python sdist verification now rejects non-regular tar members inside the sdist root and at archive root.
+- The sdist scanner now reports top-level members as `<archive-root>/...` instead of dropping them as empty strings.
+- Regression tests cover npm symlink entries, Python wheel symlink entries, in-root sdist symlink entries, and top-level sdist symlink entries.
+- TypeScript tests generate the synthetic tarball in Node without requiring Python on the TypeScript CI path.
+- Python tests no longer shell out to Node.
+
+TDD and review evidence:
+
+- Initial red run showed the npm scanner accepted `package/README.md` as a symlink.
+- Initial red run showed the Python scanner accepted non-regular archive members before the metadata checks.
+- Second-opinion review found one blocker: top-level sdist symlinks were stripped to an empty path and ignored.
+- Added a red top-level sdist symlink regression, which failed because no `SystemExit` was raised.
+- After fixing root-member normalization, targeted TS and Python non-regular archive tests passed.
+- Second-opinion re-check returned no blockers or important findings.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "non-regular file entries"` passed: 1 test passed, 139 skipped.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k non_regular_archive_entries` passed: 1 test passed, 121 deselected, 3 subtests passed.
+- `pnpm --dir typescript test` passed: 140 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `python -m pytest python\tests -q` passed: 122 tests, 119 subtests.
+- `node --check scripts\verify-npm-package.mjs` passed.
+- `python -m py_compile scripts\verify-python-package.py` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist artifacts\python-local` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 45 rows, 0 uncovered surfaces.
+- `pnpm --dir typescript build` passed.
+- `python -m build python --outdir artifacts\python-local` passed.
+- `pnpm --dir typescript pack --pack-destination ..\artifacts\npm-local` passed.
+- `python -m twine check artifacts\python-local\*` passed.
+- Fresh artifact scanners passed for `artifacts\npm-local` and `artifacts\python-local`.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes a package-safety release-gate gap, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
