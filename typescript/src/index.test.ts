@@ -1781,6 +1781,7 @@ class RunInfra:
     expect(source).toContain("extraBody?: Record<string, unknown>;");
     expect(readme).toContain("TypeScript request interfaces are closed around typed fields");
     expect(readme).toContain("Use `extraBody` in request options for deliberate JSON body extensions");
+    expect(readme).toContain("`extraBody` is only accepted on JSON body requests");
     expect(readme).toContain("`extraBody` cannot override typed request fields");
     expect(typescriptCanary).toContain("extraBody: {");
     expect(typescriptCanary).toContain("runinfra_unsupported_parameter_probe");
@@ -4758,6 +4759,63 @@ with open(report, "w", encoding="utf-8") as handle:
       type: "invalid_request_options",
       message: "extraBody must not override typed request field: encoding_format",
     });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects extraBody on non-JSON and no-body request paths before sending", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({ object: "list", data: [] }));
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      pipelineId: "pipe-extra-body",
+      fetch: fetcher,
+    });
+
+    await expect(
+      client.models.list({
+        extraBody: {
+          runinfra_probe: true,
+        },
+      }),
+    ).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "extraBody can only be used with JSON request bodies",
+    });
+
+    await expect(
+      client.audio.transcriptions.create(
+        {
+          model: "whisper",
+          file: new Blob([new Uint8Array([1, 2, 3])], { type: "audio/wav" }),
+          filename: "sample.wav",
+        },
+        {
+          extraBody: {
+            runinfra_probe: true,
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "extraBody can only be used with JSON request bodies",
+    });
+
+    await expect(
+      client.voice.pipeline.create(
+        {
+          audio: new Uint8Array([1, 2, 3]),
+          mimeType: "audio/wav",
+        },
+        {
+          extraBody: {
+            runinfra_probe: true,
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "extraBody can only be used with JSON request bodies",
+    });
+
     expect(fetcher).not.toHaveBeenCalled();
   });
 

@@ -2685,3 +2685,44 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-25 00:58 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: ExtraBody Non-JSON Guard Coverage
+
+Added focused TypeScript coverage for the `extraBody` escape hatch on non-JSON and no-body request paths:
+
+- `client.models.list()` rejects `extraBody` before network send because it has no request body.
+- `client.audio.transcriptions.create()` rejects `extraBody` before network send because ASR uses multipart `FormData`.
+- `client.voice.pipeline.create()` rejects `extraBody` before network send because voice pipeline uses a raw binary body.
+- TypeScript README now states that `extraBody` is only accepted on JSON body requests.
+
+TDD evidence:
+
+- Added the docs/runtime regression first.
+- Focused `extraBody` test failed for the intended reason: README did not include the JSON-body-only guarantee.
+- Updated README wording and reran the focused test until it passed.
+
+Fresh verification:
+
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "extraBody"` passed: 4 selected tests, 189 skipped.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test` passed: 193 tests.
+- `pnpm --dir typescript build` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+
+Package evidence refreshed for the changed TypeScript README:
+
+- `pnpm --dir typescript pack` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `node scripts\verify-clean-installs.mjs --package typescript --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz` passed.
+- npm tarball SHA256: `C1C7F405E4F4F1CE4455ED99CC3C3E274EB338665BE83D09CD816953DF9DD21D`.
+- npm tarball contains only `LICENSE`, `dist/index.js`, `dist/index.d.ts`, `package.json`, `CHANGELOG.md`, and `README.md`.
+
+Remaining blockers are unchanged:
+
+- This improves local misuse safety and docs, but it does not prove live endpoint GA readiness.
+- Strict production live canaries are still blocked by missing scoped canary env/fixtures.
+- npm and PyPI latest are still `0.1.3`; local `0.1.4` still needs trusted publishing and registry install/import proof.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 01:01 +03:00.
