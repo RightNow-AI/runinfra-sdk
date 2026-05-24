@@ -1131,6 +1131,15 @@ Fresh verification:
 - `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 45 rows, 0 uncovered surfaces.
 - `git diff --check` passed with CRLF warnings only.
 
+Additional post-commit artifact refresh:
+
+- `pnpm --dir typescript build` passed.
+- `python -m build python --outdir artifacts\python-local` passed.
+- `pnpm --dir typescript pack --pack-destination ..\artifacts\npm-local` passed and produced the expected six-file npm tarball.
+- `python -m twine check artifacts\python-local\*` passed.
+- Fresh artifact scanners passed for `artifacts\npm-local` and `artifacts\python-local`.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+
 Review status:
 
 - CodeRabbit CLI was unavailable (`coderabbit` and `cr` not installed).
