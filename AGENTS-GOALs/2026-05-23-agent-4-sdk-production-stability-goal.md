@@ -1156,7 +1156,7 @@ Remaining blockers are unchanged:
 Closed a trusted-publish release-gate gap before GA promotion:
 
 - Added `scripts/verify-promoted-artifacts.mjs` to validate the exact post-download artifact layout used by promotion and publish jobs.
-- The verifier accepts exactly one npm tarball at `npm-local/runinfra-sdk-*.tgz`, one Python wheel at `python-local/runinfra-*-py3-none-any.whl`, and one Python sdist at `python-local/runinfra-*.tar.gz`.
+- The verifier accepts exactly one current-version npm tarball at `npm-local/runinfra-sdk-<version>.tgz`, one current-version Python wheel at `python-local/runinfra-<version>-py3-none-any.whl`, and one current-version Python sdist at `python-local/runinfra-<version>.tar.gz`.
 - The verifier rejects missing roots, non-directory roots, unexpected files, duplicate/missing expected artifacts, and non-regular entries without printing raw Node stack traces.
 - `publish.yml` now runs the verifier immediately after every `actions/download-artifact` of `runinfra-sdk-promoted-artifacts`, before canary fixture prep, npm artifact scanning/publish, or PyPI artifact scanning/publish.
 - Workflow policy now fails if the verifier is absent from any promotion/publish job or moved after the first artifact-use step.
@@ -1166,14 +1166,16 @@ TDD and review evidence:
 - Focused promoted-artifact tests failed before `scripts/verify-promoted-artifacts.mjs` existed.
 - Non-directory root regression failed with a raw Node `ENOTDIR` stack before controlled root inspection was added.
 - Order-sensitive policy regression failed while policy only checked verifier presence, then passed after enforcing verifier placement before artifact use.
+- Wrong-version artifact regression failed because `0.0.0` npm/wheel/sdist filenames were accepted. The verifier now reads the current SDK version from `typescript/package.json` and rejects promoted artifacts whose filenames do not match.
 - Initial second-opinion review found one blocker: the workflow referenced the new verifier while the file was still untracked. The intended file set now stages the verifier explicitly.
 - Follow-up second-opinion review returned `ALLOW` but flagged the presence-only policy residual. The order-sensitive policy fix closed that residual.
 - Final second-opinion re-review returned `ALLOW` with no blockers. Residual: policy parsing is still string-marker based rather than YAML-AST based, and CodeRabbit CLI was not available to that reviewer.
+- Exact-version re-review first found a hardcoded `0.1.4` positive fixture blocker. The fixture now derives from `package.json`; re-review returned `ALLOW`. Residuals: the negative fixture uses `0.0.0`, and this verifier checks filenames/layout while package scanners and clean-install gates still cover package metadata.
 
 Fresh verification:
 
-- `pnpm --dir typescript test --run -t "promoted artifact"` passed: 3 tests passed, 157 skipped.
-- `pnpm --dir typescript test` passed: 160 tests.
+- `pnpm --dir typescript test --run -t "promoted artifact"` passed: 4 tests passed, 157 skipped.
+- `pnpm --dir typescript test` passed: 161 tests.
 - `python -m pytest python\tests -q` passed: 123 tests, 119 subtests.
 - `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
 - `node scripts\verify-workflow-policy.mjs` passed, including `publish workflow verifies downloaded promoted artifact layout`.

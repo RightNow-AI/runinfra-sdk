@@ -1,21 +1,38 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const root = process.argv[2] ?? "artifacts";
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const expectedSdkVersion = readExpectedSdkVersion();
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function readExpectedSdkVersion() {
+  const packageJson = JSON.parse(readFileSync(join(repositoryRoot, "typescript", "package.json"), "utf8"));
+  if (typeof packageJson.version !== "string" || !packageJson.version.trim()) {
+    throw new Error("typescript/package.json is missing a package version.");
+  }
+  return packageJson.version;
+}
+
+const versionPattern = escapeRegExp(expectedSdkVersion);
 
 const expected = [
   {
-    label: "npm tarball",
-    pattern: /^npm-local\/runinfra-sdk-[^/]+\.tgz$/u,
+    label: `npm tarball for SDK version ${expectedSdkVersion}`,
+    pattern: new RegExp(`^npm-local/runinfra-sdk-${versionPattern}\\.tgz$`, "u"),
   },
   {
-    label: "Python wheel",
-    pattern: /^python-local\/runinfra-[^/]+-py3-none-any\.whl$/u,
+    label: `Python wheel for SDK version ${expectedSdkVersion}`,
+    pattern: new RegExp(`^python-local/runinfra-${versionPattern}-py3-none-any\\.whl$`, "u"),
   },
   {
-    label: "Python sdist",
-    pattern: /^python-local\/runinfra-[^/]+\.tar\.gz$/u,
+    label: `Python sdist for SDK version ${expectedSdkVersion}`,
+    pattern: new RegExp(`^python-local/runinfra-${versionPattern}\\.tar\\.gz$`, "u"),
   },
 ];
 

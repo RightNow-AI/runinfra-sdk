@@ -1275,12 +1275,16 @@ class RunInfra:
   it("rejects malformed promoted artifact download layouts", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-promoted-artifacts-"));
     try {
+      const packageJson = JSON.parse(
+        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ) as { version: string };
+      const version = packageJson.version;
       const artifactRoot = join(tmp, "artifacts");
       mkdirSync(join(artifactRoot, "npm-local"), { recursive: true });
       mkdirSync(join(artifactRoot, "python-local"), { recursive: true });
-      writeFileSync(join(artifactRoot, "npm-local", "runinfra-sdk-0.1.4.tgz"), "npm artifact");
-      writeFileSync(join(artifactRoot, "python-local", "runinfra-0.1.4-py3-none-any.whl"), "wheel artifact");
-      writeFileSync(join(artifactRoot, "python-local", "runinfra-0.1.4.tar.gz"), "sdist artifact");
+      writeFileSync(join(artifactRoot, "npm-local", `runinfra-sdk-${version}.tgz`), "npm artifact");
+      writeFileSync(join(artifactRoot, "python-local", `runinfra-${version}-py3-none-any.whl`), "wheel artifact");
+      writeFileSync(join(artifactRoot, "python-local", `runinfra-${version}.tar.gz`), "sdist artifact");
 
       const valid = spawnSync(process.execPath, [
         "../scripts/verify-promoted-artifacts.mjs",
@@ -1292,7 +1296,7 @@ class RunInfra:
       expect(valid.status, valid.stdout + valid.stderr).toBe(0);
       expect(valid.stdout).toContain("Verified promoted artifact layout");
 
-      writeFileSync(join(artifactRoot, "runinfra-sdk-0.1.4.tgz"), "flattened duplicate");
+      writeFileSync(join(artifactRoot, `runinfra-sdk-${version}.tgz`), "flattened duplicate");
       const malformed = spawnSync(process.execPath, [
         "../scripts/verify-promoted-artifacts.mjs",
         artifactRoot,
@@ -1302,7 +1306,7 @@ class RunInfra:
       });
       expect(malformed.status, malformed.stdout + malformed.stderr).toBe(1);
       expect(malformed.stderr).toContain("unexpected promoted artifact file");
-      expect(malformed.stderr).toContain("runinfra-sdk-0.1.4.tgz");
+      expect(malformed.stderr).toContain(`runinfra-sdk-${version}.tgz`);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -1326,6 +1330,37 @@ class RunInfra:
       expect(malformed.stderr).toContain("promoted artifact root is not a directory");
       expect(malformed.stderr).not.toContain("Error:");
       expect(malformed.stderr).not.toContain("at ");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects promoted artifact downloads for the wrong SDK version", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promoted-artifacts-version-"));
+    try {
+      const artifactRoot = join(tmp, "artifacts");
+      mkdirSync(join(artifactRoot, "npm-local"), { recursive: true });
+      mkdirSync(join(artifactRoot, "python-local"), { recursive: true });
+      writeFileSync(join(artifactRoot, "npm-local", "runinfra-sdk-0.0.0.tgz"), "npm artifact");
+      writeFileSync(join(artifactRoot, "python-local", "runinfra-0.0.0-py3-none-any.whl"), "wheel artifact");
+      writeFileSync(join(artifactRoot, "python-local", "runinfra-0.0.0.tar.gz"), "sdist artifact");
+
+      const malformed = spawnSync(process.execPath, [
+        "../scripts/verify-promoted-artifacts.mjs",
+        artifactRoot,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      const packageJson = JSON.parse(
+        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ) as { version: string };
+      expect(malformed.status, malformed.stdout + malformed.stderr).toBe(1);
+      expect(malformed.stderr).toContain(`SDK version ${packageJson.version}`);
+      expect(malformed.stderr).toContain("runinfra-sdk-0.0.0.tgz");
+      expect(malformed.stderr).toContain("runinfra-0.0.0-py3-none-any.whl");
+      expect(malformed.stderr).toContain("runinfra-0.0.0.tar.gz");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
