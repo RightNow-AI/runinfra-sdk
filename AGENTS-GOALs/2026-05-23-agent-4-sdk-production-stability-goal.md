@@ -1078,17 +1078,20 @@ Fix:
 - Artifact-mode canary setup now reads the SDK candidate version from `typescript/package.json`.
 - npm artifact lookup now requires `typescript/runinfra-sdk-<version>.tgz`.
 - Python artifact lookup now requires `python/dist/runinfra-<version>-*.whl`.
+- Parent canary parity now fails if TypeScript or Python child reports claim an SDK version different from the candidate version.
 - Setup failure reports now include the redacted reason, for example that the current-version artifact is missing, while still preserving the existing surface-coverage report.
 
 Fresh verification:
 
 - TDD red run: the new regression failed first because the report only contained generic `artifact canary package setup failed`.
+- TDD red run: the child-report version regression failed first because parent parity did not report `0.0.0 != 0.1.4`.
 - Targeted regression after the fix passed: 1 test passed, 136 skipped.
-- Affected tests passed: 2 tests passed, 135 skipped.
+- Affected tests passed after both fixes: 3 tests passed, 135 skipped.
 - `node --check scripts\run-sdk-live-canaries.mjs` passed.
 - `node scripts\run-sdk-live-canaries.mjs --package-source artifact --report artifacts\sdk\live-canary-artifact-no-env-current.json` passed in no-env mode: TypeScript 19 passed/26 skipped; Python 19 passed/26 skipped.
-- Full TypeScript tests passed: 137 tests.
+- Full TypeScript tests passed: 138 tests.
 - TypeScript typecheck passed.
+- Full Python tests passed: 120 tests, 114 subtests.
 - Surface coverage verification passed: 22 declared surfaces, 26 mapped surfaces, 45 rows, 0 uncovered surfaces.
 - Strict preflight with the external RunPipe env file still exits blocked: 34 ready, 11 blocked.
 - `git diff --check` passed with CRLF warnings only.

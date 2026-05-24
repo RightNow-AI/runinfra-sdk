@@ -1000,12 +1000,15 @@ function reportRowErrors(report) {
   if (!report || typeof report !== "object" || !Array.isArray(report.results)) {
     return [`${report?.language ?? "unknown"} report missing results`];
   }
+  const errors = [];
+  if (report.sdkVersion !== expectedSdkVersion) {
+    errors.push(`${report.language} SDK version ${String(report.sdkVersion ?? "missing")} != ${expectedSdkVersion}`);
+  }
   const names = report.results.map((result) => result.name);
   const unique = new Set(names);
   const missing = expectedRows.filter((row) => !unique.has(row));
   const unexpected = names.filter((row) => !expectedRows.includes(row));
   const duplicates = names.filter((row, index) => names.indexOf(row) !== index);
-  const errors = [];
   if (names.length !== unique.size) errors.push(`${report.language} duplicate rows: ${[...new Set(duplicates)].join(", ")}`);
   if (missing.length) errors.push(`${report.language} missing rows: ${missing.join(", ")}`);
   if (unexpected.length) errors.push(`${report.language} unexpected rows: ${unexpected.join(", ")}`);

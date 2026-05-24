@@ -766,6 +766,55 @@ describe("RunInfra TypeScript SDK", () => {
     }
   });
 
+  it("fails parent live-canary parity when child reports use the wrong SDK version", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-child-version-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    try {
+      mkdirSync(join(tmp, "scripts"), { recursive: true });
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-typescript.mjs"), `
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+const report = process.argv[process.argv.indexOf("--report") + 1];
+mkdirSync(dirname(report), { recursive: true });
+writeFileSync(report, JSON.stringify({ language: "typescript", sdkVersion: "0.0.0", results: [] }));
+`);
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-python.py"), `
+import json
+import os
+import sys
+report = sys.argv[sys.argv.index("--report") + 1]
+os.makedirs(os.path.dirname(report), exist_ok=True)
+with open(report, "w", encoding="utf-8") as handle:
+    json.dump({"language": "python", "sdkVersion": "0.0.0", "results": []}, handle)
+`);
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { errors?: string[] };
+      };
+      expect(report.parity?.errors).toContain(`typescript SDK version 0.0.0 != ${RUNINFRA_SDK_VERSION}`);
+      expect(report.parity?.errors).toContain(`python SDK version 0.0.0 != ${RUNINFRA_SDK_VERSION}`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("writes a redacted strict live-canary preflight report without running live calls", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
     const reportPath = join(tmp, "readiness.json");
