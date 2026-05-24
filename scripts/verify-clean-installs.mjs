@@ -27,6 +27,10 @@ const registryRetryDelayMs = parsePositiveInteger(
   optionValue("--registry-retry-delay-ms") ?? "10000",
   "--registry-retry-delay-ms",
 );
+const cleanInstallCommandTimeoutMs = parsePositiveInteger(
+  process.env.RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS ?? "120000",
+  "RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS",
+);
 const webhookDeliverySurfaceRow = "webhooks.delivery_surface.absent";
 const tempRoot = resolve(repoRoot, ".clean-install-tmp");
 
@@ -100,24 +104,40 @@ function run(command, commandArgs, cwd, options = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd,
     env,
-    stdio: captureOutput ? "pipe" : "inherit",
-    encoding: captureOutput ? "utf8" : undefined,
+    stdio: "pipe",
+    encoding: "utf8",
+    timeout: cleanInstallCommandTimeoutMs,
   });
   if (result.error || result.status !== 0) {
     if (options.allowFailure === true) {
       return false;
     }
+    if (isTimeoutError(result.error)) {
+      throw new Error(`${timeoutFailureMessage(options)} after ${cleanInstallCommandTimeoutMs}ms`);
+    }
     const message = options.failureMessage ?? `Clean install command failed: ${command} ${commandArgs.slice(0, 2).join(" ")}`.trim();
     const summary = captureOutput ? cleanFailureSummary(result.stdout, result.stderr) : "";
     throw new Error(summary ? `${message}: ${summary}` : message);
   }
-  if (captureOutput) {
-    if (options.suppressOutputOnSuccess !== true) {
-      if (result.stdout) process.stdout.write(result.stdout);
-      if (result.stderr) process.stderr.write(result.stderr);
-    }
+  if (options.suppressOutputOnSuccess !== true) {
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
   }
   return true;
+}
+
+function isTimeoutError(error) {
+  return error && typeof error === "object" && "code" in error && error.code === "ETIMEDOUT";
+}
+
+function timeoutFailureMessage(options) {
+  if (typeof options.timeoutFailureMessage === "string" && options.timeoutFailureMessage) {
+    return options.timeoutFailureMessage;
+  }
+  if (typeof options.failureMessage === "string" && options.failureMessage.endsWith(" failed")) {
+    return `${options.failureMessage.slice(0, -" failed".length)} timed out`;
+  }
+  return "Clean install command timed out";
 }
 
 function cleanFailureSummary(stdout, stderr) {
@@ -227,7 +247,9 @@ function verifyNpm(workspace) {
         "--package-lock=false",
         installSpec,
       ];
-  runRegistryInstall(npm.command, [...npm.prefixArgs, ...installArgs], npmDir, "npm");
+  runRegistryInstall(npm.command, [...npm.prefixArgs, ...installArgs], npmDir, "npm", {
+    failureMessage: "npm clean install failed",
+  });
   run(process.execPath, ["--input-type=module", "-e", `
 import { RUNINFRA_SDK_VERSION, RunInfra } from "@runinfra/sdk";
 if (RUNINFRA_SDK_VERSION !== "${version}") {
@@ -260,7 +282,9 @@ function verifyPythonInstall(workspace, installLabel, installArgs, options = {})
   const venvDir = join(pythonDir, "venv");
   mkdirSync(pythonDir, { recursive: true });
   const hostPython = optionValue("--python") ?? "python";
-  run(hostPython, ["-m", "venv", venvDir], pythonDir);
+  run(hostPython, ["-m", "venv", venvDir], pythonDir, {
+    failureMessage: `Python ${installLabel} venv creation failed`,
+  });
   const python = pythonExecutable(venvDir);
   if (mode === "registry") {
     runRegistryInstall(python, installArgs, pythonDir, "PyPI", options);

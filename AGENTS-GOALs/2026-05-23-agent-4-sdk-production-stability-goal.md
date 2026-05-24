@@ -2910,3 +2910,39 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-25 02:01 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: Clean-Install Subprocess Timeout Hardening
+
+Added bounded subprocess execution to the clean-install verifier:
+
+- `scripts/verify-clean-installs.mjs` now applies `RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS` to every child command run through its `run()` wrapper.
+- The default command timeout is 120000 ms.
+- Invalid timeout env values fail closed before `.clean-install-tmp` workspaces are created.
+- Timeout failures report only the clean-install phase and timeout budget. Child output is buffered and replayed only on success, so timeout failures do not stream raw npm, pip, import, temp path, source path, or private path output.
+- npm install timeout failures now identify the phase as `npm clean install timed out`; existing import failure redaction behavior is preserved.
+
+TDD evidence:
+
+- Added failing regressions first for invalid timeout env values and stalled clean-install commands.
+- Initial timeout regression proved the old verifier relied on the parent process timeout.
+- After implementation, the focused timeout regressions passed.
+
+Fresh verification at this checkpoint:
+
+- `git diff --check` passed with only expected Windows CRLF working-copy warnings.
+- `node --check scripts\verify-clean-installs.mjs` passed.
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "clean-install command timeout|stalled clean-install commands" --reporter dot --testTimeout 5000` passed: 2 selected tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` passed: 195 tests.
+- `node scripts\verify-clean-installs.mjs --package typescript --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `node scripts\verify-clean-installs.mjs --package python --mode artifact --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\verify-version-sync.mjs` passed.
+
+Remaining blockers are unchanged:
+
+- This hardens local and CI clean-install gates, but it does not prove live endpoint GA readiness.
+- Strict production live canaries are still blocked by missing scoped canary env/fixtures.
+- npm and PyPI latest are still `0.1.3`; local `0.1.4` still needs trusted publishing and registry install/import proof.
+
+Checkpoint timestamp: 2026-05-25 02:05 +03:00.

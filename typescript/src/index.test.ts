@@ -1278,6 +1278,99 @@ describe("RunInfra TypeScript SDK", () => {
     }
   });
 
+  it("fails invalid clean-install command timeout before creating workspaces", () => {
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "typescript",
+        "--mode",
+        "artifact",
+        "--npm-tarball",
+        join(repoRoot, "missing.tgz"),
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS: "0",
+        },
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(output).toContain("RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS must be a positive integer.");
+      expect(output).not.toContain("Clean install command failed");
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it("times out stalled clean-install commands without leaking workspace paths", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-clean-install-timeout-"));
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      const tarball = join(tmp, "runinfra-sdk-0.1.4.tgz");
+      writeGzippedTarball(tarball, [
+        {
+          name: "package/package.json",
+          content: JSON.stringify({
+            name: "@runinfra/sdk",
+            version: RUNINFRA_SDK_VERSION,
+            type: "module",
+            main: "./dist/index.js",
+            exports: { ".": "./dist/index.js" },
+          }),
+        },
+        {
+          name: "package/dist/index.js",
+          content: `
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);
+export const RUNINFRA_SDK_VERSION = "${RUNINFRA_SDK_VERSION}";
+export class RunInfra {}
+`,
+        },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "typescript",
+        "--mode",
+        "artifact",
+        "--npm-tarball",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        timeout: 1500,
+        env: {
+          ...process.env,
+          RUNINFRA_CLEAN_INSTALL_COMMAND_TIMEOUT_MS: "50",
+        },
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(output).toMatch(/npm clean (?:install|import check) timed out after 50ms/u);
+      expect(output).not.toContain(tmp);
+      expect(output).not.toContain(".clean-install-tmp");
+      expect(output).not.toContain("node_modules");
+      expect(output).not.toContain("Atomics.wait");
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
   it("redacts clean-install import failures from temporary workspace paths", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-clean-install-redaction-"));
     const repoRoot = join(process.cwd(), "..");
