@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { expectedRows } from "./live-canary-matrix.mjs";
 import { sourceDigestFileLabels } from "./live-canary-source-files.mjs";
 import { publicSurfaceCoverage } from "./live-canary-surface-coverage.mjs";
+import { readinessRowCoverageErrors } from "./live-canary-readiness-policy.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const args = process.argv.slice(2);
@@ -405,12 +406,14 @@ function buildReadiness() {
       missing,
     };
   });
-  const missing = [...new Set([...globalMissing, ...rows.flatMap((row) => row.missing)])].sort();
+  const rowCoverageErrors = readinessRowCoverageErrors(expectedRows, rows.map((row) => row.name));
+  const missing = [...new Set([...globalMissing, ...rowCoverageErrors, ...rows.flatMap((row) => row.missing)])].sort();
   return {
     status: missing.length ? "blocked" : "ready",
     env: redactedEnv(relevantEnv),
     aliases: redactedEnvAliases(relevantEnv),
     missing,
+    rowCoverageErrors,
     summary: {
       ready: rows.filter((row) => row.status === "ready").length,
       blocked: rows.filter((row) => row.status === "blocked").length,

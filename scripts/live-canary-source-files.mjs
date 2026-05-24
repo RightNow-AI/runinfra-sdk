@@ -6,6 +6,7 @@ export const sourceDigestFileLabels = [
   "scripts/run-sdk-live-canaries.mjs",
   "scripts/canary-report-base-url.mjs",
   "scripts/live-canary-matrix.mjs",
+  "scripts/live-canary-readiness-policy.mjs",
   "scripts/live-canary-surface-coverage.mjs",
   "scripts/live-canary-source-files.mjs",
   "scripts/secret-scan-policy.mjs",

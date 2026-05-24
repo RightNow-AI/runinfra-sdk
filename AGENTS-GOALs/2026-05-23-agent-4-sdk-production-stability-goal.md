@@ -2198,3 +2198,43 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 22:54 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Live-Canary Readiness Matrix Drift Gate
+
+Closed a parent live-canary integrity gap before GA:
+
+- Added `scripts/live-canary-readiness-policy.mjs` with `readinessRowCoverageErrors()`.
+- `scripts/run-sdk-live-canaries.mjs --preflight` now fails closed if readiness requirements drift from the canonical strict live-canary matrix:
+  - missing strict matrix rows.
+  - unknown readiness rows.
+  - duplicate strict matrix rows.
+  - duplicate readiness rows.
+- The new readiness policy file is included in `scripts/live-canary-source-files.mjs`, so promotion evidence source digests change when this gate changes.
+- `LIVE-CANARIES.md` now documents that preflight also enforces readiness-row parity with the strict matrix.
+
+TDD evidence:
+
+- Added a failing regression first. It failed because `scripts/live-canary-readiness-policy.mjs` did not exist.
+- Implemented the helper, wired it into `buildReadiness()`, added the source-digest manifest entry, and confirmed the focused regression passed.
+
+Fresh verification:
+
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "blocks readiness drift"` passed: 1 selected test.
+- `node --check scripts\live-canary-readiness-policy.mjs` passed.
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --package-source source --report artifacts\sdk\live-canary-readiness-local.json` failed as expected because live canary env is absent; the report showed readiness `blocked`, 19 ready rows, 30 blocked rows, and `rowCoverageErrors=0`.
+- `pnpm --dir typescript test` passed: 182 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- Read-only second-opinion review `019e5b99-73b7-7512-b08d-457d5b885414` reported no P0/P1/P2 findings. Residual risk: CodeRabbit CLI was not installed, so the review was manual.
+
+Remaining blockers are unchanged:
+
+- This makes preflight stricter, but it does not prove live SDK GA readiness.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and all required live endpoint rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 23:02 +03:00.

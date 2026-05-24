@@ -33,7 +33,9 @@ identity metadata after the canary source set changes.
 environment status plus row-by-row missing inputs, then fails in strict mode
 when required model IDs, fixture paths, expected transcripts, or idempotency
 opt-in are absent. Use it before provisioning live canary resources so missing
-GA inputs are explicit without exposing values.
+GA inputs are explicit without exposing values. It also fails closed if the
+readiness requirement rows drift from the canonical strict matrix, so a new
+live row cannot be added without a matching preflight requirement.
 
 If canary inputs live in a local env file, load it through
 `--runinfra-env-file <path-to-env-file>`:

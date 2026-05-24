@@ -1866,6 +1866,30 @@ class RunInfra:
     expect(manifest.sourceDigestFileLabels).toContain("scripts/live-canary-matrix.mjs");
   });
 
+  it("blocks readiness drift from the canonical live canary matrix", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { readinessRowCoverageErrors } =
+      await import("../../scripts/live-canary-readiness-policy.mjs") as {
+        readinessRowCoverageErrors: (expected: string[], readiness: string[]) => string[];
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
+
+    expect(readinessRowCoverageErrors(expectedRows, expectedRows)).toEqual([]);
+    expect(readinessRowCoverageErrors(expectedRows, expectedRows.filter((row) => row !== "images.generate")))
+      .toContain("readiness requirements missing strict matrix rows: images.generate");
+    expect(readinessRowCoverageErrors(expectedRows, [...expectedRows, "unknown.row"]))
+      .toContain("readiness requirements reference unknown strict matrix rows: unknown.row");
+    expect(readinessRowCoverageErrors(["models.list", "models.list"], ["models.list"]))
+      .toContain("strict matrix duplicate rows: models.list");
+    expect(readinessRowCoverageErrors(["models.list"], ["models.list", "models.list"]))
+      .toContain("readiness requirements duplicate rows: models.list");
+    expect(runner).toContain("readinessRowCoverageErrors(expectedRows, rows.map((row) => row.name))");
+    expect(manifest.sourceDigestFileLabels).toContain("scripts/live-canary-readiness-policy.mjs");
+    expect(liveCanaries).toContain("readiness requirement rows drift from the canonical strict matrix");
+  });
+
   it("includes the canonical live canary surface coverage manifest in source digests", async () => {
     const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
 
