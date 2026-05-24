@@ -1,12 +1,17 @@
 import hashlib
 import hmac
+import io
 import inspect
 import importlib.util
 import json
 import math
 import os
 import re
+import tarfile
+import tempfile
 import unittest
+import warnings
+import zipfile
 from collections import UserDict
 from email.utils import formatdate
 from pathlib import Path
@@ -621,6 +626,50 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         for sample in samples:
             with self.subTest(sample=sample[:12]):
                 self.assertTrue(verifier.has_forbidden_content(sample.encode("utf-8")))
+
+    def test_python_package_verifier_rejects_duplicate_archive_entries(self):
+        verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
+        spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            wheel_path = tmp_path.joinpath("runinfra-0.0.0-py3-none-any.whl")
+            with zipfile.ZipFile(wheel_path, "w") as wheel:
+                wheel.writestr("runinfra/__init__.py", "__version__ = '0.0.0'\n")
+                wheel.writestr("runinfra/py.typed", "")
+                wheel.writestr("runinfra-0.0.0.dist-info/METADATA", "Name: runinfra\n")
+                wheel.writestr("runinfra-0.0.0.dist-info/RECORD", "")
+                wheel.writestr("runinfra-0.0.0.dist-info/WHEEL", "Wheel-Version: 1.0\n")
+                wheel.writestr("runinfra-0.0.0.dist-info/top_level.txt", "runinfra\n")
+                wheel.writestr("runinfra-0.0.0.dist-info/licenses/LICENSE", "MIT\n")
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    wheel.writestr("runinfra/__init__.py", "__version__ = '0.0.0'\n")
+
+            sdist_path = tmp_path.joinpath("runinfra-0.0.0.tar.gz")
+            with tarfile.open(sdist_path, "w:gz") as sdist:
+                def add_file(name, content):
+                    payload = content.encode("utf-8")
+                    member = tarfile.TarInfo(f"runinfra-0.0.0/{name}")
+                    member.size = len(payload)
+                    sdist.addfile(member, io.BytesIO(payload))
+
+                for name in verifier.SDIST_ALLOWED:
+                    add_file(name, "placeholder\n")
+                add_file("runinfra/__init__.py", "placeholder\n")
+
+            for archive_path, verify_archive in (
+                (wheel_path, verifier.verify_wheel),
+                (sdist_path, verifier.verify_sdist),
+            ):
+                with self.subTest(archive=archive_path.name):
+                    with self.assertRaises(SystemExit) as raised:
+                        verify_archive(archive_path)
+                    self.assertEqual(raised.exception.code, 1)
 
     def test_public_methods_expose_typed_response_annotations(self):
         client = RunInfra(api_key="sk-ri-test", transport=RecordingTransport())

@@ -606,6 +606,50 @@ describe("RunInfra TypeScript SDK", () => {
     }
   });
 
+  it("rejects npm package tarballs with duplicate file entries", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-npm-duplicate-"));
+    try {
+      const distDir = join(tmp, "package", "dist");
+      mkdirSync(distDir, { recursive: true });
+      const files = new Map([
+        ["package/CHANGELOG.md", "# Changelog\n"],
+        ["package/LICENSE", "MIT\n"],
+        ["package/README.md", "# RunInfra SDK\n"],
+        ["package/dist/index.d.ts", "export declare const value: string;\n"],
+        ["package/dist/index.js", "export const value = 'ok';\n"],
+        ["package/package.json", "{\"name\":\"@runinfra/sdk\",\"version\":\"0.0.0\"}\n"],
+      ]);
+      for (const [file, content] of files) {
+        writeFileSync(join(tmp, file), content);
+      }
+
+      const tarball = join(tmp, "duplicate-package.tar");
+      const tarResult = spawnSync("tar", [
+        "-cf",
+        tarball,
+        "-C",
+        tmp,
+        ...files.keys(),
+        "package/README.md",
+      ], { encoding: "utf8" });
+      expect(tarResult.status, tarResult.stderr).toBe(0);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-npm-package.mjs",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      expect(result.stderr).toContain("Duplicate files:");
+      expect(result.stderr).toContain("package/README.md");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("verifies public SDK surface has canary row coverage", () => {
     const result = spawnSync(process.execPath, [
       "../scripts/run-sdk-live-canaries.mjs",

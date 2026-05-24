@@ -1101,3 +1101,43 @@ Remaining blockers are unchanged:
 - The exact-artifact gate is stronger, but there is still no green strict artifact live-canary run.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production rows can be considered fixed.
 - Multimodal live targets and idempotency replay proof are still missing.
+
+## 2026-05-24 Agent 4 Checkpoint: Duplicate Archive Entry Rejection
+
+Closed a package-scanner bypass class before GA promotion:
+
+- npm package verification now rejects duplicate normalized tarball entries.
+- Python wheel verification now rejects duplicate normalized zip entries.
+- Python sdist verification now rejects duplicate normalized tar entries after stripping the root sdist folder.
+- Regression tests build synthetic duplicate archives for npm, wheel, and sdist paths.
+
+TDD evidence:
+
+- The npm duplicate-entry regression failed first because `verify-npm-package.mjs` accepted a tarball with duplicate `package/README.md`.
+- The Python duplicate-entry regression failed first because `verify-python-package.py` accepted duplicate wheel and sdist members.
+- After the scanner patch, the targeted npm and Python duplicate-entry regressions passed.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "duplicate file entries"` passed: 1 test passed, 138 skipped.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k duplicate_archive_entries` passed: 1 test passed, 120 deselected, 2 subtests passed.
+- `pnpm --dir typescript test` passed: 139 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `python -m pytest python\tests -q` passed: 121 tests, 116 subtests.
+- `node --check scripts\verify-npm-package.mjs` passed.
+- `python -m py_compile scripts\verify-python-package.py` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist artifacts\python-local` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 45 rows, 0 uncovered surfaces.
+- `git diff --check` passed with CRLF warnings only.
+
+Review status:
+
+- CodeRabbit CLI was unavailable (`coderabbit` and `cr` not installed).
+- Subagent review was attempted but could not start because the agent thread limit was reached.
+
+Remaining blockers are unchanged:
+
+- This closes a package-safety release-gate gap, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.

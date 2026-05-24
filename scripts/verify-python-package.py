@@ -87,6 +87,16 @@ def has_forbidden_content(content: bytes) -> bool:
     return FORBIDDEN_CONTENT_RE.search(decoded) is not None
 
 
+def duplicate_files(files: list[str]) -> list[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for file in files:
+        if file in seen:
+            duplicates.add(file)
+        seen.add(file)
+    return sorted(duplicates)
+
+
 def verify_wheel(path: Path) -> None:
     with zipfile.ZipFile(path) as wheel:
         names = sorted(name for name in wheel.namelist() if not name.endswith("/"))
@@ -98,6 +108,7 @@ def verify_wheel(path: Path) -> None:
         )
 
     missing = sorted(file for file in WHEEL_ALLOWED_FIXED if file not in files)
+    duplicates = duplicate_files(files)
     unexpected = sorted(
         file
         for file in files
@@ -108,6 +119,8 @@ def verify_wheel(path: Path) -> None:
     errors: list[str] = []
     if missing:
         errors.append("Missing files:\n" + "\n".join(missing))
+    if duplicates:
+        errors.append("Duplicate files:\n" + "\n".join(duplicates))
     if unexpected:
         errors.append("Unexpected files:\n" + "\n".join(unexpected))
     if forbidden:
@@ -139,12 +152,15 @@ def verify_sdist(path: Path) -> None:
     files = [file for file in files if file]
     forbidden_content = sorted(file for file in forbidden_content if file)
     missing = sorted(file for file in SDIST_ALLOWED if file not in files)
+    duplicates = duplicate_files(files)
     unexpected = sorted(file for file in files if file not in SDIST_ALLOWED)
     forbidden = sorted(file for file in files if has_forbidden_path(file))
 
     errors: list[str] = []
     if missing:
         errors.append("Missing files:\n" + "\n".join(missing))
+    if duplicates:
+        errors.append("Duplicate files:\n" + "\n".join(duplicates))
     if unexpected:
         errors.append("Unexpected files:\n" + "\n".join(unexpected))
     if forbidden:

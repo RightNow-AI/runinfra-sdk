@@ -66,10 +66,21 @@ function readTarballFile(tarball, file) {
   });
 }
 
+function duplicateFiles(files) {
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const file of files) {
+    if (seen.has(file)) duplicates.add(file);
+    seen.add(file);
+  }
+  return [...duplicates].sort();
+}
+
 function verifyTarball(tarball) {
   const actualFiles = listTarball(tarball);
   const actualSet = new Set(actualFiles);
   const missing = [...expectedFiles].filter((file) => !actualSet.has(file));
+  const duplicates = duplicateFiles(actualFiles);
   const unexpected = actualFiles.filter((file) => !expectedFiles.has(file));
   const forbidden = actualFiles.filter((file) =>
     forbiddenPatterns.some((pattern) => pattern.test(file)),
@@ -81,9 +92,16 @@ function verifyTarball(tarball) {
     if (matchedPattern) forbiddenContent.push(`${file}: ${matchedPattern.label}`);
   }
 
-  if (missing.length || unexpected.length || forbidden.length || forbiddenContent.length) {
+  if (
+    missing.length ||
+    duplicates.length ||
+    unexpected.length ||
+    forbidden.length ||
+    forbiddenContent.length
+  ) {
     console.error(`Package content verification failed for ${tarball}`);
     if (missing.length) console.error(`Missing files:\n${missing.join("\n")}`);
+    if (duplicates.length) console.error(`Duplicate files:\n${duplicates.join("\n")}`);
     if (unexpected.length) console.error(`Unexpected files:\n${unexpected.join("\n")}`);
     if (forbidden.length) console.error(`Forbidden files:\n${forbidden.join("\n")}`);
     if (forbiddenContent.length) {
