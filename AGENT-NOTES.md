@@ -66,6 +66,8 @@ The CI workflow asserts exact allowlists and forbids `.map`, `.env`, tests,
 source folders, caches, `.npmrc`, and bytecode via
 `scripts/verify-npm-package.mjs` and `scripts/verify-python-package.py`. Don't
 widen `files[]` or `MANIFEST.in` without understanding what would ship.
+The Python verifier also checks wheel `RECORD` rows, SHA-256 hashes, and byte
+sizes so stale or tampered wheel metadata cannot pass the artifact gate.
 
 No source maps. `typescript/tsconfig.json` deliberately does NOT emit them.
 

@@ -835,6 +835,31 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                         verify_archive(archive_path)
                     self.assertEqual(raised.exception.code, 1)
 
+    def test_python_package_verifier_rejects_wheels_with_stale_record_metadata(self):
+        verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
+        spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            wheel_path = tmp_path.joinpath(f"runinfra-{__version__}-py3-none-any.whl")
+            dist_info = f"runinfra-{__version__}.dist-info"
+            with zipfile.ZipFile(wheel_path, "w") as wheel:
+                wheel.writestr("runinfra/__init__.py", f"__version__ = '{__version__}'\n")
+                wheel.writestr("runinfra/py.typed", "")
+                wheel.writestr(f"{dist_info}/METADATA", f"Metadata-Version: 2.4\nName: runinfra\nVersion: {__version__}\n")
+                wheel.writestr(f"{dist_info}/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+                wheel.writestr(f"{dist_info}/top_level.txt", "runinfra\n")
+                wheel.writestr(f"{dist_info}/licenses/LICENSE", "RunInfra license\n")
+                wheel.writestr(f"{dist_info}/RECORD", "")
+
+            with self.assertRaises(SystemExit) as raised:
+                verifier.verify_wheel(wheel_path)
+            self.assertEqual(raised.exception.code, 1)
+
     def test_python_package_verifier_rejects_wheel_layout_and_sdist_root_metadata(self):
         verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
         spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)

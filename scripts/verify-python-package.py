@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
+import csv
+import hashlib
+import io
 import re
 import stat
 import sys
@@ -190,6 +194,64 @@ def wheel_metadata_errors(files: list[str], contents: dict[str, bytes]) -> list[
     return errors
 
 
+def wheel_record_errors(files: list[str], contents: dict[str, bytes]) -> list[str]:
+    expected_prefix = f"{EXPECTED_NAME}-{EXPECTED_VERSION}.dist-info/"
+    record_file = f"{expected_prefix}RECORD"
+    record_content = contents.get(record_file)
+    if record_content is None:
+        return [f"Wheel RECORD file must be {record_file}"]
+
+    errors: list[str] = []
+    rows: list[tuple[str, str, str]] = []
+    try:
+        parsed_rows = csv.reader(io.StringIO(decode_text(record_content), newline=""))
+        for line_number, row in enumerate(parsed_rows, start=1):
+            if len(row) != 3:
+                errors.append(f"Wheel RECORD line {line_number} must contain exactly 3 fields")
+                continue
+            rows.append((normalize(row[0]), row[1], row[2]))
+    except csv.Error as error:
+        return [f"Wheel RECORD must be valid CSV: {error}"]
+
+    record_files = [row[0] for row in rows]
+    duplicate_record_files = duplicate_files(record_files)
+    if duplicate_record_files:
+        errors.append("Wheel RECORD must not contain duplicate file rows:\n" + "\n".join(duplicate_record_files))
+
+    archive_files = sorted(files)
+    sorted_record_files = sorted(record_files)
+    missing = sorted(file for file in archive_files if file not in record_files)
+    unexpected = sorted(file for file in record_files if file not in files)
+    if missing:
+        errors.append("Wheel RECORD is missing archive files:\n" + "\n".join(missing))
+    if unexpected:
+        errors.append("Wheel RECORD lists files not present in the archive:\n" + "\n".join(unexpected))
+    if not missing and not unexpected and sorted_record_files != archive_files:
+        errors.append("Wheel RECORD files must exactly match archive files")
+
+    for file, hash_value, size_value in rows:
+        content = contents.get(file)
+        if content is None:
+            continue
+        if file == record_file:
+            if hash_value or size_value:
+                errors.append("Wheel RECORD self row must leave hash and size empty")
+            continue
+        if not hash_value.startswith("sha256="):
+            errors.append(f"Wheel RECORD {file} must use a sha256 hash")
+        else:
+            expected_hash = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).decode("ascii").rstrip("=")
+            actual_hash = hash_value.removeprefix("sha256=")
+            if actual_hash != expected_hash:
+                errors.append(f"Wheel RECORD {file} sha256 hash mismatch")
+        if not size_value.isdecimal():
+            errors.append(f"Wheel RECORD {file} size must be a decimal byte count")
+        elif int(size_value) != len(content):
+            errors.append(f"Wheel RECORD {file} size mismatch")
+
+    return errors
+
+
 def sdist_metadata_errors(root_names: set[str], contents: dict[str, bytes]) -> list[str]:
     errors: list[str] = []
     expected_root = f"{EXPECTED_NAME}-{EXPECTED_VERSION}"
@@ -225,15 +287,9 @@ def verify_wheel(path: Path) -> None:
             if not zip_info_is_regular_file(info):
                 continue
             content = wheel.read(info.filename)
+            contents[file] = content
             if has_forbidden_content(content):
                 forbidden_content.append(file)
-            if (
-                file == "runinfra/__init__.py"
-                or file.endswith(".dist-info/METADATA")
-                or file.endswith(".dist-info/WHEEL")
-                or file.endswith(".dist-info/top_level.txt")
-            ):
-                contents[file] = content
 
     missing = sorted(file for file in WHEEL_ALLOWED_FIXED if file not in files)
     duplicates = duplicate_files(files)
@@ -244,6 +300,7 @@ def verify_wheel(path: Path) -> None:
     )
     forbidden = sorted(file for file in files if has_forbidden_path(file))
     invalid_metadata = wheel_metadata_errors(files, contents)
+    invalid_record = wheel_record_errors(files, contents)
 
     errors: list[str] = []
     if missing:
@@ -260,6 +317,8 @@ def verify_wheel(path: Path) -> None:
         errors.append("Forbidden content:\n" + "\n".join(sorted(forbidden_content)))
     if invalid_metadata:
         errors.append("Invalid metadata:\n" + "\n".join(invalid_metadata))
+    if invalid_record:
+        errors.append("Invalid RECORD:\n" + "\n".join(invalid_record))
     if errors:
         fail(str(path), errors)
 

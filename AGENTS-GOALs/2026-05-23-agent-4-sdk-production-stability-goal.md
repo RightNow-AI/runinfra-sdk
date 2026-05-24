@@ -1947,3 +1947,40 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 21:46 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Python Wheel RECORD Integrity Gate
+
+Closed a PyPI artifact-integrity gap before GA:
+
+- `scripts/verify-python-package.py` now validates wheel `RECORD` metadata instead of only checking allowed file names and core metadata.
+- The verifier requires the wheel `RECORD` file to cover every archive file exactly once.
+- Every non-`RECORD` row must use a `sha256=` hash that matches the actual file bytes.
+- Every non-`RECORD` row must include a decimal byte size that matches the actual file size.
+- The `RECORD` self row must leave hash and size empty.
+- Root README and AGENT-NOTES now document that stale or tampered wheel `RECORD` metadata fails the artifact gate.
+
+TDD evidence:
+
+- Added a failing Python regression first; it failed because a valid-looking wheel with an empty `RECORD` was accepted and printed `Verified Python wheel contents`.
+- Implemented strict wheel `RECORD` parsing and validation with standard-library `csv`, SHA-256, and URL-safe base64 encoding.
+- Focused green pass: `python -m pytest python\tests -q -k "stale_record_metadata"` passed.
+
+Fresh verification:
+
+- `python -m pytest python\tests -q` passed: 128 tests, 128 subtests.
+- `python -m py_compile scripts\verify-python-package.py` passed.
+- `python -m build python` built `runinfra-0.1.4.tar.gz` and `runinfra-0.1.4-py3-none-any.whl`.
+- `python scripts\verify-python-package.py python\dist` passed against the real built wheel and sdist.
+- `python -m twine check python\dist\*` passed for the built wheel and sdist.
+- `pnpm --dir typescript test` passed: 177 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed with only CRLF normalization warnings.
+
+Remaining blockers are unchanged:
+
+- This closes a local PyPI artifact scanner gap, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and remaining endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 21:49 +03:00.

@@ -130,6 +130,11 @@ bypass the strict report gate. CI audio fixtures use
 the workflow decodes them to local fixture files and reports only redacted
 presence/path status.
 
+The artifact scanners enforce exact package allowlists before promotion. The
+Python wheel scan also validates the wheel `RECORD` manifest covers every file
+with SHA-256 hashes and byte sizes, so a stale or tampered wheel manifest fails
+before PyPI promotion.
+
 After the strict artifact live canary passes, verify that the readiness and
 live reports prove the same candidate source digest and that both language
 reports passed every row. The promotion verifier requires strict child canary
