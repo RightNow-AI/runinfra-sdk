@@ -5,6 +5,7 @@ import { findForbiddenContent } from "./secret-scan-policy.mjs";
 const readinessPath = optionValue("--readiness") ?? "artifacts/sdk/live-canary-readiness.json";
 const livePath = optionValue("--live") ?? "artifacts/sdk/live-canary.json";
 const expectedSdkVersion = readExpectedSdkVersion();
+const productionBaseURL = "https://api.runinfra.ai/v1";
 const errors = [];
 
 const readiness = readReport(readinessPath, "readiness report");
@@ -247,6 +248,12 @@ function liveCanaryErrors(report) {
     const language = String(child?.language ?? "<unknown>");
     if (child?.sdkVersion !== expectedSdkVersion) {
       reportErrors.push(`${language} child report sdkVersion must be ${expectedSdkVersion}`);
+    }
+    if (child?.strict !== true) {
+      reportErrors.push(`${language} child report must be strict`);
+    }
+    if (child?.baseURL !== productionBaseURL) {
+      reportErrors.push(`${language} child report baseURL must be ${productionBaseURL}`);
     }
     const results = arrayOrEmpty(child?.results);
     const names = results.map((row) => row?.name);

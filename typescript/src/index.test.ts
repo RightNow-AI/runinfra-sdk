@@ -154,6 +154,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readinessIndex).toBeGreaterThan(-1);
     expect(liveCanaryIndex).toBeGreaterThan(readinessIndex);
     expect(promotionReportIndex).toBeGreaterThan(liveCanaryIndex);
+    expect(readme).toContain("reports from `https://api.runinfra.ai/v1`");
+    expect(readme).toContain("staging smoke evidence, not publish evidence");
   });
 
   it("does not overclaim embeddings live verification before the strict target exists", () => {
@@ -290,6 +292,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
     expect(liveCanaries).toContain("error.model.not_found");
     expect(liveCanaries).toContain("error.body.unsupported_parameter");
+    expect(liveCanaries).toContain("strict\nchild canaries against `https://api.runinfra.ai/v1`");
+    expect(liveCanaries).toContain("custom `RUNINFRA_BASE_URL` are useful for staging smoke tests");
     expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
     expect(readme).toContain("forwards the supported request through the chat-completions serving path");
     expect(readme).toContain(
@@ -468,6 +472,8 @@ describe("RunInfra TypeScript SDK", () => {
       reports: ["typescript", "python"].map((language) => ({
         language,
         sdkVersion: RUNINFRA_SDK_VERSION,
+        strict: true,
+        baseURL: "https://api.runinfra.ai/v1",
         results: expectedRows.map((name) => ({ name, status: "passed" })),
       })),
     };
@@ -540,6 +546,50 @@ describe("RunInfra TypeScript SDK", () => {
 
       expect(mismatch.status).toBe(1);
       expect(`${mismatch.stdout}${mismatch.stderr}`).toContain("candidate source digest mismatch");
+
+      writeFileSync(livePath, `${JSON.stringify({
+        ...live,
+        reports: live.reports.map((report) =>
+          report.language === "typescript"
+            ? { ...report, baseURL: "custom_set_redacted" }
+            : report,
+        ),
+      }, null, 2)}\n`);
+      const customBaseUrl = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(customBaseUrl.status).toBe(1);
+      expect(`${customBaseUrl.stdout}${customBaseUrl.stderr}`).toContain("child report baseURL must be https://api.runinfra.ai/v1");
+
+      writeFileSync(livePath, `${JSON.stringify({
+        ...live,
+        reports: live.reports.map((report) =>
+          report.language === "python"
+            ? { ...report, strict: false }
+            : report,
+        ),
+      }, null, 2)}\n`);
+      const nonStrictChild = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(nonStrictChild.status).toBe(1);
+      expect(`${nonStrictChild.stdout}${nonStrictChild.stderr}`).toContain("child report must be strict");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
