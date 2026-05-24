@@ -683,8 +683,8 @@ describe("RunInfra TypeScript SDK", () => {
     }
   });
 
-  it("verifies promotion reports use the same candidate digest and all-passed artifact canaries", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-reports-"));
+  it("rejects promotion reports with stale surface coverage manifests", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-stale-surface-manifest-"));
     const readinessPath = join(tmp, "readiness.json");
     const livePath = join(tmp, "live.json");
     const digest = "a".repeat(64);
@@ -695,7 +695,100 @@ describe("RunInfra TypeScript SDK", () => {
       errors: [],
       uncoveredSurfaces: [],
       uncoveredRows: [],
+      surfaces: ["client.models.list"],
+      surfaceCount: 1,
       rowCount: expectedRows.length,
+    };
+    const readiness = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: false,
+        artifacts: [],
+      },
+      expectedRows,
+      readiness: {
+        status: "ready",
+        missing: [],
+        rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
+      },
+      surfaceCoverage,
+      parity: { status: "not_run", errors: [] },
+      reports: [],
+    };
+    const live = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: true,
+        artifacts: [
+          { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
+          { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
+        ],
+      },
+      expectedRows,
+      surfaceCoverage,
+      parity: { status: "passed", errors: [] },
+      reports: ["typescript", "python"].map((language) => ({
+        language,
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        strict: true,
+        baseURL: "https://api.runinfra.ai/v1",
+        results: expectedRows.map((name) => ({ name, status: "passed" })),
+      })),
+    };
+
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
+      writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain("surface coverage surfaces must match the canonical public surface coverage manifest");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("verifies promotion reports use the same candidate digest and all-passed artifact canaries", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-reports-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const livePath = join(tmp, "live.json");
+    const digest = "a".repeat(64);
+    const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const coverageManifest = await import("../../scripts/live-canary-surface-coverage.mjs") as {
+      publicSurfaceCoverage: Array<{ surface: string }>;
+    };
+    const expectedRows = matrix.expectedRows;
+    const surfaces = coverageManifest.publicSurfaceCoverage.map((entry) => entry.surface);
+    const surfaceCoverage = {
+      status: "passed",
+      errors: [],
+      uncoveredSurfaces: [],
+      uncoveredRows: [],
+      surfaces,
+      surfaceCount: surfaces.length,
+      rowCount: matrix.expectedRows.length,
     };
     const readiness = {
       schemaVersion: 1,
@@ -1454,6 +1547,14 @@ class RunInfra:
 
     expect(runner).toContain(
       '["scripts/live-canary-matrix.mjs", join(repositoryRoot, "scripts", "live-canary-matrix.mjs")]',
+    );
+  });
+
+  it("includes the canonical live canary surface coverage manifest in source digests", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+
+    expect(runner).toContain(
+      '["scripts/live-canary-surface-coverage.mjs", join(repositoryRoot, "scripts", "live-canary-surface-coverage.mjs")]',
     );
   });
 

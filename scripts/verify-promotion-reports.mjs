@@ -2,11 +2,13 @@
 import { readFileSync } from "node:fs";
 import { productionBaseURL } from "./canary-report-base-url.mjs";
 import { expectedRows as canonicalExpectedRows } from "./live-canary-matrix.mjs";
+import { publicSurfaceCoverage as canonicalPublicSurfaceCoverage } from "./live-canary-surface-coverage.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const readinessPath = optionValue("--readiness") ?? "artifacts/sdk/live-canary-readiness.json";
 const livePath = optionValue("--live") ?? "artifacts/sdk/live-canary.json";
 const expectedSdkVersion = readExpectedSdkVersion();
+const canonicalSurfaceCoverageSurfaces = canonicalPublicSurfaceCoverage.map((entry) => entry.surface);
 const errors = [];
 
 const readiness = readReport(readinessPath, "readiness report");
@@ -109,18 +111,30 @@ function sensitiveEnvValues() {
 
 function baseReportErrors(label, report) {
   const reportErrors = [];
+  const surfaceCoverage = report?.surfaceCoverage;
   if (report?.schemaVersion !== 1) reportErrors.push(`${label} schemaVersion must be 1`);
   if (report?.strict !== true) reportErrors.push(`${label} must be strict`);
   if (report?.packageSource !== "artifact") reportErrors.push(`${label} packageSource must be artifact`);
-  if (report?.surfaceCoverage?.status !== "passed") reportErrors.push(`${label} surface coverage must pass`);
-  if (!Array.isArray(report?.surfaceCoverage?.errors) || report.surfaceCoverage.errors.length !== 0) {
+  if (surfaceCoverage?.status !== "passed") reportErrors.push(`${label} surface coverage must pass`);
+  if (!Array.isArray(surfaceCoverage?.errors) || surfaceCoverage.errors.length !== 0) {
     reportErrors.push(`${label} surface coverage errors must be empty`);
   }
-  if (!Array.isArray(report?.surfaceCoverage?.uncoveredSurfaces) || report.surfaceCoverage.uncoveredSurfaces.length !== 0) {
+  if (!Array.isArray(surfaceCoverage?.uncoveredSurfaces) || surfaceCoverage.uncoveredSurfaces.length !== 0) {
     reportErrors.push(`${label} uncovered surfaces must be empty`);
   }
-  if (!Array.isArray(report?.surfaceCoverage?.uncoveredRows) || report.surfaceCoverage.uncoveredRows.length !== 0) {
+  if (!Array.isArray(surfaceCoverage?.uncoveredRows) || surfaceCoverage.uncoveredRows.length !== 0) {
     reportErrors.push(`${label} uncovered rows must be empty`);
+  }
+  const surfaces = arrayOrEmpty(surfaceCoverage?.surfaces);
+  reportErrors.push(...rowNameErrors(`${label} surface coverage surface`, surfaces));
+  if (!sameStringArray(surfaces, canonicalSurfaceCoverageSurfaces)) {
+    reportErrors.push(`${label} surface coverage surfaces must match the canonical public surface coverage manifest`);
+  }
+  if (surfaceCoverage?.surfaceCount !== canonicalSurfaceCoverageSurfaces.length) {
+    reportErrors.push(`${label} surface coverage surfaceCount must be ${canonicalSurfaceCoverageSurfaces.length}`);
+  }
+  if (surfaceCoverage?.rowCount !== canonicalExpectedRows.length) {
+    reportErrors.push(`${label} surface coverage rowCount must be ${canonicalExpectedRows.length}`);
   }
   return reportErrors;
 }

@@ -22,6 +22,9 @@ surfaces from the TypeScript source, Python source, and package READMEs, then
 fails if a declared surface has no mapped rows or if a mapped surface references
 a row outside the strict matrix. It also fails if a canonical strict matrix row
 is not attached to any public surface coverage entry.
+`verify-promotion-reports.mjs` also requires the report's listed coverage
+surfaces and counts to match the canonical public surface coverage manifest, so
+a shortened or stale surface manifest cannot satisfy the release gate.
 
 `--preflight` is a no-network readiness check. It writes the same redacted
 environment status plus row-by-row missing inputs, then fails in strict mode

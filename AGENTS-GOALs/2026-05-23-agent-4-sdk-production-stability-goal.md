@@ -1877,3 +1877,36 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 21:27 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Canonical Surface Coverage Manifest
+
+Closed another promotion-evidence integrity gap before GA:
+
+- Added `scripts/live-canary-surface-coverage.mjs` as the side-effect-free canonical public surface coverage manifest.
+- `scripts/run-sdk-live-canaries.mjs` now imports that manifest instead of owning a private surface coverage copy.
+- The canonical surface coverage manifest is included in `candidate.sourceDigestSha256`, so coverage-manifest changes move canary source identity.
+- `verify-promotion-reports.mjs` now requires readiness/live reports to list the canonical surface coverage surfaces in exact order.
+- `verify-promotion-reports.mjs` now requires `surfaceCoverage.surfaceCount` and `surfaceCoverage.rowCount` to match the canonical surface and row counts.
+- LIVE-CANARIES now documents that shortened or stale surface manifests cannot satisfy the release gate.
+
+TDD evidence:
+
+- Added a failing TypeScript regression first; it failed because a report pair with only `client.models.list` in `surfaceCoverage.surfaces` was accepted with status `0`.
+- Extracted the surface coverage manifest into `scripts/live-canary-surface-coverage.mjs`.
+- Updated the runner, promotion verifier, positive promotion fixture, source-digest assertion, and docs.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "stale surface coverage manifests"` failed first with status `0` instead of expected `1`.
+- `pnpm --dir typescript test --run -t "stale surface coverage manifests|promotion reports use the same candidate digest|surface coverage manifest in source digests"` passed: 3 tests.
+- `node --check scripts\live-canary-surface-coverage.mjs`, `node --check scripts\run-sdk-live-canaries.mjs`, and `node --check scripts\verify-promotion-reports.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 coverage surfaces, 49 rows, no uncovered surfaces, and no uncovered rows.
+
+Remaining blockers are unchanged:
+
+- This closes another local promotion-evidence integrity gap, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and remaining endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 21:34 +03:00.

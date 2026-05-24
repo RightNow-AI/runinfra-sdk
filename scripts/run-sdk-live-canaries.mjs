@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, st
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expectedRows } from "./live-canary-matrix.mjs";
+import { publicSurfaceCoverage } from "./live-canary-surface-coverage.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const args = process.argv.slice(2);
@@ -32,125 +33,11 @@ const sourceDigestFiles = [
   ["scripts/run-sdk-live-canaries.mjs", join(repositoryRoot, "scripts", "run-sdk-live-canaries.mjs")],
   ["scripts/canary-report-base-url.mjs", join(repositoryRoot, "scripts", "canary-report-base-url.mjs")],
   ["scripts/live-canary-matrix.mjs", join(repositoryRoot, "scripts", "live-canary-matrix.mjs")],
+  ["scripts/live-canary-surface-coverage.mjs", join(repositoryRoot, "scripts", "live-canary-surface-coverage.mjs")],
   ["scripts/secret-scan-policy.mjs", join(repositoryRoot, "scripts", "secret-scan-policy.mjs")],
   ["scripts/sdk-live-canary-typescript.mjs", join(repositoryRoot, "scripts", "sdk-live-canary-typescript.mjs")],
   ["scripts/sdk-live-canary-python.py", join(repositoryRoot, "scripts", "sdk-live-canary-python.py")],
   ["LIVE-CANARIES.md", join(repositoryRoot, "LIVE-CANARIES.md")],
-];
-
-const publicSurfaceCoverage = [
-  { surface: "client.models.list", rows: ["models.list", "retry.safety.get.local"] },
-  {
-    surface: "client.models.retrieve",
-    rows: [
-      "models.retrieve.llm",
-      "models.retrieve.embedding",
-      "models.retrieve.image",
-      "models.retrieve.tts",
-      "models.retrieve.asr",
-      "error.model.not_found",
-    ],
-  },
-  {
-    surface: "client.chat.completions.create",
-    rows: [
-      "chat.completions.create",
-      "openai.params.chat.completions",
-      "openai.params.chat.stream_options",
-      "chat.completions.stream.final",
-      "chat.completions.stream.cancel",
-      "chat.completions.stream.slow_consumer",
-      "chat.completions.stream.malformed_frame.local",
-      "chat.completions.stream.disconnect.local",
-      "chat.completions.stream.stalled_read.local",
-      "retry.safety.stream.no_retry.local",
-    ],
-  },
-  {
-    surface: "client.responses.create",
-    rows: [
-      "responses.create",
-      "openai.params.responses",
-      "responses.stream.final",
-      "responses.stream.cancel",
-      "responses.stream.slow_consumer",
-      "responses.stream.malformed_frame.local",
-      "responses.stream.disconnect.local",
-      "responses.stream.stalled_read.local",
-      "retry.safety.post.requires_idempotency.local",
-      "retry.safety.post.with_idempotency.local",
-      "idempotency.replay.responses",
-    ],
-  },
-  { surface: "client.embeddings.create", rows: ["embeddings.create", "openai.params.embeddings"] },
-  { surface: "client.images.generate", rows: ["images.generate", "openai.params.images"] },
-  {
-    surface: "client.audio.speech.create",
-    rows: [
-      "audio.speech.create",
-      "openai.params.audio.speech",
-      "audio.speech.binary_interfaces",
-      "retry.safety.audio_binary.no_retry.local",
-    ],
-  },
-  { surface: "RunInfraAudioResponse.arrayBuffer", rows: ["audio.speech.create", "audio.speech.binary_interfaces"] },
-  { surface: "RunInfraAudioResponse.blob", rows: ["audio.speech.binary_interfaces"] },
-  { surface: "RunInfraAudioResponse.stream", rows: ["audio.speech.binary_interfaces"] },
-  {
-    surface: "RunInfraStream[Symbol.asyncIterator]",
-    rows: [
-      "chat.completions.stream.final",
-      "chat.completions.stream.cancel",
-      "chat.completions.stream.slow_consumer",
-      "chat.completions.stream.malformed_frame.local",
-      "chat.completions.stream.disconnect.local",
-      "chat.completions.stream.stalled_read.local",
-      "responses.stream.final",
-      "responses.stream.cancel",
-      "responses.stream.slow_consumer",
-      "responses.stream.malformed_frame.local",
-      "responses.stream.disconnect.local",
-      "responses.stream.stalled_read.local",
-    ],
-  },
-  {
-    surface: "RunInfraStream.__iter__",
-    rows: [
-      "chat.completions.stream.final",
-      "chat.completions.stream.cancel",
-      "chat.completions.stream.slow_consumer",
-      "chat.completions.stream.malformed_frame.local",
-      "chat.completions.stream.disconnect.local",
-      "chat.completions.stream.stalled_read.local",
-      "responses.stream.final",
-      "responses.stream.cancel",
-      "responses.stream.slow_consumer",
-      "responses.stream.malformed_frame.local",
-      "responses.stream.disconnect.local",
-      "responses.stream.stalled_read.local",
-    ],
-  },
-  {
-    surface: "client.audio.transcriptions.create",
-    rows: [
-      "audio.transcriptions.create",
-      "openai.params.audio.transcriptions",
-      "retry.safety.audio_multipart.no_retry.local",
-    ],
-  },
-  { surface: "client.voice.pipeline.create", rows: ["voice.pipeline.create"] },
-  { surface: "client.webhooks.verifySignature", rows: ["webhooks.verify_signature.local"] },
-  { surface: "client.webhooks.constructEvent", rows: ["webhooks.construct_event.local"] },
-  { surface: "verifyWebhookSignature", rows: ["webhooks.verify_signature.export"] },
-  { surface: "constructWebhookEvent", rows: ["webhooks.construct_event.export"] },
-  { surface: "client.webhooks.verify_signature", rows: ["webhooks.verify_signature.local"] },
-  { surface: "client.webhooks.construct_event", rows: ["webhooks.construct_event.local"] },
-  { surface: "verify_webhook_signature", rows: ["webhooks.verify_signature.export"] },
-  { surface: "construct_webhook_event", rows: ["webhooks.construct_event.export"] },
-  { surface: "webhook delivery create/list absence", rows: ["webhooks.delivery_surface.absent"] },
-  { surface: "request option validation", rows: ["error.request.invalid_options"] },
-  { surface: "unsupported body parameter handling", rows: ["error.body.unsupported_parameter"] },
-  { surface: "authentication error mapping", rows: ["error.auth.invalid_key"] },
 ];
 
 function optionValueFrom(values, name) {
