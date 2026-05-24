@@ -133,7 +133,9 @@ presence/path status.
 The artifact scanners enforce exact package allowlists before promotion. The
 Python wheel scan also validates the wheel `RECORD` manifest covers every file
 with SHA-256 hashes and byte sizes, so a stale or tampered wheel manifest fails
-before PyPI promotion.
+before PyPI promotion. The Python sdist scan validates
+`runinfra.egg-info/SOURCES.txt` against the expected source file set, so stale
+source manifests cannot hide from the archive gate.
 
 After the strict artifact live canary passes, verify that the readiness and
 live reports prove the same candidate source digest and that both language

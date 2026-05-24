@@ -860,6 +860,39 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                 verifier.verify_wheel(wheel_path)
             self.assertEqual(raised.exception.code, 1)
 
+    def test_python_package_verifier_rejects_sdist_with_stale_sources_manifest(self):
+        verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
+        spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sdist_path = tmp_path.joinpath(f"runinfra-{__version__}.tar.gz")
+            package_metadata = f"Metadata-Version: 2.4\nName: runinfra\nVersion: {__version__}\n"
+            with tarfile.open(sdist_path, "w:gz") as sdist:
+                def add_file(name, content):
+                    payload = content.encode("utf-8")
+                    member = tarfile.TarInfo(f"runinfra-{__version__}/{name}")
+                    member.size = len(payload)
+                    sdist.addfile(member, io.BytesIO(payload))
+
+                for name in verifier.SDIST_ALLOWED:
+                    if name in {"PKG-INFO", "runinfra.egg-info/PKG-INFO"}:
+                        add_file(name, package_metadata)
+                    elif name == "runinfra/__init__.py":
+                        add_file(name, f"__version__ = '{__version__}'\n")
+                    elif name == "runinfra.egg-info/SOURCES.txt":
+                        add_file(name, "")
+                    else:
+                        add_file(name, "placeholder\n")
+
+            with self.assertRaises(SystemExit) as raised:
+                verifier.verify_sdist(sdist_path)
+            self.assertEqual(raised.exception.code, 1)
+
     def test_python_package_verifier_rejects_wheel_layout_and_sdist_root_metadata(self):
         verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
         spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)

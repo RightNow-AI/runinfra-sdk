@@ -58,6 +58,7 @@ SDIST_ALLOWED = {
     "runinfra.egg-info/dependency_links.txt",
     "runinfra.egg-info/top_level.txt",
 }
+SDIST_SOURCES_EXPECTED = SDIST_ALLOWED - {"PKG-INFO", "setup.cfg"}
 
 WHEEL_ALLOWED_FIXED = {
     "runinfra/__init__.py",
@@ -271,6 +272,33 @@ def sdist_metadata_errors(root_names: set[str], contents: dict[str, bytes]) -> l
     return errors
 
 
+def sdist_sources_errors(files: list[str], contents: dict[str, bytes]) -> list[str]:
+    sources_content = contents.get("runinfra.egg-info/SOURCES.txt")
+    if sources_content is None:
+        return ["runinfra.egg-info/SOURCES.txt is missing"]
+
+    listed = [normalize(line) for line in decode_text(sources_content).splitlines() if line.strip()]
+    errors: list[str] = []
+    duplicates = duplicate_files(listed)
+    if duplicates:
+        errors.append("SOURCES.txt must not contain duplicate file rows:\n" + "\n".join(duplicates))
+
+    expected_sources = sorted(SDIST_SOURCES_EXPECTED)
+    listed_sources = sorted(listed)
+    missing_sources = sorted(file for file in expected_sources if file not in listed)
+    unexpected_sources = sorted(file for file in listed_sources if file not in SDIST_SOURCES_EXPECTED)
+    absent_from_archive = sorted(file for file in listed_sources if file not in files)
+    if missing_sources:
+        errors.append("SOURCES.txt is missing expected source files:\n" + "\n".join(missing_sources))
+    if unexpected_sources:
+        errors.append("SOURCES.txt lists unexpected source files:\n" + "\n".join(unexpected_sources))
+    if absent_from_archive:
+        errors.append("SOURCES.txt lists files not present in the sdist archive:\n" + "\n".join(absent_from_archive))
+    if not missing_sources and not unexpected_sources and not absent_from_archive and listed_sources != expected_sources:
+        errors.append("SOURCES.txt files must exactly match the expected sdist source file set")
+    return errors
+
+
 def verify_wheel(path: Path) -> None:
     with zipfile.ZipFile(path) as wheel:
         infos = sorted((info for info in wheel.infolist() if not info.is_dir()), key=lambda item: item.filename)
@@ -365,7 +393,7 @@ def verify_sdist(path: Path) -> None:
             content = extracted.read()
             if has_forbidden_content(content):
                 forbidden_content.append(file)
-            if file in {"PKG-INFO", "runinfra.egg-info/PKG-INFO", "runinfra/__init__.py"}:
+            if file in {"PKG-INFO", "runinfra.egg-info/PKG-INFO", "runinfra.egg-info/SOURCES.txt", "runinfra/__init__.py"}:
                 contents[file] = content
 
     files = [file for file in files if file]
@@ -376,6 +404,7 @@ def verify_sdist(path: Path) -> None:
     unexpected = sorted(file for file in files if file not in SDIST_ALLOWED)
     forbidden = sorted(file for file in files if has_forbidden_path(file))
     invalid_metadata = sdist_metadata_errors(root_names, contents)
+    invalid_sources = sdist_sources_errors(files, contents)
 
     errors: list[str] = []
     if missing:
@@ -392,6 +421,8 @@ def verify_sdist(path: Path) -> None:
         errors.append("Forbidden content:\n" + "\n".join(forbidden_content))
     if invalid_metadata:
         errors.append("Invalid metadata:\n" + "\n".join(invalid_metadata))
+    if invalid_sources:
+        errors.append("Invalid SOURCES.txt:\n" + "\n".join(invalid_sources))
     if errors:
         fail(str(path), errors)
 

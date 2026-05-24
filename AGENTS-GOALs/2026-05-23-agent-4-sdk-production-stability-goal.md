@@ -1984,3 +1984,38 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 21:49 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Python Sdist SOURCES Integrity Gate
+
+Closed the matching PyPI sdist artifact-integrity gap before GA:
+
+- `scripts/verify-python-package.py` now validates `runinfra.egg-info/SOURCES.txt` in sdists.
+- The verifier requires `SOURCES.txt` to contain the exact expected source file set generated into the real sdist, excluding setuptools-generated top-level `PKG-INFO` and `setup.cfg`.
+- Duplicate source rows, missing expected sources, unexpected source paths, or paths absent from the archive now fail the artifact gate.
+- Root README and AGENT-NOTES now document that stale sdist source manifests cannot pass promotion.
+
+TDD evidence:
+
+- Added a failing Python regression first; it failed because a complete sdist with an empty `SOURCES.txt` was accepted and printed `Verified Python sdist contents`.
+- Implemented strict sdist source-manifest parsing and validation.
+- Focused green pass: `python -m pytest python\tests -q -k "stale_sources_manifest"` passed.
+
+Fresh verification:
+
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript test` passed: 177 tests.
+- `python -m py_compile scripts\verify-python-package.py` passed.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `python -m build python` built `runinfra-0.1.4.tar.gz` and `runinfra-0.1.4-py3-none-any.whl`.
+- `python scripts\verify-python-package.py python\dist` passed against the real built wheel and sdist.
+- `python -m twine check python\dist\*` passed for the built wheel and sdist.
+- `git diff --check` passed with only CRLF normalization warnings.
+
+Remaining blockers are unchanged:
+
+- This closes a local PyPI sdist scanner gap, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and remaining endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 21:54 +03:00.
