@@ -27,6 +27,17 @@ when required model IDs, fixture paths, expected transcripts, or idempotency
 opt-in are absent. Use it before provisioning live canary resources so missing
 GA inputs are explicit without exposing values.
 
+If canary inputs live in a local env file, load it through
+`--runinfra-env-file <path-to-env-file>`:
+
+```bash
+node scripts/run-sdk-live-canaries.mjs --runinfra-env-file <path-to-env-file> --preflight --strict --report artifacts/sdk/live-canary-readiness.json
+```
+
+Do not use Node's `--env-file` option in promotion commands.
+`--runinfra-env-file <path-to-env-file>` keeps env-file parsing, explicit
+shell-env precedence, and report redaction inside the canary runner.
+
 Without `--strict`, missing model credentials are reported as skipped rows.
 With `--strict`, any skipped or failed row exits non-zero. Use strict mode for
 release promotion. The default `--package-source artifact` mode installs the
@@ -69,9 +80,9 @@ development diagnostics.
 | `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1` | Explicit opt-in for repeated idempotency replay test |
 | `RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD` | Optional comma-separated response field paths that prove the second idempotent response was replayed |
 
-The parent runner also accepts legacy RunPipe `.env.sdk-live.local` aliases and
-forwards them to child canaries as canonical `RUNINFRA_*` names without writing
-their values to reports. Supported aliases are `TEST_MODEL`,
+The parent runner also accepts legacy RunPipe canary env aliases and forwards
+them to child canaries as canonical `RUNINFRA_*` names without writing their
+values to reports. Supported aliases are `TEST_MODEL`,
 `TEST_EMBEDDING_MODEL`, `TEST_IMAGE_MODEL`, `TEST_TTS_MODEL`,
 `TEST_TTS_VOICE`, `TEST_TTS_REF_AUDIO`, `TEST_TTS_REF_TEXT`,
 `TEST_TTS_TASK_TYPE`, `TEST_ASR_MODEL`, `TEST_ASR_FILE`, and

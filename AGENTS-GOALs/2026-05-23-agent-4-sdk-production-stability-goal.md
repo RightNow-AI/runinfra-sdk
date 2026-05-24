@@ -636,7 +636,7 @@ Current blockers remain:
 
 Added two live-readiness hardening changes:
 
-- Parent live-canary runner now accepts legacy RunPipe `.env.sdk-live.local` aliases and forwards them to child canaries as canonical `RUNINFRA_*` env names. Reports list only alias names used, not values.
+- Parent live-canary runner now accepts legacy RunPipe canary env aliases and forwards them to child canaries as canonical `RUNINFRA_*` env names. Reports list only alias names used, not values.
 - `models.list` now fails closed when any configured `RUNINFRA_*_MODEL` canary env value is absent from the live `/v1/models` catalog. Reports still record only request ID and item count, not configured or missing model IDs.
 - Second-opinion review found stale `TEST_PIPELINE_ID` could still appear as a redacted env field when canonical `RUNINFRA_VOICE_PIPELINE_ID` won. Fixed by keeping `TEST_PIPELINE_ID` as an accepted alias but removing it from parent and child report env lists.
 
@@ -659,7 +659,7 @@ Fresh local verification:
 
 RunPipe live env evidence:
 
-- Strict preflight using `RunPipe\.env.sdk-live.local` remains blocked: 34 ready rows, 11 blocked rows, 16 missing input groups. Alias names used were `RUNINFRA_LLM_MODEL<=TEST_MODEL`, `RUNINFRA_TTS_TASK_TYPE<=TEST_TTS_TASK_TYPE`, and `RUNINFRA_VOICE_PIPELINE_ID<=TEST_PIPELINE_ID`.
+- Strict preflight using the redacted RunPipe canary env file remains blocked: 34 ready rows, 11 blocked rows, 16 missing input groups. Alias names used were `RUNINFRA_LLM_MODEL<=TEST_MODEL`, `RUNINFRA_TTS_TASK_TYPE<=TEST_TTS_TASK_TYPE`, and `RUNINFRA_VOICE_PIPELINE_ID<=TEST_PIPELINE_ID`.
 - Updated strict preflight and source reports no longer include `TEST_PIPELINE_ID` as an env field; it appears only as the alias name used for `RUNINFRA_VOICE_PIPELINE_ID`.
 - Source canary using the same RunPipe env exited non-zero as expected: TypeScript 20 passed/14 failed/11 skipped, Python 20 passed/14 failed/11 skipped.
 - The failed live rows include `models.list`, `models.retrieve.llm`, chat, Responses, streaming, and unsupported-parameter rows. This confirms the SDK now fails readiness when the configured model is not listed by the live catalog.
@@ -679,7 +679,7 @@ Fixed production-readiness bugs in the SDK live-canary runner:
 - `scripts/run-sdk-live-canaries.mjs` now loads `--runinfra-env-file` before strict preflight and before child canaries spawn.
 - The runner still tolerates legacy `--env-file` when it reaches the script, but `--runinfra-env-file` is the safe project flag because Node 24 can consume `--env-file` before script argument parsing.
 - Env-file values are only applied when the current process env does not already contain a non-empty value in the same canonical/alias group, so explicit shell env still wins.
-- Added a TypeScript regression test proving strict preflight can become ready from a temporary `.env.sdk-live.local` file without leaking the fake API key, transcript text, fixture path, model IDs, or pipeline ID.
+- Added a TypeScript regression test proving strict preflight can become ready from a temporary canary env file without leaking the fake API key, transcript text, fixture path, model IDs, or pipeline ID.
 - Added a regression proving an explicit shell alias such as `TEST_ASR_FILE` wins over a canonical env-file value such as `RUNINFRA_ASR_FIXTURE_PATH`.
 - Added a regression for the Node-consumed `--env-file` path with inline comments, so fallback parsing matches Node's env-file values when deciding whether to remove env-file canonical keys behind explicit aliases.
 - Added a regression proving missing env-file errors do not print the supplied local path.
@@ -721,7 +721,7 @@ Registry state:
 
 RunPipe env preflight after the env-file fix:
 
-- `node scripts/run-sdk-live-canaries.mjs --runinfra-env-file ..\RunPipe\.env.sdk-live.local --preflight --strict --package-source source --report artifacts/sdk/live-canary-preflight-current.json` now reads the env file correctly without relying on Node's own `--env-file` option.
+- The strict preflight command now reads the redacted RunPipe canary env file through `--runinfra-env-file` without relying on Node's own `--env-file` option.
 - Result: blocked, 34 ready rows and 11 blocked rows.
 - Alias keys used: `RUNINFRA_LLM_MODEL`, `RUNINFRA_TTS_TASK_TYPE`, and `RUNINFRA_VOICE_PIPELINE_ID`.
 - Remaining blocked rows:
@@ -740,6 +740,51 @@ RunPipe env preflight after the env-file fix:
 Current blockers remain:
 
 - This fixes the env-file readiness gate and proves local artifacts, but does not make strict live multimodal canaries green.
+- `0.1.4` is not on npm/PyPI yet.
+- Live embeddings/image/TTS/ASR/voice/idempotency replay proof remains missing.
+- RunPipe production still needs the gateway contract patch deployed before production source canaries can turn the known streaming/unsupported-parameter rows green.
+- Do not call SDK GA and do not publish a GA release until strict live canaries, registry install/import, CodeQL/security checks, docs, and independent review are all green.
+
+## 2026-05-24 Agent 4 Checkpoint: Safe Env-File Docs For Promotion Commands
+
+Closed a follow-up documentation gap from the env-file runner fix:
+
+- Root `README.md`, `LIVE-CANARIES.md`, `AGENT-NOTES.md`, `typescript/README.md`, and `python/README.md` now document `--runinfra-env-file <path-to-env-file>` for local canary input files.
+- The same docs now explicitly warn not to use Node's `--env-file` option in promotion commands because the runner must own env-file parsing, explicit shell-env precedence, and redacted reporting.
+- TypeScript and Python doc tests now assert the safe flag and warning stay present across all five promotion/handoff docs.
+
+Fresh TDD evidence:
+
+- Added the doc tests first. They failed because the docs did not mention `--runinfra-env-file <path-to-env-file>`.
+- After the docs update, `pnpm --dir typescript test --run -t "safe live-canary env-file"` passed: 1 targeted test.
+- `python -m pytest python\tests -q -k "safe_live_canary_env_file"` passed: 1 targeted test.
+
+Fresh local verification after the doc update:
+
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test` passed: 135 tests.
+- `python -m pytest python\tests -q` passed: 115 tests plus 105 subtests.
+- `python -m py_compile scripts\sdk-live-canary-python.py scripts\verify-python-package.py` passed.
+- `pnpm --dir typescript build` passed.
+- `python -m build python --outdir artifacts\python-local` passed.
+- `pnpm --dir typescript pack --pack-destination ..\artifacts\npm-local` passed. Tarball contents remain limited to changelog, dist, license, package.json, and README.
+- `node scripts\verify-npm-package.mjs artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py artifacts\python-local` passed.
+- `python -m twine check artifacts\python-local\*` passed.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 26 mapped surfaces, 45 rows, 0 uncovered surfaces.
+- Source no-env canaries passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- Artifact no-env canaries passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- Workflow policy passed with OIDC/provenance/SHA-pinned/no long-lived registry token checks.
+- Version sync passed for `0.1.4`.
+- The strict preflight command using the redacted RunPipe canary env file still exits non-zero as expected: blocked, 34 ready rows and 11 blocked rows.
+- Diff whitespace check passed with CRLF warnings only.
+- Focused secret-shaped pattern scan over changed docs/tests reported 0 hits; package-facing docs also avoid concrete local paths and env-file names.
+- Second-opinion review reported no blockers. Its warnings about the local env-file path in this goal file and the scan wording were addressed in this checkpoint; follow-up re-review returned `NO BLOCKERS`.
+
+Current blockers remain:
+
+- This improves operator safety and release documentation, but does not make strict live multimodal canaries green.
 - `0.1.4` is not on npm/PyPI yet.
 - Live embeddings/image/TTS/ASR/voice/idempotency replay proof remains missing.
 - RunPipe production still needs the gateway contract patch deployed before production source canaries can turn the known streaming/unsupported-parameter rows green.

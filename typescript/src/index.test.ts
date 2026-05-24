@@ -490,6 +490,21 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).not.toContain("RUNINFRA_SDK_CI_TOKEN");
   });
 
+  it("documents the safe live-canary env-file flag instead of Node's flag", () => {
+    const docs = [
+      readFileSync(new URL("../../README.md", import.meta.url), "utf8"),
+      readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8"),
+      readFileSync(new URL("../../AGENT-NOTES.md", import.meta.url), "utf8"),
+      readFileSync(new URL("../README.md", import.meta.url), "utf8"),
+      readFileSync(new URL("../../python/README.md", import.meta.url), "utf8"),
+    ];
+
+    for (const doc of docs) {
+      expect(doc).toContain("`--runinfra-env-file <path-to-env-file>`");
+      expect(doc).toContain("Do not use Node's `--env-file` option in promotion commands");
+    }
+  });
+
   it("fails workflow policy when either publish job loses OIDC permission", async () => {
     const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
     const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
@@ -904,7 +919,7 @@ describe("RunInfra TypeScript SDK", () => {
   it("loads strict preflight inputs from --runinfra-env-file without leaking values", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-env-file-"));
     const reportPath = join(tmp, "readiness.json");
-    const envPath = join(tmp, ".env.sdk-live.local");
+    const envPath = join(tmp, "runinfra-live-inputs");
     try {
       const fakeKey = "env-file-api-key-placeholder";
       writeFileSync(envPath, [
@@ -983,7 +998,7 @@ describe("RunInfra TypeScript SDK", () => {
   it("lets explicit shell aliases override canonical values from --runinfra-env-file", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-env-file-alias-"));
     const reportPath = join(tmp, "readiness.json");
-    const envPath = join(tmp, ".env.sdk-live.local");
+    const envPath = join(tmp, "runinfra-live-inputs");
     const missingFixturePath = join(tmp, "missing-audio.wav");
     try {
       writeFileSync(envPath, [
@@ -1046,7 +1061,7 @@ describe("RunInfra TypeScript SDK", () => {
   it("preserves explicit shell aliases when Node consumes --env-file with inline comments", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-node-env-file-"));
     const reportPath = join(tmp, "readiness.json");
-    const envPath = join(tmp, ".env.sdk-live.local");
+    const envPath = join(tmp, "runinfra-live-inputs");
     const missingFixturePath = join(tmp, "missing-audio.wav");
     try {
       writeFileSync(envPath, [

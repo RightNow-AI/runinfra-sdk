@@ -211,6 +211,15 @@ node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/s
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
 ```
 
+If canary inputs live in a local env file, load it with:
+```
+node scripts/run-sdk-live-canaries.mjs --runinfra-env-file <path-to-env-file> --preflight --strict --report artifacts/sdk/live-canary-readiness.json
+```
+
+Do not use Node's `--env-file` option in promotion commands.
+`--runinfra-env-file <path-to-env-file>` keeps env-file parsing, explicit
+shell-env precedence, and report redaction inside the canary runner.
+
 Do not graduate image, TTS, ASR, or voice pipeline out of experimental status
 without strict TypeScript + Python live-canary reports for the exact production
 gateway, models, workspace key, and pipeline key. Strict reports must keep

@@ -115,6 +115,13 @@ Check strict live-canary readiness without exposing env values:
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 ```
 
+If canary inputs live in a local env file, load it through the runner:
+```bash
+node scripts/run-sdk-live-canaries.mjs --runinfra-env-file <path-to-env-file> --preflight --strict --report artifacts/sdk/live-canary-readiness.json
+```
+
+Do not use Node's `--env-file` option in promotion commands. `--runinfra-env-file <path-to-env-file>` keeps env-file parsing, explicit shell-env precedence, and report redaction inside the canary runner.
+
 Verify the PyPI release:
 - Go to https://pypi.org/project/runinfra/ -> Releases -> click a version ->
   see the Trusted Publisher chain.

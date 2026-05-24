@@ -542,6 +542,20 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertNotIn("pnpm test:sdk-canary:live", readme)
         self.assertNotIn("RUNINFRA_SDK_CI_TOKEN", readme)
 
+    def test_docs_document_safe_live_canary_env_file_flag(self):
+        root = Path(__file__).resolve().parents[2]
+        docs = [
+            root.joinpath("README.md").read_text(),
+            root.joinpath("LIVE-CANARIES.md").read_text(),
+            root.joinpath("AGENT-NOTES.md").read_text(),
+            root.joinpath("typescript", "README.md").read_text(),
+            root.joinpath("python", "README.md").read_text(),
+        ]
+
+        for doc in docs:
+            self.assertIn("`--runinfra-env-file <path-to-env-file>`", doc)
+            self.assertIn("Do not use Node's `--env-file` option in promotion commands", doc)
+
     def test_python_package_verifier_blocks_broader_secret_and_path_families(self):
         verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
         spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)
