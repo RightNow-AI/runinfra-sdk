@@ -1151,6 +1151,53 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
+## 2026-05-24 Agent 4 Checkpoint: Trusted Publish Strict Promotion Gate
+
+Hardened the trusted publish path so real registry publishes cannot outrun
+strict promotion evidence or rebuild different artifacts after the canary gate:
+
+- `.github/workflows/publish.yml` now has a dedicated `build-artifacts` job that typechecks, tests, builds, scans, and clean-install verifies both SDK artifacts once.
+- `build-artifacts` uploads the exact npm tarball, Python wheel, and Python sdist as `runinfra-sdk-promoted-artifacts`.
+- `promotion-gate` downloads that same artifact bundle, copies the tarball/wheel into the locations expected by artifact canaries, materializes optional ASR and voice-pipeline audio fixtures from scoped base64 secrets, and runs strict readiness, strict artifact live canary, and `verify-promotion-reports.mjs` only when `dry_run=false`.
+- `publish-npm` and `publish-pypi` now need both `build-artifacts` and `promotion-gate`, download the same artifact bundle, re-run package scanners and clean install/import, and publish only the downloaded artifacts.
+- `build-artifacts` and `promotion-gate` explicitly use `permissions: contents: read`. Only registry publish jobs keep `id-token: write`.
+- Workflow policy now checks exact-artifact upload/download usage, strict promotion report gating, no rebuild in publish jobs, and read-only permissions for non-publishing promotion jobs.
+- Root, package, live-canary, and handoff docs now state that `dry_run=false` cannot bypass `promotion-gate`, that real publish uses the same promoted artifacts, and that GitHub fixture secrets use `RUNINFRA_ASR_FIXTURE_BASE64` / `RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64` without report leakage.
+
+TDD evidence:
+
+- Added a failing TypeScript workflow-policy test requiring real publishes to pass strict promotion reports before npm/PyPI publish and requiring publish jobs to use exact promoted artifacts. It failed before the workflow/policy changes.
+- Added failing TypeScript and Python documentation tests requiring the new build-once, strict-gate, same-artifact, and fixture-secret language. They failed before docs were updated.
+- Added a failing TypeScript workflow-policy test requiring non-publishing promotion jobs to declare read-only contents permission. It failed before the workflow/policy changes.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "non-publishing promotion jobs|requires real publish to pass strict promotion reports|workflow policy"` passed: 3 tests passed, 154 skipped.
+- `pnpm --dir typescript test --run -t "documents public-repo production promotion|requires real publish to pass strict promotion reports|workflow policy|root README snippets"` passed: 4 tests passed, 152 skipped.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k "public_repo_promotion or root_readme"` passed: 1 test passed, 122 deselected.
+- `node scripts\verify-workflow-policy.mjs` passed, including exact promoted artifact, strict promotion report, and read-only non-publish job checks.
+- `node --check scripts\workflow-policy.mjs` passed.
+- `pnpm --dir typescript test` passed: 157 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `python -m pytest python\tests -q` passed: 123 tests, 119 subtests.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `node scripts\verify-version-sync.mjs` passed: SDK version `0.1.4`.
+- `git diff --check` passed with CRLF warnings only.
+
+Second-opinion review:
+
+- Kuhn returned no blockers.
+- Reviewer verified the workflow builds once, uploads `runinfra-sdk-promoted-artifacts`, runs the strict promotion gate before registry jobs, publishes from downloaded artifact paths only, preserves OIDC `id-token: write` only on publish jobs, keeps `npm`/`pypi` protected environments, keeps SHA-pinned actions, avoids registry token envs, and keeps `setup-node` without `registry-url`.
+- Reviewer ran `node scripts\verify-workflow-policy.mjs`, `pnpm --dir typescript test --run -t "strict promotion reports|exact package artifacts|workflow policy"`, and `python -m pytest python\tests\test_runinfra_sdk.py -q -k promotion`.
+- Residual risks: the GitHub workflow itself was not executed in Actions, so artifact upload/download path preservation is still statically and policy tested; strict live canary success still depends on production canary env/fixtures being configured in GitHub.
+
+Remaining blockers are unchanged:
+
+- This closes a trusted-publish release-gate gap, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
 ## 2026-05-24 Agent 4 Checkpoint: Promotion Report Consistency Gate
 
 Added a promotion verifier for the final SDK release evidence handoff:

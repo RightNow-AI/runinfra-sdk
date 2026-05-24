@@ -203,6 +203,11 @@ identical proprietary source-available terms. Customers see them via:
    - `dry_run`: `true` (verify only) | `false` (actually publish)
    - `confirm_version`: exact package version, required when `dry_run=false`
 
+The publish workflow builds the npm tarball, Python wheel, and Python sdist
+once, uploads them as `runinfra-sdk-promoted-artifacts`, runs the strict
+readiness/live promotion reports against those downloaded artifacts, and the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files. `dry_run=false` cannot bypass `promotion-gate`. Dry runs still build
+and scan the artifacts, but they do not run live canaries or publish.
+
 Before GA promotion, also run:
 ```
 pnpm --dir typescript build
@@ -220,6 +225,12 @@ node scripts/run-sdk-live-canaries.mjs --runinfra-env-file <path-to-env-file> --
 Do not use Node's `--env-file` option in promotion commands.
 `--runinfra-env-file <path-to-env-file>` keeps env-file parsing, explicit
 shell-env precedence, and report redaction inside the canary runner.
+
+For GitHub Actions, store deterministic audio fixtures as scoped secrets:
+`RUNINFRA_ASR_FIXTURE_BASE64` and
+`RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64`. The workflow decodes them into local
+fixture files before running strict canaries and never writes the base64 values
+to reports.
 
 Do not graduate image, TTS, ASR, or voice pipeline out of experimental status
 without strict TypeScript + Python live-canary reports for the exact production
@@ -263,10 +274,10 @@ some things are now obsolete in the new repo context:
 | Old (monorepo `RunInfra-Landing`) | New (this repo `runinfra-sdk`) |
 |---|---|
 | Workflow: `.github/workflows/sdk-publish.yml` | `.github/workflows/publish.yml` + `.github/workflows/ci.yml` + GitHub default CodeQL checks |
-| Bypass flag: `RUNINFRA_SDK_BYPASS_LIVE_CANARY` + `bypass_live_canary` input | None. The simplified workflow doesn't run the strict gate scripts. |
-| Gate scripts: `scripts/verify-sdk-*.mjs` + `scripts/publish-sdk-artifacts.mjs` | Package gates are local scripts in `scripts/`; strict live canaries run through `scripts/run-sdk-live-canaries.mjs`. |
+| Bypass flag: `RUNINFRA_SDK_BYPASS_LIVE_CANARY` + `bypass_live_canary` input | None. `dry_run=false` cannot bypass `promotion-gate`. |
+| Gate scripts: `scripts/verify-sdk-*.mjs` + `scripts/publish-sdk-artifacts.mjs` | Package gates are local scripts in `scripts/`; strict live canaries run through `scripts/run-sdk-live-canaries.mjs`, and real publishes must pass `scripts/verify-promotion-reports.mjs`. |
 | Source paths: `sdks/typescript/`, `sdks/python/` | `typescript/`, `python/` (root-level) |
-| Workflow has 5-modality live canary gate | CI/publish run package gates; GA still requires strict live canary reports before promotion. |
+| Workflow has 5-modality live canary gate | Real publish now runs strict readiness/live report gates against exact downloaded artifacts before npm or PyPI publish jobs can start. |
 | Repo URLs in metadata: `RunInfra-Landing` | `runinfra-sdk` |
 | Publish requires bypass workflow input | Publish only requires `package=both/typescript/python` + `dry_run=false` |
 

@@ -551,10 +551,18 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("`AsyncRunInfra` client yet", readme)
 
     def test_readme_documents_public_repo_promotion_without_stale_monorepo_commands(self):
+        root = Path(__file__).resolve().parents[2]
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        agent_notes = root.joinpath("AGENT-NOTES.md").read_text()
+        live_canaries = root.joinpath("LIVE-CANARIES.md").read_text()
 
         self.assertIn("For production promotion", readme)
         self.assertIn("This public repo now includes live-canary runners for both SDKs.", readme)
+        self.assertIn("The publish workflow builds the npm tarball, Python wheel, and Python sdist once", readme)
+        self.assertIn("real publish runs the strict promotion gate", readme)
+        self.assertIn("publishes the same downloaded artifacts", readme)
+        self.assertIn("RUNINFRA_ASR_FIXTURE_BASE64", readme)
+        self.assertIn("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64", readme)
         self.assertIn("node scripts/verify-workflow-policy.mjs", readme)
         self.assertIn("node scripts/verify-version-sync.mjs", readme)
         self.assertIn("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz", readme)
@@ -598,6 +606,16 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Run the surface-coverage check before preflight", readme)
         self.assertIn("Then run the strict preflight", readme)
         self.assertIn("Then run the strict live canary matrix against the exact production gateway", readme)
+        self.assertIn("candidate.sourceDigestSha256", live_canaries)
+        self.assertIn("candidate.artifacts", live_canaries)
+        self.assertIn("RUNINFRA_ASR_FIXTURE_BASE64", live_canaries)
+        self.assertIn("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64", live_canaries)
+        self.assertIn("`dry_run=false` cannot bypass `promotion-gate`", agent_notes)
+        self.assertIn(
+            "the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files",
+            agent_notes,
+        )
+        self.assertNotIn("The simplified workflow doesn't run the strict gate scripts", agent_notes)
         self.assertIn("Do not use npm or PyPI tokens", readme)
         self.assertNotIn("pnpm verify:sdk-release", readme)
         self.assertNotIn("pnpm test:sdk-canary:live", readme)

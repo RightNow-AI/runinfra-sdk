@@ -121,6 +121,15 @@ Run the strict artifact live canary against the exact package artifacts:
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
 ```
 
+The trusted-publish workflow builds the npm tarball, Python wheel, and Python
+sdist once, uploads them as `runinfra-sdk-promoted-artifacts`, runs strict
+promotion reports against those downloaded artifacts, and publishes only the
+same downloaded artifacts after environment approval. `dry_run=false` cannot
+bypass the strict report gate. CI audio fixtures use
+`RUNINFRA_ASR_FIXTURE_BASE64` and `RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64`;
+the workflow decodes them to local fixture files and reports only redacted
+presence/path status.
+
 After the strict artifact live canary passes, verify that the readiness and
 live reports prove the same candidate source digest and that both language
 reports passed every row:

@@ -47,6 +47,14 @@ before it starts live canaries, so strict reports prove the shipped artifacts,
 not only the source checkout. Use `--package-source source` only for local SDK
 development diagnostics.
 
+In the trusted-publish workflow, `build-artifacts` creates the npm tarball,
+Python wheel, and Python sdist once and uploads them as
+`runinfra-sdk-promoted-artifacts`. `promotion-gate`, `publish-npm`, and
+`publish-pypi` download that same artifact bundle. A real publish cannot start
+the registry jobs until strict readiness/live reports pass for the downloaded
+artifacts and `verify-promotion-reports.mjs` confirms the same source digest
+and all-passed rows.
+
 ## Required Environment
 
 | Variable | Purpose |
@@ -71,11 +79,13 @@ development diagnostics.
 | `RUNINFRA_ASR_LANGUAGE` | Optional for the base ASR row; required for the OpenAI ASR parameter row |
 | `RUNINFRA_ASR_RESPONSE_FORMAT` | `json` or `verbose_json` for the OpenAI ASR parameter row |
 | `RUNINFRA_ASR_FIXTURE_PATH` | Local deterministic speech-audio fixture path for ASR row |
+| `RUNINFRA_ASR_FIXTURE_BASE64` | GitHub Actions secret form of the deterministic ASR fixture. The publish workflow decodes it to `RUNINFRA_ASR_FIXTURE_PATH` on the runner |
 | `RUNINFRA_ASR_FIXTURE_CONTENT_TYPE` | Optional ASR fixture content type, defaults to `audio/wav` |
 | `RUNINFRA_ASR_EXPECTED_TEXT` | Normalized text that must appear in the ASR transcript |
 | `RUNINFRA_VOICE_PIPELINE_ID` or `TEST_PIPELINE_ID` | Pipeline id for voice pipeline row |
 | `RUNINFRA_VOICE_PIPELINE_API_KEY` or `RUNINFRA_PIPELINE_API_KEY` | Pipeline-scoped key for voice pipeline row |
 | `RUNINFRA_VOICE_PIPELINE_AUDIO_PATH` | Deterministic speech-audio fixture for voice pipeline row. Falls back to `RUNINFRA_ASR_FIXTURE_PATH` |
+| `RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64` | GitHub Actions secret form of the deterministic voice-pipeline fixture. The publish workflow decodes it to `RUNINFRA_VOICE_PIPELINE_AUDIO_PATH` on the runner |
 | `RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE` | Optional voice pipeline fixture content type. Falls back to `RUNINFRA_ASR_FIXTURE_CONTENT_TYPE` or `audio/wav` |
 | `RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT` | Normalized text that must appear in the voice pipeline response. Falls back to `RUNINFRA_ASR_EXPECTED_TEXT` |
 | `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1` | Explicit opt-in for repeated idempotency replay test |

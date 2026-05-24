@@ -3,6 +3,8 @@ const expectedActionRevisions = [
   "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
   "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405",
   "pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
+  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+  "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
   "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b",
 ];
 
@@ -20,6 +22,17 @@ function jobHasEnvironment(job, environment) {
 
 function jobHasOidcPermission(job) {
   return /(^|\r?\n)    permissions:\r?\n(?:      [a-zA-Z0-9_-]+:\s*\S+\r?\n)*?      id-token:\s*write\s*(?:\r?\n|$)/u.test(job);
+}
+
+function jobHasReadOnlyContentsPermission(job) {
+  return (
+    /(^|\r?\n)    permissions:\r?\n      contents:\s*read\s*(?:\r?\n|$)/u.test(job) &&
+    !/(^|\r?\n)      (?!contents:)[a-zA-Z0-9_-]+:\s*(read|write|none)\s*(?:\r?\n|$)/u.test(job)
+  );
+}
+
+function jobNeeds(job, jobName) {
+  return new RegExp(`needs:\\s*(?:\\[[^\\]]*\\b${jobName}\\b[^\\]]*\\]|${jobName})`, "u").test(job);
 }
 
 function actionUses(workflows) {
@@ -43,10 +56,18 @@ function actionUses(workflows) {
 }
 
 export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow }) {
+  const buildArtifactsJob = jobBlock(publish, "build-artifacts");
+  const promotionGateJob = jobBlock(publish, "promotion-gate");
   const publishNpmJob = jobBlock(publish, "publish-npm");
   const publishPypiJob = jobBlock(publish, "publish-pypi");
   const workflows = `${publish}\n${ci}`;
   const actions = actionUses(workflows);
+  const promotionReportCommand =
+    "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json";
+  const strictReadinessCommand =
+    "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json";
+  const strictArtifactCommand =
+    "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json";
 
   return [
     {
@@ -110,6 +131,41 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
       ok:
         /Verify published npm install\/import[\s\S]*?github\.event\.inputs\.dry_run != 'true'[\s\S]*?verify-clean-installs\.mjs --package typescript --mode registry/u.test(publishNpmJob) &&
         /Verify published PyPI install\/import[\s\S]*?github\.event\.inputs\.dry_run != 'true'[\s\S]*?verify-clean-installs\.mjs --package python --mode registry/u.test(publishPypiJob),
+    },
+    {
+      label: "publish workflow gates real publishes on strict promotion reports",
+      ok:
+        jobNeeds(publishNpmJob, "promotion-gate") &&
+        jobNeeds(publishPypiJob, "promotion-gate") &&
+        promotionGateJob.includes("github.event.inputs.dry_run != 'true'") &&
+        promotionGateJob.includes(strictReadinessCommand) &&
+        promotionGateJob.includes(strictArtifactCommand) &&
+        promotionGateJob.includes(promotionReportCommand),
+    },
+    {
+      label: "publish jobs use the exact promoted package artifacts",
+      ok:
+        jobNeeds(publishNpmJob, "build-artifacts") &&
+        jobNeeds(publishPypiJob, "build-artifacts") &&
+        buildArtifactsJob.includes("uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02") &&
+        buildArtifactsJob.includes("name: runinfra-sdk-promoted-artifacts") &&
+        buildArtifactsJob.includes("artifacts/npm-local/runinfra-sdk-*.tgz") &&
+        buildArtifactsJob.includes("artifacts/python-local/runinfra-*.whl") &&
+        buildArtifactsJob.includes("artifacts/python-local/runinfra-*.tar.gz") &&
+        promotionGateJob.includes("uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093") &&
+        promotionGateJob.includes("name: runinfra-sdk-promoted-artifacts") &&
+        publishNpmJob.includes("uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093") &&
+        publishNpmJob.includes("name: runinfra-sdk-promoted-artifacts") &&
+        publishNpmJob.includes("npm publish artifacts/npm-local/runinfra-sdk-*.tgz --access public --provenance") &&
+        !/pnpm pack/u.test(publishNpmJob) &&
+        publishPypiJob.includes("uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093") &&
+        publishPypiJob.includes("name: runinfra-sdk-promoted-artifacts") &&
+        publishPypiJob.includes("packages-dir: artifacts/python-local") &&
+        !/python -m build/u.test(publishPypiJob),
+    },
+    {
+      label: "non-publishing promotion jobs use read-only contents permission",
+      ok: jobHasReadOnlyContentsPermission(buildArtifactsJob) && jobHasReadOnlyContentsPermission(promotionGateJob),
     },
     {
       label: "workflows use frozen TypeScript lockfile installs",

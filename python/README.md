@@ -326,6 +326,18 @@ This public repo now includes live-canary runners for both SDKs. Non-strict
 runs report skipped rows when live model env vars are missing. Strict runs fail
 on any skipped or failed row and are required before GA promotion.
 
+The publish workflow builds the npm tarball, Python wheel, and Python sdist once
+in `build-artifacts`, uploads them as
+`runinfra-sdk-promoted-artifacts`, and reuses those files for
+`promotion-gate`, `publish-npm`, and `publish-pypi`. A real publish runs the strict promotion gate before either registry job can start, then publishes the same downloaded artifacts. `dry_run=false` cannot bypass `promotion-gate`.
+Dry runs build and scan artifacts but do not run live canaries or publish.
+
+CI canary fixtures should be scoped repository or environment secrets.
+`RUNINFRA_ASR_FIXTURE_BASE64` and
+`RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64` are decoded on the GitHub runner into
+local fixture paths before the strict gate runs. Reports record only redacted
+presence/path status and artifact hashes, not the base64 fixture values.
+
 For production promotion from this repo, run these local checks from the
 repository root before opening a release PR:
 

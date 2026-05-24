@@ -1068,9 +1068,16 @@ class RunInfra:
 
   it("documents public-repo production promotion without stale monorepo commands", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const agentNotes = readFileSync(new URL("../../AGENT-NOTES.md", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
 
     expect(readme).toContain("For production promotion");
     expect(readme).toContain("This public repo now includes live-canary runners for both SDKs.");
+    expect(readme).toContain("The publish workflow builds the npm tarball, Python wheel, and Python sdist once");
+    expect(readme).toContain("real publish runs the strict promotion gate");
+    expect(readme).toContain("publishes the same downloaded artifacts");
+    expect(readme).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
+    expect(readme).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
     expect(readme).toContain("node scripts/verify-workflow-policy.mjs");
     expect(readme).toContain("node scripts/verify-version-sync.mjs");
     expect(readme).toContain("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz");
@@ -1094,9 +1101,13 @@ class RunInfra:
     expect(readme).toContain("Run the surface-coverage check before preflight");
     expect(readme).toContain("Then run the strict preflight");
     expect(readme).toContain("Then run the strict live canary matrix against the exact production gateway");
-    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
     expect(liveCanaries).toContain("candidate.sourceDigestSha256");
     expect(liveCanaries).toContain("candidate.artifacts");
+    expect(liveCanaries).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
+    expect(liveCanaries).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
+    expect(agentNotes).toContain("`dry_run=false` cannot bypass `promotion-gate`");
+    expect(agentNotes).toContain("the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files");
+    expect(agentNotes).not.toContain("The simplified workflow doesn't run the strict gate scripts");
     expect(readme).toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");
     expect(readme).not.toContain("pnpm test:sdk-canary:live");
@@ -1150,6 +1161,63 @@ class RunInfra:
     expect(
       readFileSync(new URL("../../scripts/verify-workflow-policy.mjs", import.meta.url), "utf8"),
     ).not.toContain("RUNINFRA_WORKFLOW_POLICY");
+  });
+
+  it("requires real publish to pass strict promotion reports for the exact package artifacts", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
+
+    expect(checks.find((check) => check.label === "publish workflow gates real publishes on strict promotion reports")?.ok)
+      .toBe(true);
+    expect(checks.find((check) => check.label === "publish jobs use the exact promoted package artifacts")?.ok)
+      .toBe(true);
+
+    const promotionIndex = publish.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json");
+    const npmPublishIndex = publish.indexOf("npm publish");
+    const pypiPublishIndex = publish.indexOf("uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b");
+    expect(promotionIndex).toBeGreaterThan(-1);
+    expect(npmPublishIndex).toBeGreaterThan(promotionIndex);
+    expect(pypiPublishIndex).toBeGreaterThan(promotionIndex);
+
+    const withoutPromotionGate = publish.replace(
+      "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json",
+      "echo skipped promotion report verification",
+    );
+    expect(withoutPromotionGate).not.toBe(publish);
+
+    const mutatedChecks = evaluateWorkflowPolicy({
+      publish: withoutPromotionGate,
+      ci,
+      hasCustomCodeqlWorkflow: false,
+    });
+    expect(mutatedChecks.find((check) => check.label === "publish workflow gates real publishes on strict promotion reports")?.ok)
+      .toBe(false);
+  });
+
+  it("keeps non-publishing promotion jobs read-only", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
+
+    expect(checks.find((check) => check.label === "non-publishing promotion jobs use read-only contents permission")?.ok)
+      .toBe(true);
+
+    const withoutBuildReadOnly = publish.replace(
+      /(\n  build-artifacts:[\s\S]*?\n    permissions:\n      contents:\s*)read/u,
+      "$1write",
+    );
+    expect(withoutBuildReadOnly).not.toBe(publish);
+
+    const mutatedChecks = evaluateWorkflowPolicy({
+      publish: withoutBuildReadOnly,
+      ci,
+      hasCustomCodeqlWorkflow: false,
+    });
+    expect(mutatedChecks.find((check) => check.label === "non-publishing promotion jobs use read-only contents permission")?.ok)
+      .toBe(false);
   });
 
   it("pins registry clean-install checks to canonical npm and PyPI indexes", async () => {
