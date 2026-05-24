@@ -954,3 +954,42 @@ Blocked rows remain:
 - `idempotency.replay.responses`
 
 Independent read-only audit conclusion: not GA. The highest-leverage next slice is still to get the RunPipe gateway patch through the protected deploy path, then rerun strict SDK source and artifact canaries against production. Only after the LLM gateway rows are green should the work move to provisioning/cataloging the remaining multimodal targets and deterministic fixtures.
+
+## 2026-05-24 Agent 4 Checkpoint: Fresh Local Package Gates
+
+Current state: secure beta artifacts remain locally healthy, but this is still not GA because strict live canaries are blocked.
+
+Fresh TypeScript package verification:
+
+- `pnpm --dir typescript install --frozen-lockfile` passed.
+- `pnpm --dir typescript test` passed: 136 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript build` passed.
+- `pnpm --dir typescript pack --pack-destination ..\artifacts\npm-local` passed.
+- `pnpm --dir typescript pack` refreshed the publish-shaped `typescript\runinfra-sdk-0.1.4.tgz`.
+- Tarball contents stayed limited to `CHANGELOG.md`, `dist/index.d.ts`, `dist/index.js`, `LICENSE`, `package.json`, and `README.md`.
+- `node scripts\verify-npm-package.mjs artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` passed.
+
+Fresh Python package verification:
+
+- `python -m pytest python\tests -q` passed: 120 tests, 114 subtests.
+- `python -m build python --outdir artifacts\python-local` passed.
+- `python -m build python --outdir python\dist` refreshed the publish-shaped wheel/sdist.
+- `python -m twine check artifacts\python-local\*` passed.
+- `python -m twine check python\dist\*` passed.
+- `python scripts\verify-python-package.py artifacts\python-local` passed.
+- `python scripts\verify-python-package.py python\dist` passed.
+
+Fresh artifact install/canary verification:
+
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `node scripts\verify-clean-installs.mjs --package both --mode artifact` passed against the publish-shaped `typescript\*.tgz` and `python\dist\*.whl` paths used by artifact canaries.
+- `node scripts/run-sdk-live-canaries.mjs --package-source artifact --report artifacts/sdk/live-canary-artifact-no-env-current.json` passed in non-strict no-env mode: TypeScript 19 passed/26 skipped; Python 19 passed/26 skipped.
+
+Remaining blockers are unchanged:
+
+- No strict artifact live-canary run is green.
+- The production gateway does not yet include RunPipe commit `a28f9f2b`, so LLM streaming/unsupported-parameter production canaries cannot be considered closed.
+- Multimodal live rows still need deployed/catalog-listed embeddings, images, TTS, ASR, voice fixtures, and idempotency replay proof.
+- `0.1.4` remains unpublished to npm/PyPI by design until strict production evidence is green.
