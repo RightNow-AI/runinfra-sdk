@@ -16,6 +16,7 @@ const nodeEnvFilePath = optionValueFrom(process.execArgv, "--env-file");
 const envFilePath = scriptEnvFilePath ?? nodeEnvFilePath;
 const envFileMayAlreadyBeLoaded = !scriptEnvFilePath && Boolean(nodeEnvFilePath);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const expectedSdkVersion = readExpectedSdkVersion();
 const tempDir = resolve(".canary-tmp", `${Date.now()}-${process.pid}`);
 const tsReport = resolve(tempDir, "typescript.json");
 const pyReport = resolve(tempDir, "python.json");
@@ -811,8 +812,36 @@ function newestMatching(dir, pattern, label) {
       return { path, mtimeMs: statSync(path).mtimeMs };
     })
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
-  if (!matches.length) throw new Error(`${label} artifact not found. Build package artifacts first.`);
+  if (!matches.length) throw new Error(`${label} not found. Build package artifacts first.`);
   return matches[0].path;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function readExpectedSdkVersion() {
+  const packageJson = JSON.parse(readFileSync(join(repositoryRoot, "typescript", "package.json"), "utf8"));
+  if (typeof packageJson.version !== "string" || !packageJson.version.trim()) {
+    throw new Error("typescript/package.json is missing a package version.");
+  }
+  return packageJson.version;
+}
+
+function expectedNpmArtifact() {
+  return resolve(newestMatching(
+    "typescript",
+    new RegExp(`^runinfra-sdk-${escapeRegExp(expectedSdkVersion)}\\.tgz$`, "u"),
+    `npm artifact for SDK version ${expectedSdkVersion}`,
+  ));
+}
+
+function expectedPythonWheel() {
+  return resolve(newestMatching(
+    "python/dist",
+    new RegExp(`^runinfra-${escapeRegExp(expectedSdkVersion)}-.+\\.whl$`, "u"),
+    `Python wheel for SDK version ${expectedSdkVersion}`,
+  ));
 }
 
 function npmCommand() {
@@ -843,6 +872,8 @@ function installArtifactCanaryPackages() {
   const npmDir = resolve(tempDir, "npm-consumer");
   const pythonDir = resolve(tempDir, "python-consumer");
   const venvDir = resolve(pythonDir, "venv");
+  const npmArtifact = expectedNpmArtifact();
+  const pythonWheel = expectedPythonWheel();
   mkdirSync(npmDir, { recursive: true });
   mkdirSync(pythonDir, { recursive: true });
   writeFileSync(
@@ -858,7 +889,7 @@ function installArtifactCanaryPackages() {
     "--no-audit",
     "--no-fund",
     "--package-lock=false",
-    resolve(newestMatching("typescript", /^runinfra-sdk-.+\.tgz$/u, "npm")),
+    npmArtifact,
   ], {
     cwd: npmDir,
     env: {
@@ -876,7 +907,7 @@ function installArtifactCanaryPackages() {
     "install",
     "--no-index",
     "--no-deps",
-    resolve(newestMatching("python/dist", /^runinfra-.+\.whl$/u, "Python wheel")),
+    pythonWheel,
   ], {
     cwd: pythonDir,
     env: {
@@ -926,8 +957,11 @@ try {
   if (packageSource === "artifact") {
     artifactRuntime = installArtifactCanaryPackages();
   }
-} catch {
-  surfaceCoverageFailureReport(["artifact canary package setup failed"]);
+} catch (error) {
+  const errorMessage = error instanceof Error
+    ? `artifact canary package setup failed: ${error.message}`
+    : "artifact canary package setup failed";
+  surfaceCoverageFailureReport([errorMessage]);
   console.error("Live canary artifact package setup failed. Build npm and Python artifacts first.");
   process.exit(1);
 }

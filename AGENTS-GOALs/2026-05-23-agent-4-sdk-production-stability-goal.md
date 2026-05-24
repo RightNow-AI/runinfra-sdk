@@ -1062,3 +1062,39 @@ Not found:
 - No existing voice pipeline canary endpoint.
 
 Decision: do not provision new paid canary endpoints from template names alone. The next paid/provisioning step should be tied to a verified deployment path or model/backend command for each modality, then cataloged in RunPipe and wired into the SDK canary env file without printing secrets.
+
+## 2026-05-24 Agent 4 Checkpoint: Exact Artifact Canary Gate
+
+Closed a release-gate gap in the SDK live canary runner.
+
+Problem found:
+
+- `scripts/run-sdk-live-canaries.mjs --package-source artifact` installed the newest matching npm tarball and Python wheel by broad filename pattern.
+- That could let a stale artifact with the wrong version be used as canary evidence if it was the newest file.
+- For GA, artifact-mode canaries must prove the exact candidate version, not just any installable local artifact.
+
+Fix:
+
+- Artifact-mode canary setup now reads the SDK candidate version from `typescript/package.json`.
+- npm artifact lookup now requires `typescript/runinfra-sdk-<version>.tgz`.
+- Python artifact lookup now requires `python/dist/runinfra-<version>-*.whl`.
+- Setup failure reports now include the redacted reason, for example that the current-version artifact is missing, while still preserving the existing surface-coverage report.
+
+Fresh verification:
+
+- TDD red run: the new regression failed first because the report only contained generic `artifact canary package setup failed`.
+- Targeted regression after the fix passed: 1 test passed, 136 skipped.
+- Affected tests passed: 2 tests passed, 135 skipped.
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --package-source artifact --report artifacts\sdk\live-canary-artifact-no-env-current.json` passed in no-env mode: TypeScript 19 passed/26 skipped; Python 19 passed/26 skipped.
+- Full TypeScript tests passed: 137 tests.
+- TypeScript typecheck passed.
+- Surface coverage verification passed: 22 declared surfaces, 26 mapped surfaces, 45 rows, 0 uncovered surfaces.
+- Strict preflight with the external RunPipe env file still exits blocked: 34 ready, 11 blocked.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- The exact-artifact gate is stronger, but there is still no green strict artifact live-canary run.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production rows can be considered fixed.
+- Multimodal live targets and idempotency replay proof are still missing.

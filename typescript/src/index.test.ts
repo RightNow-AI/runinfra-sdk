@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { createHmac } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -721,7 +721,46 @@ describe("RunInfra TypeScript SDK", () => {
       };
       expect(artifactReport.surfaceCoverage?.status).toBe("passed");
       expect(artifactReport.surfaceCoverage?.uncoveredSurfaces).toEqual([]);
-      expect(artifactReport.parity?.errors).toContain("artifact canary package setup failed");
+      expect(artifactReport.parity?.errors?.some((error) =>
+        error.startsWith("artifact canary package setup failed"),
+      )).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails artifact live-canary setup when artifacts do not match the current SDK version", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-artifact-version-"));
+    const reportPath = join(tmp, "artifact-report.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    try {
+      mkdirSync(join(tmp, "typescript"), { recursive: true });
+      mkdirSync(join(tmp, "python", "dist"), { recursive: true });
+      writeFileSync(join(tmp, "typescript", "runinfra-sdk-0.0.0.tgz"), "stale");
+      writeFileSync(join(tmp, "python", "dist", "runinfra-0.0.0-py3-none-any.whl"), "stale");
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "artifact",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { errors?: string[] };
+      };
+      expect(report.parity?.errors).toContain(
+        `artifact canary package setup failed: npm artifact for SDK version ${RUNINFRA_SDK_VERSION} not found. Build package artifacts first.`,
+      );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
