@@ -120,6 +120,9 @@ them against the deployed model.
 The report stores only `set_redacted` or `missing` for environment variables.
 A `RUNINFRA_BASE_URL` equal to `https://api.runinfra.ai/v1` is recorded as production;
 any other custom `RUNINFRA_BASE_URL` value is recorded only as `custom_set_redacted`.
+The parent runner validates custom base URLs before spawning child canaries:
+remote URLs must use HTTPS, local HTTP is allowed, and credentials, query
+strings, fragments, and malformed protocols fail closed with a redacted error.
 Reports must not contain API keys, registry tokens, local absolute paths,
 request payload secrets, source maps, or private repo metadata.
 Every preflight and full report includes `candidate.sourceDigestSha256` plus

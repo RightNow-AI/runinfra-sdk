@@ -2279,3 +2279,45 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 23:17 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Canary Base URL Preflight Safety
+
+Closed a live-canary runner safety gap before GA:
+
+- `scripts/run-sdk-live-canaries.mjs` now validates any custom `RUNINFRA_BASE_URL` before readiness is allowed or child canaries can spawn.
+- The gate allows HTTPS remote URLs and local HTTP development URLs, but rejects malformed protocols, embedded credentials, query strings, fragments, and remote cleartext HTTP.
+- The error is generic and redacted, so unsafe custom URL values are not written to reports or command output.
+- `LIVE-CANARIES.md` documents that custom base URLs are validated before child canaries run.
+
+TDD evidence:
+
+- Added failing tests first:
+  - strict preflight with `RUNINFRA_BASE_URL=http://runinfra.ai/v1?probe=blocked` incorrectly exited `0`;
+  - full canary with the same unsafe custom URL reached child-canary work instead of failing configuration validation.
+- Implemented the minimal shared `optionalBaseURLRequirement()` and wired it into both `buildReadiness()` and full-run `configurationErrors()`.
+- Focused green pass: `pnpm --dir typescript exec vitest run src/index.test.ts -t "unsafe custom base URLs"` passed: 2 tests, 182 skipped.
+- Added a docs assertion, watched it fail, documented the behavior, and reran `pnpm --dir typescript exec vitest run src/index.test.ts -t "OpenAI-compatible parameter subset"` successfully: 1 test, 183 skipped.
+
+Fresh verification:
+
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `pnpm --dir typescript test` passed: 184 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript build` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --package-source source --report artifacts\sdk\live-canary-readiness-local.json` failed as expected because live canary env is absent; the report showed readiness `blocked`, 19 ready rows, 30 blocked rows, `rowCoverageErrors=0`, source file count 14, and surface coverage `passed`.
+- `npm view @runinfra/sdk version --registry https://registry.npmjs.org/` returned `0.1.3`.
+- `python -m pip index versions runinfra` returned latest `0.1.3`.
+- `git diff --check` passed. PowerShell printed only expected CRLF working-copy warnings.
+- Read-only second-opinion review `019e5bb1-8197-7132-adb3-47823c539b05` reported no blocking findings. It verified valid production/staging/local URL acceptance, unsafe URL rejection, preflight wiring, full-run failure before child spawns, report redaction, and no GA overclaim.
+
+Remaining blockers are unchanged:
+
+- This closes canary runner configuration safety, but it does not prove live SDK GA readiness.
+- `0.1.4` is still not published to npm/PyPI, so exact registry install/import remains blocked.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and all required live endpoint rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 23:33 +03:00.

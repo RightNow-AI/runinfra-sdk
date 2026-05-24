@@ -238,6 +238,27 @@ function optionalNonNegativeIntegerRequirement(name) {
   return Number(value) <= 5000 ? [] : [`${name} non-negative integer <= 5000`];
 }
 
+function isLocalBaseURLHostname(hostname) {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/gu, "");
+  return ["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(normalized);
+}
+
+function optionalBaseURLRequirement() {
+  const value = env("RUNINFRA_BASE_URL");
+  if (!value) return [];
+  const message = "RUNINFRA_BASE_URL safe http(s) URL without credentials, query strings, or fragments";
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return [message];
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) return [message];
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return [message];
+  if (parsed.protocol === "http:" && !isLocalBaseURLHostname(parsed.hostname)) return [message];
+  return [];
+}
+
 function optionalIdempotencyEvidenceFieldRequirement() {
   const value = env("RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD");
   if (!value) return [];
@@ -397,7 +418,10 @@ const rowReadinessRequirements = [
 ];
 
 function buildReadiness() {
-  const globalMissing = optionalPositiveNumberRequirement("RUNINFRA_CANARY_TIMEOUT_SECONDS");
+  const globalMissing = [
+    ...optionalPositiveNumberRequirement("RUNINFRA_CANARY_TIMEOUT_SECONDS"),
+    ...optionalBaseURLRequirement(),
+  ];
   const rows = rowReadinessRequirements.map(([name, requirements]) => {
     const missing = [...globalMissing, ...requirements()];
     return {
@@ -754,6 +778,7 @@ if (preflight) {
 function configurationErrors() {
   return [
     ...optionalPositiveNumberRequirement("RUNINFRA_CANARY_TIMEOUT_SECONDS"),
+    ...optionalBaseURLRequirement(),
     ...optionalNonNegativeIntegerRequirement("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS"),
     ...optionalIdempotencyEvidenceFieldRequirement(),
   ];

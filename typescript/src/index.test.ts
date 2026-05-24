@@ -296,6 +296,7 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("against `https://api.runinfra.ai/v1`");
     expect(liveCanaries).toContain("A `RUNINFRA_BASE_URL` equal to `https://api.runinfra.ai/v1` is recorded as production");
     expect(liveCanaries).toContain("any other custom `RUNINFRA_BASE_URL`");
+    expect(liveCanaries).toContain("custom base URLs before spawning child canaries");
     expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
     expect(readme).toContain("forwards the supported request through the chat-completions serving path");
     expect(readme).toContain(
@@ -3601,6 +3602,66 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
+  it("blocks strict preflight on unsafe custom base URLs without leaking values", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-base-url-"));
+    const reportPath = join(tmp, "readiness.json");
+    const unsafeBaseURL = "http://runinfra.ai/v1?probe=blocked";
+    const baseUrlError = "RUNINFRA_BASE_URL safe http(s) URL without credentials, query strings, or fragments";
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "preflight-api-key-placeholder",
+          RUNINFRA_BASE_URL: unsafeBaseURL,
+          RUNINFRA_LLM_MODEL: "llm-preflight-model",
+          RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
+          RUNINFRA_EMBEDDING_DIMENSIONS: "128",
+          RUNINFRA_IMAGE_MODEL: "image-preflight-model",
+          RUNINFRA_IMAGE_SIZE: "1024x1024",
+          RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
+          RUNINFRA_TTS_MODEL: "tts-preflight-model",
+          RUNINFRA_TTS_VOICE: "voice-preflight",
+          RUNINFRA_TTS_RESPONSE_FORMAT: "mp3",
+          RUNINFRA_ASR_MODEL: "asr-preflight-model",
+          RUNINFRA_ASR_LANGUAGE: "en",
+          RUNINFRA_ASR_RESPONSE_FORMAT: "json",
+          RUNINFRA_ASR_FIXTURE_PATH: __filename,
+          RUNINFRA_ASR_EXPECTED_TEXT: "hello",
+          TEST_PIPELINE_ID: "pipeline-preflight",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "1",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          env?: Record<string, string>;
+          missing?: string[];
+          rows?: Array<{ name: string; missing?: string[] }>;
+        };
+      };
+      expect(report.readiness?.env?.RUNINFRA_BASE_URL).toBe("set_redacted");
+      expect(report.readiness?.missing).toContain(baseUrlError);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "models.list")?.missing,
+      ).toContain(baseUrlError);
+      expect(JSON.stringify(report)).not.toContain(unsafeBaseURL);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(unsafeBaseURL);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("blocks idempotency replay evidence field paths that could leak report data", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-idempotency-field-"));
     const reportPath = join(tmp, "readiness.json");
@@ -3639,6 +3700,42 @@ with open(report, "w", encoding="utf-8") as handle:
       ).toContain("RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths");
       expect(JSON.stringify(report)).not.toContain(unsafeField);
       expect(result.stderr).not.toContain(unsafeField);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks full live-canary runs on unsafe custom base URLs before child canaries spawn", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-canary-base-url-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const unsafeBaseURL = "http://runinfra.ai/v1?probe=blocked";
+    const baseUrlError = "RUNINFRA_BASE_URL safe http(s) URL without credentials, query strings, or fragments";
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_BASE_URL: unsafeBaseURL,
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+        reports?: unknown[];
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain(baseUrlError);
+      expect(report.reports).toEqual([]);
+      expect(JSON.stringify(report)).not.toContain(unsafeBaseURL);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(unsafeBaseURL);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
