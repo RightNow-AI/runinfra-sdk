@@ -2534,3 +2534,44 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-25 00:22 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: Strict Readiness And Registry Refresh
+
+Refreshed the two hard external gates after the local `0.1.4` artifact proof.
+
+Strict readiness evidence:
+
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --package-source source --report artifacts\sdk\live-canary-readiness-local.json` failed closed as expected because production live-canary env is absent.
+- Readiness report status: `blocked`.
+- Summary: 19 ready rows, 30 blocked rows.
+- `rowCoverageErrors`: 0.
+- `surfaceCoverage.status`: `passed`.
+- Candidate source digest: `299c62f33ae0cf41e26e0a902cf19d7b7917d4ed0f3848baf1c172b94628602e`.
+- Candidate source file count: 14.
+- The redacted readiness report records all required env fields as missing, not values.
+- A direct report scan for common token/source-map/local-path patterns returned no matches.
+
+Current strict blockers in the readiness report:
+
+- Base API/model rows need `RUNINFRA_API_KEY` plus the relevant model IDs.
+- LLM rows need `RUNINFRA_LLM_MODEL`.
+- Embedding rows need `RUNINFRA_EMBEDDING_MODEL` and `RUNINFRA_EMBEDDING_DIMENSIONS`.
+- Image rows need `RUNINFRA_IMAGE_MODEL`, `RUNINFRA_IMAGE_SIZE`, and `RUNINFRA_IMAGE_RESPONSE_FORMAT`.
+- TTS rows need `RUNINFRA_TTS_MODEL`, `RUNINFRA_TTS_RESPONSE_FORMAT`, and either `RUNINFRA_TTS_VOICE` or reference-audio inputs.
+- ASR rows need `RUNINFRA_ASR_MODEL`, `RUNINFRA_ASR_LANGUAGE`, `RUNINFRA_ASR_RESPONSE_FORMAT`, fixture path, and expected transcript text.
+- Voice pipeline row needs a pipeline ID, pipeline or workspace key, audio fixture path, and expected transcript text.
+- Idempotency replay row needs `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1`.
+
+Registry evidence:
+
+- `npm view @runinfra/sdk version --registry https://registry.npmjs.org/` returned `0.1.3`.
+- `python -m pip index versions runinfra` returned latest `0.1.3`.
+- Therefore exact registry clean install/import for local `0.1.4` is still impossible until trusted publishing releases `0.1.4`.
+
+Remaining blockers are unchanged:
+
+- Do not call SDK GA: strict production live canaries are still blocked by missing scoped canary env/fixtures.
+- Do not claim published `0.1.4`: npm and PyPI latest are still `0.1.3`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 00:23 +03:00.
