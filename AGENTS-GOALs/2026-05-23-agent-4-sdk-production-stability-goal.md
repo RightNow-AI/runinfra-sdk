@@ -789,3 +789,40 @@ Current blockers remain:
 - Live embeddings/image/TTS/ASR/voice/idempotency replay proof remains missing.
 - RunPipe production still needs the gateway contract patch deployed before production source canaries can turn the known streaming/unsupported-parameter rows green.
 - Do not call SDK GA and do not publish a GA release until strict live canaries, registry install/import, CodeQL/security checks, docs, and independent review are all green.
+
+## 2026-05-24 Agent 4 Checkpoint: Fresh Live Discovery And Source Canary Evidence
+
+Refreshed current production live evidence after the safe env-file docs commit:
+
+- RunPipe SDK live-target discovery with a 45s inference probe reported `targets_incomplete` and initially classified the only LLM candidate as non-promotable because the `/openai/v1/chat/completions` probe timed out.
+- Re-running the same discovery with a 120s probe warmed the existing LLM endpoint and selected the LLM target successfully.
+- The long-probe discovery still reported missing active verified targets for embeddings, image, TTS, and ASR.
+- Current strict SDK preflight using the redacted RunPipe canary env file remains blocked: 34 ready rows and 11 blocked rows.
+- Current source canaries using the same redacted RunPipe canary env file exited non-zero with matching TypeScript and Python summaries: 31 passed, 3 failed, 11 skipped.
+
+Current source-canary failed rows in both SDKs:
+
+- `chat.completions.stream.final`
+- `chat.completions.stream.slow_consumer`
+- `error.body.unsupported_parameter`
+
+Current source-canary skipped rows in both SDKs:
+
+- `embeddings.create`
+- `openai.params.embeddings`
+- `images.generate`
+- `openai.params.images`
+- `audio.speech.create`
+- `openai.params.audio.speech`
+- `audio.speech.binary_interfaces`
+- `audio.transcriptions.create`
+- `openai.params.audio.transcriptions`
+- `voice.pipeline.create`
+- `idempotency.replay.responses`
+
+Interpretation:
+
+- LLM chat/Responses baseline is reachable after a longer warm probe, but strict GA remains blocked.
+- The three failed rows are the known production gateway contract gaps that need the RunPipe gateway patch deployed.
+- The skipped rows still require deployed and catalog-listed embeddings, image, TTS, ASR, voice fixtures, and explicit idempotency replay evidence.
+- Do not retry paid modality provisioning blindly; previous embedding provisioning attempts failed and were cleaned up. The next modality work needs a proven template or runtime/bridge fix before inserting production catalog rows.
