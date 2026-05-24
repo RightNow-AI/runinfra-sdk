@@ -147,6 +147,13 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("| Embeddings | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |");
     expect(readme).not.toContain("Chat completions, Responses, Embeddings | Beta, contract-tested");
     expect(readme).not.toContain("Webhook delivery, Voice pipeline | Not shipped");
+
+    const readinessIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
+    const liveCanaryIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
+    const promotionReportIndex = readme.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json");
+    expect(readinessIndex).toBeGreaterThan(-1);
+    expect(liveCanaryIndex).toBeGreaterThan(readinessIndex);
+    expect(promotionReportIndex).toBeGreaterThan(liveCanaryIndex);
   });
 
   it("does not overclaim embeddings live verification before the strict target exists", () => {
@@ -409,6 +416,133 @@ describe("RunInfra TypeScript SDK", () => {
     ]);
     expect(preflight.registryVersionChecks("0.1.4", "typescript").map((check) => check.label)).toEqual(["npm"]);
     expect(preflight.registryVersionChecks("0.1.4", "python").map((check) => check.label)).toEqual(["PyPI"]);
+  });
+
+  it("verifies promotion reports use the same candidate digest and all-passed artifact canaries", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-reports-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const livePath = join(tmp, "live.json");
+    const digest = "a".repeat(64);
+    const expectedRows = ["models.list", "chat.completions.create"];
+    const surfaceCoverage = { status: "passed", errors: [], uncoveredSurfaces: [], rowCount: expectedRows.length };
+    const readiness = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: false,
+        artifacts: [],
+      },
+      expectedRows,
+      readiness: {
+        status: "ready",
+        missing: [],
+        rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
+      },
+      surfaceCoverage,
+      parity: { status: "not_run", errors: [] },
+      reports: [],
+    };
+    const live = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: true,
+        artifacts: [
+          { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
+          { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
+        ],
+      },
+      expectedRows,
+      surfaceCoverage,
+      parity: { status: "passed", errors: [] },
+      reports: ["typescript", "python"].map((language) => ({
+        language,
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        results: expectedRows.map((name) => ({ name, status: "passed" })),
+      })),
+    };
+
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
+      writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
+
+      const success = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+      expect(success.status).toBe(0);
+      expect(success.stdout).toContain(`Verified promotion reports for SDK ${RUNINFRA_SDK_VERSION}`);
+
+      for (const diagnostic of [
+        "failed loading /root/private/secret-project/config.json",
+        "failed loading /workspace/private/secret-project/config.json",
+        "failed loading /etc/ssl/private/key.pem",
+        "failed loading /etc/passwd",
+        "failed loading C:\\secret.txt",
+        "failed loading C:/secret.txt",
+        "failed loading D:/logs/output.txt",
+        "failed loading \\\\server\\share\\private\\secret-project\\config.json",
+        "failed loading //server/share/private/secret-project/config.json",
+        "failed loading \\\\server\\private\\secret-project\\config.json",
+        "failed loading //server/private/secret-project/config.json",
+        "failed loading \\\\server\\share\\secret-project\\config.json",
+        "failed loading //server/share/secret-project/config.json",
+      ]) {
+        writeFileSync(livePath, `${JSON.stringify({
+          ...live,
+          diagnostic,
+        }, null, 2)}\n`);
+        const leakedPath = spawnSync(process.execPath, [
+          "../scripts/verify-promotion-reports.mjs",
+          "--readiness",
+          readinessPath,
+          "--live",
+          livePath,
+        ], {
+          cwd: new URL("..", import.meta.url),
+          encoding: "utf8",
+        });
+
+        expect(leakedPath.status).toBe(1);
+        expect(`${leakedPath.stdout}${leakedPath.stderr}`).toContain("absolute private path");
+      }
+
+      writeFileSync(livePath, `${JSON.stringify({
+        ...live,
+        candidate: { ...live.candidate, sourceDigestSha256: "d".repeat(64) },
+      }, null, 2)}\n`);
+      const mismatch = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(mismatch.status).toBe(1);
+      expect(`${mismatch.stdout}${mismatch.stderr}`).toContain("candidate source digest mismatch");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("fails registry clean-install CLI preflight before creating workspaces", () => {
@@ -945,12 +1079,15 @@ class RunInfra:
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
+    expect(readme).toContain("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json");
     const surfaceCoverageIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
     const preflightIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
     const liveCanaryIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
+    const promotionReportIndex = readme.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json");
     expect(surfaceCoverageIndex).toBeGreaterThan(-1);
     expect(preflightIndex).toBeGreaterThan(surfaceCoverageIndex);
     expect(liveCanaryIndex).toBeGreaterThan(preflightIndex);
+    expect(promotionReportIndex).toBeGreaterThan(liveCanaryIndex);
     expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>");
     expect(readme).toContain("A real publish must also prove registry install/import");
     expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>");

@@ -347,6 +347,7 @@ node scripts/verify-clean-installs.mjs --package both --mode artifact
 node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
+node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json
 ```
 
 If canary inputs live in a local env file, load it through the runner:
@@ -385,8 +386,9 @@ Then run the strict live canary matrix against the exact production gateway,
 workspace key, pipeline key, and deployed models that will serve customers. See
 the root `LIVE-CANARIES.md` for required env vars, strict TS/Python row parity,
 full-stream terminal-event checks, idempotency replay-evidence requirements,
-and redacted report rules. GA still requires live coverage for LLM, embeddings,
-image, TTS, ASR, and voice pipeline surfaces, plus explicit evidence that the
-smoke keys and temporary canary resources were removed.
+redacted report rules, and promotion report consistency checks. GA still
+requires live coverage for LLM, embeddings, image, TTS, ASR, and voice pipeline
+surfaces, plus explicit evidence that the smoke keys and temporary canary
+resources were removed.
 
 Co-located voice pipelines are available through the native `client.voice.pipeline.create()` helper on pipeline-scoped keys. The helper posts binary audio to the pipeline-scoped `/pipeline` route and returns the JSON transcript / response envelope. Public webhook delivery create/list calls are intentionally unavailable until their gateway routes are verified, and they are not exposed on the SDK webhook namespace.

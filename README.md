@@ -116,6 +116,18 @@ Check strict live-canary readiness without exposing env values:
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 ```
 
+Run the strict artifact live canary against the exact package artifacts:
+```bash
+node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
+```
+
+After the strict artifact live canary passes, verify that the readiness and
+live reports prove the same candidate source digest and that both language
+reports passed every row:
+```bash
+node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json
+```
+
 If canary inputs live in a local env file, load it through the runner:
 ```bash
 node scripts/run-sdk-live-canaries.mjs --runinfra-env-file <path-to-env-file> --preflight --strict --report artifacts/sdk/live-canary-readiness.json

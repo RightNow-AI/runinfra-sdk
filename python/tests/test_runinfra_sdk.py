@@ -569,6 +569,10 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json",
             readme,
         )
+        self.assertIn(
+            "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json",
+            readme,
+        )
         surface_coverage_index = readme.index("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage")
         preflight_index = readme.index(
             "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json"
@@ -576,8 +580,12 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         live_canary_index = readme.index(
             "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json"
         )
+        promotion_report_index = readme.index(
+            "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json"
+        )
         self.assertLess(surface_coverage_index, preflight_index)
         self.assertLess(preflight_index, live_canary_index)
+        self.assertLess(live_canary_index, promotion_report_index)
         self.assertIn(
             "gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>",
             readme,

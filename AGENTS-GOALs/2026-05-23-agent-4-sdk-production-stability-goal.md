@@ -1151,6 +1151,48 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
+## 2026-05-24 Agent 4 Checkpoint: Promotion Report Consistency Gate
+
+Added a promotion verifier for the final SDK release evidence handoff:
+
+- New `scripts/verify-promotion-reports.mjs` compares strict readiness and strict artifact live-canary reports before promotion.
+- The verifier requires `schemaVersion: 1`, `strict: true`, `packageSource: artifact`, passed surface coverage, the current SDK version, a valid candidate source SHA-256 digest, and the same candidate source digest/source file count across readiness and live reports.
+- Readiness reports must have every expected row `ready`, no missing requirements, no child reports, and no artifact hashes.
+- Live artifact reports must have npm and Python wheel hashes, TypeScript and Python child reports, exact expected row parity, every row `passed`, and no failed or skipped summary rows.
+- Report leak scanning now combines the shared forbidden-content scanner, sensitive environment value checks, and fail-closed private path detection for drive-letter paths, file URLs, UNC paths, common Unix local/system roots, and paths with private segments.
+- Root, TypeScript, Python, live-canary, and agent docs now put `verify-promotion-reports.mjs` after the strict artifact live canary command.
+
+TDD and review evidence:
+
+- Red docs regressions failed first because the root README did not show the strict artifact live-canary command before report verification.
+- Red verifier regressions failed first on source digest mismatch and then on leaked private absolute paths in otherwise-valid synthetic live reports.
+- Second-opinion review found multiple private-path bypasses: `/root/...`, `/workspace/private/...`, `/etc/ssl/private/...`, UNC share paths, UNC shares named `private`, and forward-slash Windows drive paths. Each class got a failing regression before the verifier was broadened.
+- Final second-opinion re-review returned `ALLOW`.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "promotion reports|root README snippets|documents public-repo production promotion"` passed: 3 tests passed, 152 skipped.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k public_repo_promotion` passed: 1 test passed, 122 deselected.
+- `pnpm --dir typescript test` passed: 155 tests.
+- `python -m pytest python\tests -q` passed: 123 tests, 119 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\verify-version-sync.mjs` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist artifacts\python-local` passed.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `node --check scripts\verify-promotion-reports.mjs` passed.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-candidate-current.json --live artifacts\sdk\live-canary-artifact-candidate-current.json` failed closed as expected because current artifacts are not strict green promotion evidence.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes same-candidate promotion evidence verification, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for multimodal, idempotency replay, and remaining live endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
 ## 2026-05-24 Agent 4 Checkpoint: Canary Candidate Digest Evidence
 
 Closed a release-evidence gap in live canary reports:

@@ -13,6 +13,7 @@ python -m build python
 node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
+node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json
 ```
 
 `--verify-surface-coverage` is a no-network check that maps every public SDK
@@ -104,6 +105,10 @@ state generated the canary evidence without recording local paths. Full
 `--package-source artifact` reports also set `candidate.artifactDigestsChecked`
 and record only package file names plus SHA-256 values in `candidate.artifacts`;
 preflight reports do not require built artifacts and leave that list empty.
+`verify-promotion-reports.mjs` is the release gate that compares the readiness
+and live reports, requires the same candidate source digest, requires the live
+artifact report to include npm and Python wheel hashes, and fails if either
+language has skipped or failed rows.
 
 ## Matrix Rows
 
