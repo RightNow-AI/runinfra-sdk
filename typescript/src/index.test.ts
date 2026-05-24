@@ -441,7 +441,13 @@ describe("RunInfra TypeScript SDK", () => {
     const livePath = join(tmp, "live.json");
     const digest = "a".repeat(64);
     const expectedRows = ["models.list", "chat.completions.create"];
-    const surfaceCoverage = { status: "passed", errors: [], uncoveredSurfaces: [], rowCount: expectedRows.length };
+    const surfaceCoverage = {
+      status: "passed",
+      errors: [],
+      uncoveredSurfaces: [],
+      uncoveredRows: [],
+      rowCount: expectedRows.length,
+    };
     const readiness = {
       schemaVersion: 1,
       strict: true,
@@ -520,7 +526,13 @@ describe("RunInfra TypeScript SDK", () => {
     const digest = "a".repeat(64);
     const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
     const expectedRows = [`${matrix.expectedRows[0]}\n${matrix.expectedRows[1]}`, ...matrix.expectedRows.slice(2)];
-    const surfaceCoverage = { status: "passed", errors: [], uncoveredSurfaces: [], rowCount: expectedRows.length };
+    const surfaceCoverage = {
+      status: "passed",
+      errors: [],
+      uncoveredSurfaces: [],
+      uncoveredRows: [],
+      rowCount: expectedRows.length,
+    };
     const readiness = {
       schemaVersion: 1,
       strict: true,
@@ -592,6 +604,85 @@ describe("RunInfra TypeScript SDK", () => {
     }
   });
 
+  it("rejects promotion reports with stale surface coverage that omits uncovered rows", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-stale-surface-coverage-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const livePath = join(tmp, "live.json");
+    const digest = "a".repeat(64);
+    const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const expectedRows = matrix.expectedRows;
+    const surfaceCoverage = { status: "passed", errors: [], uncoveredSurfaces: [], rowCount: expectedRows.length };
+    const readiness = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: false,
+        artifacts: [],
+      },
+      expectedRows,
+      readiness: {
+        status: "ready",
+        missing: [],
+        rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
+      },
+      surfaceCoverage,
+      parity: { status: "not_run", errors: [] },
+      reports: [],
+    };
+    const live = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: true,
+        artifacts: [
+          { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
+          { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
+        ],
+      },
+      expectedRows,
+      surfaceCoverage,
+      parity: { status: "passed", errors: [] },
+      reports: ["typescript", "python"].map((language) => ({
+        language,
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        strict: true,
+        baseURL: "https://api.runinfra.ai/v1",
+        results: expectedRows.map((name) => ({ name, status: "passed" })),
+      })),
+    };
+
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
+      writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain("uncovered rows must be empty");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("verifies promotion reports use the same candidate digest and all-passed artifact canaries", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-reports-"));
     const readinessPath = join(tmp, "readiness.json");
@@ -599,7 +690,13 @@ describe("RunInfra TypeScript SDK", () => {
     const digest = "a".repeat(64);
     const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
     const expectedRows = matrix.expectedRows;
-    const surfaceCoverage = { status: "passed", errors: [], uncoveredSurfaces: [], rowCount: expectedRows.length };
+    const surfaceCoverage = {
+      status: "passed",
+      errors: [],
+      uncoveredSurfaces: [],
+      uncoveredRows: [],
+      rowCount: expectedRows.length,
+    };
     const readiness = {
       schemaVersion: 1,
       strict: true,
@@ -1985,12 +2082,14 @@ class RunInfra:
       status?: string;
       declaredSurfaces?: string[];
       uncoveredSurfaces?: string[];
+      uncoveredRows?: string[];
       surfaceCount?: number;
       rowCount?: number;
       surfaces?: string[];
     };
     expect(output.status).toBe("passed");
     expect(output.uncoveredSurfaces).toEqual([]);
+    expect(output.uncoveredRows).toEqual([]);
     expect(output.surfaceCount).toBeGreaterThanOrEqual(17);
     expect(output.rowCount).toBeGreaterThanOrEqual(39);
     expect(output.surfaces).toEqual(expect.arrayContaining([

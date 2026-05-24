@@ -1840,3 +1840,40 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 21:02 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Surface Coverage Row Closure
+
+Closed a local GA evidence-integrity gap in the canary surface verifier:
+
+- `scripts/run-sdk-live-canaries.mjs --verify-surface-coverage` now reports `uncoveredRows`.
+- The verifier now fails if a canonical canary row is not tied to at least one public surface coverage entry.
+- `verify-promotion-reports.mjs` now requires readiness and live reports to include empty `surfaceCoverage.uncoveredRows`, so stale pre-change reports cannot satisfy the release gate.
+- This complements the existing `uncoveredSurfaces` check, which already fails if a declared public SDK surface has no canary row coverage.
+- LIVE-CANARIES now documents unmapped canonical rows as a surface coverage failure mode.
+- The current canonical matrix has 49 rows, 26 coverage entries, 22 declared public surfaces, no uncovered surfaces, and no uncovered rows.
+
+TDD evidence:
+
+- Added a failing TypeScript regression first; it failed because `uncoveredRows` was missing from the surface coverage output.
+- Implemented the minimal row-coverage set inside `buildSurfaceCoverage()`.
+- Second-opinion review returned BLOCK because the promotion verifier still accepted stale surface coverage evidence that omitted `uncoveredRows`.
+- Added a failing stale-report promotion regression; it failed because the verifier returned status `0` for a report pair without `surfaceCoverage.uncoveredRows`.
+- Updated the promotion verifier and positive fixture to require empty `uncoveredRows`.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "public SDK surface has canary row coverage"` failed first with `expected undefined to deeply equal []`.
+- `pnpm --dir typescript test --run -t "public SDK surface has canary row coverage"` passed: 1 test.
+- `pnpm --dir typescript test --run -t "stale surface coverage"` failed first with status `0` instead of expected `1`.
+- `pnpm --dir typescript test --run -t "stale surface coverage|public SDK surface has canary row coverage|promotion reports use the same candidate digest"` passed: 3 tests.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with `uncoveredRows: []`.
+- `node --check scripts\run-sdk-live-canaries.mjs` and `node --check scripts\verify-promotion-reports.mjs` passed.
+
+Remaining blockers are unchanged:
+
+- This closes another local promotion-evidence integrity gap, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and remaining endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 21:27 +03:00.

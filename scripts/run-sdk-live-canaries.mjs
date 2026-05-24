@@ -677,6 +677,7 @@ function buildSurfaceCoverage() {
   const expectedRowSet = new Set(expectedRows);
   const errors = [];
   const seen = new Set();
+  const coveredRows = new Set();
   const manifestSurfaces = publicSurfaceCoverage.map((entry) => entry.surface);
   const manifestSurfaceSet = new Set(manifestSurfaces);
   const declaredSurfaces = declaredPublicSurfaces();
@@ -694,10 +695,15 @@ function buildSurfaceCoverage() {
       continue;
     }
     for (const row of entry.rows) {
+      coveredRows.add(row);
       if (!expectedRowSet.has(row)) {
         errors.push(`${entry.surface} references unknown canary row: ${row}`);
       }
     }
+  }
+  const uncoveredRows = expectedRows.filter((row) => !coveredRows.has(row));
+  for (const row of uncoveredRows) {
+    errors.push(`canonical canary row missing public surface coverage: ${row}`);
   }
   return {
     status: errors.length ? "failed" : "passed",
@@ -705,6 +711,7 @@ function buildSurfaceCoverage() {
     declaredSurfaceCount: declaredSurfaces.length,
     declaredSurfaces,
     uncoveredSurfaces,
+    uncoveredRows,
     surfaceCount: publicSurfaceCoverage.length,
     rowCount: expectedRows.length,
     surfaces: manifestSurfaces,

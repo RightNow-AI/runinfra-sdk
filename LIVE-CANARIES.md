@@ -20,7 +20,8 @@ node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-
 surface to the canary rows that prove it. It derives declared client/helper
 surfaces from the TypeScript source, Python source, and package READMEs, then
 fails if a declared surface has no mapped rows or if a mapped surface references
-a row outside the strict matrix.
+a row outside the strict matrix. It also fails if a canonical strict matrix row
+is not attached to any public surface coverage entry.
 
 `--preflight` is a no-network readiness check. It writes the same redacted
 environment status plus row-by-row missing inputs, then fails in strict mode

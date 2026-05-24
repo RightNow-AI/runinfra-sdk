@@ -119,6 +119,9 @@ function baseReportErrors(label, report) {
   if (!Array.isArray(report?.surfaceCoverage?.uncoveredSurfaces) || report.surfaceCoverage.uncoveredSurfaces.length !== 0) {
     reportErrors.push(`${label} uncovered surfaces must be empty`);
   }
+  if (!Array.isArray(report?.surfaceCoverage?.uncoveredRows) || report.surfaceCoverage.uncoveredRows.length !== 0) {
+    reportErrors.push(`${label} uncovered rows must be empty`);
+  }
   return reportErrors;
 }
 
