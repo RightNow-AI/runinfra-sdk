@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
@@ -23,6 +23,24 @@ const forbiddenPatterns = [
   /^package\/\.npmrc$/u,
   /^package\/AGENT-NOTES\.md$/u,
 ];
+
+const expectedPackageMetadata = {
+  name: "@runinfra/sdk",
+  version: JSON.parse(
+    readFileSync(new URL("../typescript/package.json", import.meta.url), "utf8"),
+  ).version,
+  type: "module",
+  main: "./dist/index.js",
+  module: "./dist/index.js",
+  types: "./dist/index.d.ts",
+  exports: {
+    ".": {
+      types: "./dist/index.d.ts",
+      import: "./dist/index.js",
+      default: "./dist/index.js",
+    },
+  },
+};
 
 function patternToRegex(pattern) {
   return new RegExp(
@@ -84,6 +102,64 @@ function duplicateFiles(files) {
   return [...duplicates].sort();
 }
 
+function sameStringSet(actual, expected) {
+  if (actual.length !== expected.length) return false;
+  return actual.every((value, index) => value === expected[index]);
+}
+
+function validatePackageMetadata(content) {
+  let metadata;
+  try {
+    metadata = JSON.parse(content);
+  } catch (error) {
+    return [`package.json must be valid JSON: ${error.message}`];
+  }
+
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return ["package.json must be a JSON object"];
+  }
+
+  const errors = [];
+  for (const [field, expected] of Object.entries(expectedPackageMetadata)) {
+    if (field === "exports") continue;
+    if (metadata[field] !== expected) {
+      errors.push(`package.json ${field} must be ${expected}`);
+    }
+  }
+
+  const packageExports = metadata.exports;
+  if (!packageExports || typeof packageExports !== "object" || Array.isArray(packageExports)) {
+    errors.push("package.json exports must be an object");
+    return errors;
+  }
+
+  const expectedExportKeys = Object.keys(expectedPackageMetadata.exports).sort();
+  const exportKeys = Object.keys(packageExports).sort();
+  if (!sameStringSet(exportKeys, expectedExportKeys)) {
+    errors.push('package.json exports must expose only "."');
+  }
+
+  const rootExport = packageExports["."];
+  if (!rootExport || typeof rootExport !== "object" || Array.isArray(rootExport)) {
+    errors.push('package.json exports["."] must be an object');
+    return errors;
+  }
+
+  const expectedRootExport = expectedPackageMetadata.exports["."];
+  const expectedRootExportKeys = Object.keys(expectedRootExport).sort();
+  const rootExportKeys = Object.keys(rootExport).sort();
+  if (!sameStringSet(rootExportKeys, expectedRootExportKeys)) {
+    errors.push('package.json exports["."] must expose only default, import, types');
+  }
+
+  for (const [field, expected] of Object.entries(expectedRootExport)) {
+    if (rootExport[field] !== expected) {
+      errors.push(`package.json exports["."].${field} must be ${expected}`);
+    }
+  }
+  return errors;
+}
+
 function verifyTarball(tarball) {
   const entries = listTarballEntries(tarball);
   const actualFiles = entries.map((entry) => entry.file).sort();
@@ -108,6 +184,9 @@ function verifyTarball(tarball) {
     const matchedPattern = findForbiddenContent(content);
     if (matchedPattern) forbiddenContent.push(`${file}: ${matchedPattern.label}`);
   }
+  const metadataErrors = actualSet.has("package/package.json")
+    ? validatePackageMetadata(readTarballFile(tarball, "package/package.json"))
+    : [];
 
   if (
     missing.length ||
@@ -115,7 +194,8 @@ function verifyTarball(tarball) {
     nonRegular.length ||
     unexpected.length ||
     forbidden.length ||
-    forbiddenContent.length
+    forbiddenContent.length ||
+    metadataErrors.length
   ) {
     console.error(`Package content verification failed for ${tarball}`);
     if (missing.length) console.error(`Missing files:\n${missing.join("\n")}`);
@@ -125,6 +205,9 @@ function verifyTarball(tarball) {
     if (forbidden.length) console.error(`Forbidden files:\n${forbidden.join("\n")}`);
     if (forbiddenContent.length) {
       console.error(`Forbidden content:\n${forbiddenContent.join("\n")}`);
+    }
+    if (metadataErrors.length) {
+      console.error(`Invalid package metadata:\n${metadataErrors.join("\n")}`);
     }
     process.exitCode = 1;
     return;

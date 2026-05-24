@@ -1423,6 +1423,110 @@ class RunInfra:
     }
   });
 
+  it("rejects npm package tarballs with wrong package metadata", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-npm-metadata-"));
+    try {
+      const packageJson = JSON.parse(
+        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ) as { version: string };
+      const tarball = join(tmp, "wrong-metadata-package.tar");
+      writeTarball(tarball, [
+        { name: "package/CHANGELOG.md", content: "# Changelog\n" },
+        { name: "package/LICENSE", content: "MIT\n" },
+        { name: "package/README.md", content: "# RunInfra SDK\n" },
+        { name: "package/dist/index.d.ts", content: "export declare const value: string;\n" },
+        { name: "package/dist/index.js", content: "export const value = 'ok';\n" },
+        {
+          name: "package/package.json",
+          content: JSON.stringify({
+            name: "@runinfra/wrong",
+            version: "0.0.0",
+            type: "commonjs",
+            main: "./src/index.ts",
+            module: "./dist/index.js",
+            types: "./dist/index.d.ts",
+            exports: {
+              ".": {
+                types: "./dist/index.d.ts",
+                import: "./src/index.ts",
+                default: "./dist/index.js",
+              },
+            },
+          }),
+        },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-npm-package.mjs",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      expect(result.stderr).toContain("Invalid package metadata:");
+      expect(result.stderr).toContain("package.json name must be @runinfra/sdk");
+      expect(result.stderr).toContain(`package.json version must be ${packageJson.version}`);
+      expect(result.stderr).toContain("package.json type must be module");
+      expect(result.stderr).toContain("package.json main must be ./dist/index.js");
+      expect(result.stderr).toContain('package.json exports["."].import must be ./dist/index.js');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects npm package tarballs with extra export entrypoints", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-npm-extra-exports-"));
+    try {
+      const packageJson = JSON.parse(
+        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ) as { version: string };
+      const tarball = join(tmp, "extra-exports-package.tar");
+      writeTarball(tarball, [
+        { name: "package/CHANGELOG.md", content: "# Changelog\n" },
+        { name: "package/LICENSE", content: "MIT\n" },
+        { name: "package/README.md", content: "# RunInfra SDK\n" },
+        { name: "package/dist/index.d.ts", content: "export declare const value: string;\n" },
+        { name: "package/dist/index.js", content: "export const value = 'ok';\n" },
+        {
+          name: "package/package.json",
+          content: JSON.stringify({
+            name: "@runinfra/sdk",
+            version: packageJson.version,
+            type: "module",
+            main: "./dist/index.js",
+            module: "./dist/index.js",
+            types: "./dist/index.d.ts",
+            exports: {
+              ".": {
+                types: "./dist/index.d.ts",
+                import: "./dist/index.js",
+                default: "./dist/index.js",
+                require: "./dist/index.cjs",
+              },
+              "./internal": "./dist/internal.js",
+            },
+          }),
+        },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-npm-package.mjs",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      expect(result.stderr).toContain('package.json exports must expose only "."');
+      expect(result.stderr).toContain('package.json exports["."] must expose only default, import, types');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects npm package tarballs with duplicate file entries", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-npm-duplicate-"));
     try {

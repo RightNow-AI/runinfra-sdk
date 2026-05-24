@@ -6,7 +6,9 @@ import stat
 import sys
 import tarfile
 import zipfile
+from email.parser import Parser
 from pathlib import Path
+from typing import Optional
 
 
 FORBIDDEN_PARTS = {
@@ -61,6 +63,20 @@ WHEEL_ALLOWED_FIXED = {
 WHEEL_DIST_INFO_RE = re.compile(
     r"^runinfra-[^/]+\.dist-info/(METADATA|RECORD|WHEEL|top_level\.txt|licenses/LICENSE)$"
 )
+INIT_VERSION_RE = re.compile(r"^__version__\s*=\s*[\"']([^\"']+)[\"']", re.MULTILINE)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_NAME = "runinfra"
+
+
+def read_expected_version() -> str:
+    pyproject = REPO_ROOT.joinpath("python", "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r"(?m)^version\s*=\s*[\"']([^\"']+)[\"']", pyproject)
+    if match is None:
+        raise RuntimeError("Could not read project version from python/pyproject.toml.")
+    return match.group(1)
+
+
+EXPECTED_VERSION = read_expected_version()
 
 
 def normalize(path: str) -> str:
@@ -80,12 +96,15 @@ def fail(label: str, messages: list[str]) -> None:
     raise SystemExit(1)
 
 
-def has_forbidden_content(content: bytes) -> bool:
+def decode_text(content: bytes) -> str:
     try:
-        decoded = content.decode("utf-8")
+        return content.decode("utf-8")
     except UnicodeDecodeError:
-        decoded = content.decode("utf-8", errors="ignore")
-    return FORBIDDEN_CONTENT_RE.search(decoded) is not None
+        return content.decode("utf-8", errors="replace")
+
+
+def has_forbidden_content(content: bytes) -> bool:
+    return FORBIDDEN_CONTENT_RE.search(decode_text(content)) is not None
 
 
 def duplicate_files(files: list[str]) -> list[str]:
@@ -104,20 +123,85 @@ def zip_info_is_regular_file(info: zipfile.ZipInfo) -> bool:
     return file_type in (0, stat.S_IFREG)
 
 
+def core_metadata_errors(label: str, content: Optional[bytes]) -> list[str]:
+    if content is None:
+        return [f"{label} is missing"]
+    metadata = Parser().parsestr(decode_text(content))
+    errors: list[str] = []
+    if metadata.get("Name") != EXPECTED_NAME:
+        errors.append(f"{label} Name must be {EXPECTED_NAME}")
+    if metadata.get("Version") != EXPECTED_VERSION:
+        errors.append(f"{label} Version must be {EXPECTED_VERSION}")
+    return errors
+
+
+def init_version_errors(label: str, content: Optional[bytes]) -> list[str]:
+    if content is None:
+        return [f"{label} is missing"]
+    match = INIT_VERSION_RE.search(decode_text(content))
+    if match is None:
+        return [f"{label} must define __version__ = \"{EXPECTED_VERSION}\""]
+    if match.group(1) != EXPECTED_VERSION:
+        return [f"{label} __version__ must be {EXPECTED_VERSION}"]
+    return []
+
+
+def wheel_metadata_errors(files: list[str], contents: dict[str, bytes]) -> list[str]:
+    errors: list[str] = []
+    expected_prefix = f"{EXPECTED_NAME}-{EXPECTED_VERSION}.dist-info/"
+    wrong_dist_info = sorted(
+        file for file in files if ".dist-info/" in file and not file.startswith(expected_prefix)
+    )
+    if wrong_dist_info:
+        errors.append(
+            f"Wheel dist-info directory must be {expected_prefix.rstrip('/')}\n"
+            + "\n".join(wrong_dist_info)
+        )
+
+    metadata_files = sorted(file for file in files if file.endswith(".dist-info/METADATA"))
+    if len(metadata_files) != 1:
+        errors.append("Wheel must contain exactly one dist-info METADATA file")
+    elif metadata_files[0] != f"{expected_prefix}METADATA":
+        errors.append(f"Wheel METADATA path must be {expected_prefix}METADATA")
+    if metadata_files:
+        errors.extend(core_metadata_errors("Wheel METADATA", contents.get(metadata_files[0])))
+    errors.extend(init_version_errors("wheel runinfra/__init__.py", contents.get("runinfra/__init__.py")))
+    return errors
+
+
+def sdist_metadata_errors(contents: dict[str, bytes]) -> list[str]:
+    errors: list[str] = []
+    errors.extend(core_metadata_errors("PKG-INFO", contents.get("PKG-INFO")))
+    errors.extend(
+        core_metadata_errors(
+            "runinfra.egg-info/PKG-INFO",
+            contents.get("runinfra.egg-info/PKG-INFO"),
+        )
+    )
+    errors.extend(init_version_errors("sdist runinfra/__init__.py", contents.get("runinfra/__init__.py")))
+    return errors
+
+
 def verify_wheel(path: Path) -> None:
     with zipfile.ZipFile(path) as wheel:
         infos = sorted((info for info in wheel.infolist() if not info.is_dir()), key=lambda item: item.filename)
         files = [normalize(info.filename) for info in infos]
+        contents: dict[str, bytes] = {}
         non_regular = sorted(
             normalize(info.filename)
             for info in infos
             if not zip_info_is_regular_file(info)
         )
-        forbidden_content = sorted(
-            normalize(info.filename)
-            for info in infos
-            if zip_info_is_regular_file(info) and has_forbidden_content(wheel.read(info.filename))
-        )
+        forbidden_content = []
+        for info in infos:
+            file = normalize(info.filename)
+            if not zip_info_is_regular_file(info):
+                continue
+            content = wheel.read(info.filename)
+            if has_forbidden_content(content):
+                forbidden_content.append(file)
+            if file == "runinfra/__init__.py" or file.endswith(".dist-info/METADATA"):
+                contents[file] = content
 
     missing = sorted(file for file in WHEEL_ALLOWED_FIXED if file not in files)
     duplicates = duplicate_files(files)
@@ -127,6 +211,7 @@ def verify_wheel(path: Path) -> None:
         if file not in WHEEL_ALLOWED_FIXED and WHEEL_DIST_INFO_RE.fullmatch(file) is None
     )
     forbidden = sorted(file for file in files if has_forbidden_path(file))
+    invalid_metadata = wheel_metadata_errors(files, contents)
 
     errors: list[str] = []
     if missing:
@@ -140,7 +225,9 @@ def verify_wheel(path: Path) -> None:
     if forbidden:
         errors.append("Forbidden files:\n" + "\n".join(forbidden))
     if forbidden_content:
-        errors.append("Forbidden content:\n" + "\n".join(forbidden_content))
+        errors.append("Forbidden content:\n" + "\n".join(sorted(forbidden_content)))
+    if invalid_metadata:
+        errors.append("Invalid metadata:\n" + "\n".join(invalid_metadata))
     if errors:
         fail(str(path), errors)
 
@@ -158,6 +245,7 @@ def verify_sdist(path: Path) -> None:
         members = sorted(sdist.getmembers(), key=lambda item: item.name)
         file_members = [member for member in members if member.isfile()]
         files = [strip_sdist_root(member.name) for member in file_members]
+        contents: dict[str, bytes] = {}
         non_regular = sorted(
             strip_sdist_root(member.name)
             for member in members
@@ -166,8 +254,14 @@ def verify_sdist(path: Path) -> None:
         forbidden_content = []
         for member in file_members:
             extracted = sdist.extractfile(member)
-            if extracted is not None and has_forbidden_content(extracted.read()):
-                forbidden_content.append(strip_sdist_root(member.name))
+            if extracted is None:
+                continue
+            file = strip_sdist_root(member.name)
+            content = extracted.read()
+            if has_forbidden_content(content):
+                forbidden_content.append(file)
+            if file in {"PKG-INFO", "runinfra.egg-info/PKG-INFO", "runinfra/__init__.py"}:
+                contents[file] = content
 
     files = [file for file in files if file]
     non_regular = [file for file in non_regular if file]
@@ -176,6 +270,7 @@ def verify_sdist(path: Path) -> None:
     duplicates = duplicate_files(files)
     unexpected = sorted(file for file in files if file not in SDIST_ALLOWED)
     forbidden = sorted(file for file in files if has_forbidden_path(file))
+    invalid_metadata = sdist_metadata_errors(contents)
 
     errors: list[str] = []
     if missing:
@@ -190,6 +285,8 @@ def verify_sdist(path: Path) -> None:
         errors.append("Forbidden files:\n" + "\n".join(forbidden))
     if forbidden_content:
         errors.append("Forbidden content:\n" + "\n".join(forbidden_content))
+    if invalid_metadata:
+        errors.append("Invalid metadata:\n" + "\n".join(invalid_metadata))
     if errors:
         fail(str(path), errors)
 

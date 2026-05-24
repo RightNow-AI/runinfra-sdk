@@ -1532,3 +1532,48 @@ Remaining blockers are unchanged:
 - This closes a package-safety release-gate gap, not live SDK GA readiness.
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+## 2026-05-24 Agent 4 Checkpoint: Package Metadata Scanner Validation
+
+Closed another package-promotion safety gap before GA:
+
+- npm package verification now parses `package/package.json` from each tarball.
+- npm metadata must match the current public package identity and entrypoints: `@runinfra/sdk`, current `typescript/package.json` version, ESM type, `dist` main/module/types, and exact root export keys.
+- npm exports are now fail-closed against extra subpath exports and extra root export conditions, so an unintended `./internal` or `require` entrypoint cannot pass the package scanner.
+- Python wheel verification now checks current dist-info directory version, `METADATA` name/version, and `runinfra/__init__.py` `__version__`.
+- Python sdist verification now checks `PKG-INFO`, `runinfra.egg-info/PKG-INFO`, and `runinfra/__init__.py` `__version__`.
+- Both scanners still run the existing file allowlists, non-regular-entry rejection, secret/path scanner, and no-source-map checks.
+
+TDD and review evidence:
+
+- Added a failing npm metadata regression first; it failed because a tarball with wrong `package.json` metadata was accepted.
+- Added a failing Python metadata regression first; it failed because wheel and sdist archives with wrong metadata were accepted.
+- Second-opinion review returned `ALLOW` but warned that npm exports were not exact.
+- Added a failing npm extra-export regression first; it failed because `./internal` and `require` export entries were accepted.
+- After exact export key validation, targeted metadata regressions passed.
+- Second-opinion re-check returned `ALLOW` with no findings.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "wrong package metadata|extra export entrypoints"` passed: 2 tests passed, 161 skipped.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k wrong_package_metadata` passed: 1 test passed, 123 deselected, 2 subtests passed.
+- `pnpm --dir typescript test` passed: 163 tests.
+- `python -m pytest python\tests -q` passed: 124 tests, 121 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node --check scripts\verify-npm-package.mjs` passed.
+- `python -m py_compile scripts\verify-python-package.py` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist artifacts\python-local` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\verify-version-sync.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `node scripts\verify-promoted-artifacts.mjs <clean temp promoted-layout>` passed after copying only the expected npm tarball, Python wheel, and Python sdist into the promotion download layout.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes a package-metadata release-gate gap, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for multimodal, idempotency replay, and remaining live endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
