@@ -1796,3 +1796,47 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 20:47 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Canonical Promotion Matrix Gate
+
+Closed a promotion evidence loophole before GA:
+
+- `verify-promotion-reports.mjs` no longer trusts a report pair's self-declared `expectedRows` alone.
+- Added `scripts/live-canary-matrix.mjs` as the side-effect-free canonical strict canary row list.
+- `scripts/run-sdk-live-canaries.mjs` now imports that canonical row list instead of owning a private copy.
+- `verify-promotion-reports.mjs` now rejects readiness/live reports whose `expectedRows` do not exactly match the canonical live canary matrix.
+- `verify-promotion-reports.mjs` now compares row arrays by length and element index instead of joined strings.
+- Promotion reports with row names containing control characters, including embedded newlines that merge row boundaries, are rejected.
+- `scripts/live-canary-matrix.mjs` is included in `candidate.sourceDigestSha256`, so matrix changes move canary source identity.
+- LIVE-CANARIES now documents that shortened self-consistent reports cannot satisfy the promotion gate.
+
+TDD evidence:
+
+- Added a failing TypeScript regression first; it failed because a strict two-row readiness/live pair was accepted by the promotion verifier.
+- Implemented the minimal shared matrix module and verifier check.
+- Updated the positive promotion-report fixture to use the canonical 49-row matrix.
+- Second-opinion review returned BLOCK because joined-string comparison still accepted a report that merged adjacent canonical rows with an embedded newline.
+- Added a failing newline-boundary tamper regression; it failed because the verifier still accepted the tampered report.
+- Replaced joined-string row comparisons with strict array equality and row-name control-character validation.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "omit canonical live canary rows"` failed first with status `0` instead of expected `1`.
+- `pnpm --dir typescript test --run -t "merge canonical row boundaries"` failed first with status `0` instead of expected `1`.
+- `pnpm --dir typescript test --run -t "merge canonical row boundaries|omit canonical live canary rows|promotion reports use the same candidate digest"` passed: 3 tests.
+- `pnpm --dir typescript test --run -t "public-repo production promotion|omit canonical live canary rows|promotion reports use the same candidate digest|canonical live canary matrix"` passed: 4 tests.
+- `node --check scripts\live-canary-matrix.mjs`, `node --check scripts\run-sdk-live-canaries.mjs`, and `node --check scripts\verify-promotion-reports.mjs` passed.
+- `git diff --check` passed with CRLF warnings only.
+- `pnpm --dir typescript test` passed: 171 tests.
+- `python -m pytest python\tests -q` passed: 127 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+
+Remaining blockers are unchanged:
+
+- This closes a promotion verifier integrity gap, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and remaining endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 21:02 +03:00.

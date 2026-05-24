@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { expectedRows } from "./live-canary-matrix.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const args = process.argv.slice(2);
@@ -30,61 +31,11 @@ const sourceDigestFiles = [
   ["python/runinfra/__init__.py", join(repositoryRoot, "python", "runinfra", "__init__.py")],
   ["scripts/run-sdk-live-canaries.mjs", join(repositoryRoot, "scripts", "run-sdk-live-canaries.mjs")],
   ["scripts/canary-report-base-url.mjs", join(repositoryRoot, "scripts", "canary-report-base-url.mjs")],
+  ["scripts/live-canary-matrix.mjs", join(repositoryRoot, "scripts", "live-canary-matrix.mjs")],
   ["scripts/secret-scan-policy.mjs", join(repositoryRoot, "scripts", "secret-scan-policy.mjs")],
   ["scripts/sdk-live-canary-typescript.mjs", join(repositoryRoot, "scripts", "sdk-live-canary-typescript.mjs")],
   ["scripts/sdk-live-canary-python.py", join(repositoryRoot, "scripts", "sdk-live-canary-python.py")],
   ["LIVE-CANARIES.md", join(repositoryRoot, "LIVE-CANARIES.md")],
-];
-const expectedRows = [
-  "models.list",
-  "models.retrieve.llm",
-  "models.retrieve.embedding",
-  "models.retrieve.image",
-  "models.retrieve.tts",
-  "models.retrieve.asr",
-  "chat.completions.create",
-  "openai.params.chat.completions",
-  "openai.params.chat.stream_options",
-  "chat.completions.stream.final",
-  "chat.completions.stream.cancel",
-  "chat.completions.stream.slow_consumer",
-  "chat.completions.stream.malformed_frame.local",
-  "chat.completions.stream.disconnect.local",
-  "chat.completions.stream.stalled_read.local",
-  "responses.create",
-  "openai.params.responses",
-  "responses.stream.final",
-  "responses.stream.cancel",
-  "responses.stream.slow_consumer",
-  "responses.stream.malformed_frame.local",
-  "responses.stream.disconnect.local",
-  "responses.stream.stalled_read.local",
-  "embeddings.create",
-  "openai.params.embeddings",
-  "images.generate",
-  "openai.params.images",
-  "audio.speech.create",
-  "openai.params.audio.speech",
-  "audio.speech.binary_interfaces",
-  "audio.transcriptions.create",
-  "openai.params.audio.transcriptions",
-  "voice.pipeline.create",
-  "error.auth.invalid_key",
-  "error.model.not_found",
-  "error.request.invalid_options",
-  "error.body.unsupported_parameter",
-  "retry.safety.get.local",
-  "retry.safety.post.requires_idempotency.local",
-  "retry.safety.post.with_idempotency.local",
-  "retry.safety.stream.no_retry.local",
-  "retry.safety.audio_binary.no_retry.local",
-  "retry.safety.audio_multipart.no_retry.local",
-  "webhooks.delivery_surface.absent",
-  "webhooks.verify_signature.local",
-  "webhooks.construct_event.local",
-  "webhooks.verify_signature.export",
-  "webhooks.construct_event.export",
-  "idempotency.replay.responses",
 ];
 
 const publicSurfaceCoverage = [

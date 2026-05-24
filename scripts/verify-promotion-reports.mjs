@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { productionBaseURL } from "./canary-report-base-url.mjs";
+import { expectedRows as canonicalExpectedRows } from "./live-canary-matrix.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const readinessPath = optionValue("--readiness") ?? "artifacts/sdk/live-canary-readiness.json";
@@ -199,12 +200,22 @@ function expectedRowsErrors(readinessReport, liveReport) {
   const readinessRows = arrayOrEmpty(readinessReport?.expectedRows);
   const liveRows = arrayOrEmpty(liveReport?.expectedRows);
   const reportErrors = [];
+  reportErrors.push(...rowNameErrors("canonical live canary matrix", canonicalExpectedRows));
+  reportErrors.push(...rowNameErrors("readiness report expectedRows", readinessRows));
+  reportErrors.push(...rowNameErrors("live canary report expectedRows", liveRows));
   if (!readinessRows.length) reportErrors.push("readiness report expectedRows must be non-empty");
   if (!liveRows.length) reportErrors.push("live canary report expectedRows must be non-empty");
-  if (readinessRows.join("\n") !== liveRows.join("\n")) {
+  if (!sameStringArray(readinessRows, liveRows)) {
     reportErrors.push("expectedRows mismatch between readiness and live canary reports");
   }
+  if (new Set(readinessRows).size !== readinessRows.length) reportErrors.push("readiness report expectedRows must not contain duplicates");
   if (new Set(liveRows).size !== liveRows.length) reportErrors.push("live canary expectedRows must not contain duplicates");
+  if (new Set(canonicalExpectedRows).size !== canonicalExpectedRows.length) {
+    reportErrors.push("canonical live canary matrix must not contain duplicates");
+  }
+  if (!sameStringArray(readinessRows, canonicalExpectedRows) || !sameStringArray(liveRows, canonicalExpectedRows)) {
+    reportErrors.push("expectedRows must match the canonical live canary matrix");
+  }
   return reportErrors;
 }
 
@@ -217,7 +228,8 @@ function readinessErrors(report) {
   }
   const rows = arrayOrEmpty(report?.readiness?.rows);
   const rowNames = rows.map((row) => row?.name);
-  if (rowNames.join("\n") !== expectedRows.join("\n")) {
+  reportErrors.push(...rowNameErrors("readiness row", rowNames));
+  if (!sameStringArray(rowNames, expectedRows)) {
     reportErrors.push("readiness rows must exactly match expectedRows");
   }
   for (const row of rows) {
@@ -257,7 +269,8 @@ function liveCanaryErrors(report) {
     }
     const results = arrayOrEmpty(child?.results);
     const names = results.map((row) => row?.name);
-    if (names.join("\n") !== expectedRows.join("\n")) {
+    reportErrors.push(...rowNameErrors(`${language} child report row`, names));
+    if (!sameStringArray(names, expectedRows)) {
       reportErrors.push(`${language} child report rows must exactly match expectedRows`);
     }
     for (const result of results) {
@@ -275,6 +288,22 @@ function liveCanaryErrors(report) {
 
 function arrayOrEmpty(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function sameStringArray(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function rowNameErrors(label, rows) {
+  const reportErrors = [];
+  rows.forEach((row, index) => {
+    if (typeof row !== "string" || !row.trim()) {
+      reportErrors.push(`${label} ${index} row name must be a non-empty string`);
+    } else if (/[\u0000-\u001f\u007f]/u.test(row)) {
+      reportErrors.push(`${label} ${index} row name must not contain control characters`);
+    }
+  });
+  return reportErrors;
 }
 
 function isSha256(value) {

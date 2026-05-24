@@ -292,7 +292,7 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
     expect(liveCanaries).toContain("error.model.not_found");
     expect(liveCanaries).toContain("error.body.unsupported_parameter");
-    expect(liveCanaries).toContain("strict\nchild canaries against `https://api.runinfra.ai/v1`");
+    expect(liveCanaries).toContain("strict child canaries\nagainst `https://api.runinfra.ai/v1`");
     expect(liveCanaries).toContain("A `RUNINFRA_BASE_URL` equal to `https://api.runinfra.ai/v1` is recorded as production");
     expect(liveCanaries).toContain("any other custom `RUNINFRA_BASE_URL`");
     expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
@@ -435,12 +435,170 @@ describe("RunInfra TypeScript SDK", () => {
     expect(helper.reportBaseURL("https://staging.runinfra.ai/v1", true)).toBe("custom_set_redacted");
   });
 
-  it("verifies promotion reports use the same candidate digest and all-passed artifact canaries", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-reports-"));
+  it("rejects promotion reports that omit canonical live canary rows", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-short-matrix-"));
     const readinessPath = join(tmp, "readiness.json");
     const livePath = join(tmp, "live.json");
     const digest = "a".repeat(64);
     const expectedRows = ["models.list", "chat.completions.create"];
+    const surfaceCoverage = { status: "passed", errors: [], uncoveredSurfaces: [], rowCount: expectedRows.length };
+    const readiness = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: false,
+        artifacts: [],
+      },
+      expectedRows,
+      readiness: {
+        status: "ready",
+        missing: [],
+        rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
+      },
+      surfaceCoverage,
+      parity: { status: "not_run", errors: [] },
+      reports: [],
+    };
+    const live = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: true,
+        artifacts: [
+          { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
+          { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
+        ],
+      },
+      expectedRows,
+      surfaceCoverage,
+      parity: { status: "passed", errors: [] },
+      reports: ["typescript", "python"].map((language) => ({
+        language,
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        strict: true,
+        baseURL: "https://api.runinfra.ai/v1",
+        results: expectedRows.map((name) => ({ name, status: "passed" })),
+      })),
+    };
+
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
+      writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain("expectedRows must match the canonical live canary matrix");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects promotion reports that merge canonical row boundaries with newlines", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-newline-matrix-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const livePath = join(tmp, "live.json");
+    const digest = "a".repeat(64);
+    const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const expectedRows = [`${matrix.expectedRows[0]}\n${matrix.expectedRows[1]}`, ...matrix.expectedRows.slice(2)];
+    const surfaceCoverage = { status: "passed", errors: [], uncoveredSurfaces: [], rowCount: expectedRows.length };
+    const readiness = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: false,
+        artifacts: [],
+      },
+      expectedRows,
+      readiness: {
+        status: "ready",
+        missing: [],
+        rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
+      },
+      surfaceCoverage,
+      parity: { status: "not_run", errors: [] },
+      reports: [],
+    };
+    const live = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: digest,
+        sourceFileCount: 8,
+        artifactDigestsChecked: true,
+        artifacts: [
+          { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
+          { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
+        ],
+      },
+      expectedRows,
+      surfaceCoverage,
+      parity: { status: "passed", errors: [] },
+      reports: ["typescript", "python"].map((language) => ({
+        language,
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        strict: true,
+        baseURL: "https://api.runinfra.ai/v1",
+        results: expectedRows.map((name) => ({ name, status: "passed" })),
+      })),
+    };
+
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
+      writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain("row name must not contain control characters");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("verifies promotion reports use the same candidate digest and all-passed artifact canaries", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-reports-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const livePath = join(tmp, "live.json");
+    const digest = "a".repeat(64);
+    const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const expectedRows = matrix.expectedRows;
     const surfaceCoverage = { status: "passed", errors: [], uncoveredSurfaces: [], rowCount: expectedRows.length };
     const readiness = {
       schemaVersion: 1,
@@ -1166,6 +1324,7 @@ class RunInfra:
     expect(readme).toContain("Then run the strict live canary matrix against the exact production gateway");
     expect(liveCanaries).toContain("candidate.sourceDigestSha256");
     expect(liveCanaries).toContain("candidate.artifacts");
+    expect(liveCanaries).toContain("canonical live canary matrix");
     expect(liveCanaries).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
     expect(liveCanaries).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
     expect(agentNotes).toContain("`dry_run=false` cannot bypass `promotion-gate`");
@@ -1190,6 +1349,14 @@ class RunInfra:
 
     expect(runner).toContain(
       '["scripts/canary-report-base-url.mjs", join(repositoryRoot, "scripts", "canary-report-base-url.mjs")]',
+    );
+  });
+
+  it("includes the canonical live canary matrix in live canary source digests", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+
+    expect(runner).toContain(
+      '["scripts/live-canary-matrix.mjs", join(repositoryRoot, "scripts", "live-canary-matrix.mjs")]',
     );
   });
 

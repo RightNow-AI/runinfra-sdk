@@ -119,10 +119,12 @@ preflight reports do not require built artifacts and leave that list empty.
 `verify-promotion-reports.mjs` is the release gate that compares the readiness
 and live reports, requires the same candidate source digest, requires the live
 artifact report to include npm and Python wheel hashes, and fails if either
-language has skipped or failed rows. Promotion evidence must come from strict
-child canaries against `https://api.runinfra.ai/v1`; reports generated with any
-other custom `RUNINFRA_BASE_URL` are useful for staging smoke tests but cannot
-satisfy the real publish gate.
+language has skipped or failed rows. It also requires `expectedRows` to match
+the canonical live canary matrix exactly, so a shortened self-consistent report
+cannot satisfy the gate. Promotion evidence must come from strict child canaries
+against `https://api.runinfra.ai/v1`; reports generated with any other custom
+`RUNINFRA_BASE_URL` are useful for staging smoke tests but cannot satisfy the
+real publish gate.
 
 ## Matrix Rows
 
