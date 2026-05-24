@@ -2115,3 +2115,47 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 22:19 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Python Sdist Clean-Install Gate
+
+Closed a PyPI artifact installability gap before GA:
+
+- `scripts/verify-clean-installs.mjs` now clean-installs and imports both the Python wheel and the Python sdist in separate disposable consumer environments during artifact-mode Python checks.
+- The new `--python-sdist` option lets publish jobs bind the clean-install gate to the exact promoted sdist artifact.
+- Sdist installs use the canonical PyPI index only for build-system requirements, and successful pip output is suppressed so CI logs do not expose local paths.
+- `.github/workflows/publish.yml` now passes the exact promoted Python sdist into both build-artifacts and PyPI publish clean-install checks.
+- `scripts/workflow-policy.mjs` now fails if either publish workflow clean-install gate stops exercising the Python sdist.
+- README, LIVE-CANARIES, and AGENT-NOTES document the wheel plus sdist clean-install behavior.
+
+TDD evidence:
+
+- Added a failing regression first: `--python-sdist` pointed at an invalid sdist, but the verifier returned status `0` because it ignored the sdist.
+- Added a failing workflow-policy regression first: no policy row required Python artifact clean installs to include the sdist.
+- Implemented the minimal verifier and workflow-policy fixes, then confirmed both regressions pass.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "fails Python artifact clean installs when the sdist cannot install|requires Python artifact clean installs to exercise wheel and sdist artifacts"` passed: 2 selected tests.
+- `node scripts\verify-clean-installs.mjs --package python --mode artifact --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz` passed and printed only sanitized success lines, no pip path output.
+- `pnpm --dir typescript test` passed: 181 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node --check scripts\verify-clean-installs.mjs` and `node --check scripts\workflow-policy.mjs` passed.
+- `node scripts\verify-workflow-policy.mjs` passed, including the new `Python artifact clean installs exercise wheel and sdist` policy row.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- Fresh npm tarball, Python wheel, and Python sdist were built.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist` passed for the wheel and sdist.
+- `python -m twine check python\dist\*` passed.
+- `node scripts\verify-clean-installs.mjs --package both --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz` passed.
+- `git diff --check` passed with only Windows CRLF normalization warnings.
+- Read-only second-opinion review `019e5b84-6d32-7ba1-8f7b-ab175da23fe1` reported no P0/P1/P2 findings. Residual non-blocking risks: workflow policy remains regex-based, and sdist install can fail on transient PyPI/build-system availability.
+
+Remaining blockers are unchanged:
+
+- This proves local PyPI sdist installability, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and all required live endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 22:47 +03:00.

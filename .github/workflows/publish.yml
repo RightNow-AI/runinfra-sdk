@@ -122,7 +122,8 @@ jobs:
             --package both \
             --mode artifact \
             --npm-tarball artifacts/npm-local/runinfra-sdk-*.tgz \
-            --python-wheel artifacts/python-local/runinfra-*-py3-none-any.whl
+            --python-wheel artifacts/python-local/runinfra-*-py3-none-any.whl \
+            --python-sdist artifacts/python-local/runinfra-*.tar.gz
 
       - name: Upload exact promoted package artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -351,7 +352,7 @@ jobs:
           test -n "$(ls artifacts/python-local/runinfra-*.tar.gz 2>/dev/null)" || (echo 'no sdist' && exit 1)
           python scripts/verify-python-package.py artifacts/python-local
           twine check artifacts/python-local/*
-          node scripts/verify-clean-installs.mjs --package python --mode artifact --python-wheel artifacts/python-local/runinfra-*-py3-none-any.whl
+          node scripts/verify-clean-installs.mjs --package python --mode artifact --python-wheel artifacts/python-local/runinfra-*-py3-none-any.whl --python-sdist artifacts/python-local/runinfra-*.tar.gz
 
       - name: Publish to PyPI
         if: ${{ github.event.inputs.dry_run != 'true' }}

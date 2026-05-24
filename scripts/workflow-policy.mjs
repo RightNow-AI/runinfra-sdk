@@ -79,6 +79,8 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json";
   const strictArtifactCommand =
     "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json";
+  const pythonArtifactCleanInstallWithSdist =
+    /verify-clean-installs\.mjs[\s\S]*?--package (?:both|python)[\s\S]*?--mode artifact[\s\S]*?--python-wheel artifacts\/python-local\/runinfra-\*-py3-none-any\.whl[\s\S]*?--python-sdist artifacts\/python-local\/runinfra-\*\.tar\.gz/u;
   const promotedArtifactLayoutCommand = "node scripts/verify-promoted-artifacts.mjs artifacts";
   const downloadPromotedArtifactsAction = "uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
 
@@ -138,6 +140,12 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
       ok:
         /verify-clean-installs\.mjs --package typescript --mode artifact/u.test(publish) &&
         /verify-clean-installs\.mjs --package python --mode artifact/u.test(publish),
+    },
+    {
+      label: "Python artifact clean installs exercise wheel and sdist",
+      ok:
+        pythonArtifactCleanInstallWithSdist.test(buildArtifactsJob) &&
+        pythonArtifactCleanInstallWithSdist.test(publishPypiJob),
     },
     {
       label: "publish workflow verifies published registry installs",

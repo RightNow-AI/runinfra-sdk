@@ -210,6 +210,10 @@ The publish workflow builds the npm tarball, Python wheel, and Python sdist
 once, uploads them as `runinfra-sdk-promoted-artifacts`, runs the strict
 readiness/live promotion reports against those downloaded artifacts, and the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files. `dry_run=false` cannot bypass `promotion-gate`. Dry runs still build
 and scan the artifacts, but they do not run live canaries or publish.
+Clean artifact install/import now exercises the npm tarball, Python wheel, and
+Python sdist. The sdist path builds and imports in a separate disposable
+consumer environment, uses canonical PyPI only for build-system requirements,
+and suppresses successful pip output so local paths do not appear in logs.
 
 Before GA promotion, also run:
 ```

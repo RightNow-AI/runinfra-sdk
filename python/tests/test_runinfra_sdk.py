@@ -565,6 +565,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("The publish workflow builds the npm tarball, Python wheel, and Python sdist once", readme)
         self.assertIn("real publish runs the strict promotion gate", readme)
         self.assertIn("publishes the same downloaded artifacts", readme)
+        self.assertIn("The artifact clean-install gate imports the npm tarball, the Python wheel, and", readme)
+        self.assertIn("an sdist-built Python wheel", readme)
         self.assertIn("RUNINFRA_ASR_FIXTURE_BASE64", readme)
         self.assertIn("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64", readme)
         self.assertIn("node scripts/verify-workflow-policy.mjs", readme)
@@ -612,9 +614,15 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Then run the strict live canary matrix against the exact production gateway", readme)
         self.assertIn("candidate.sourceDigestSha256", live_canaries)
         self.assertIn("candidate.artifacts", live_canaries)
+        self.assertIn(
+            "artifact clean-install gate imports both the prebuilt Python wheel and an",
+            live_canaries,
+        )
+        self.assertIn("sdist-built wheel", live_canaries)
         self.assertIn("RUNINFRA_ASR_FIXTURE_BASE64", live_canaries)
         self.assertIn("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64", live_canaries)
         self.assertIn("`dry_run=false` cannot bypass `promotion-gate`", agent_notes)
+        self.assertIn("Clean artifact install/import now exercises the npm tarball, Python wheel, and", agent_notes)
         self.assertIn(
             "the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files",
             agent_notes,

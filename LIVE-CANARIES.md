@@ -51,8 +51,11 @@ With `--strict`, any skipped or failed row exits non-zero. Use strict mode for
 release promotion. The default `--package-source artifact` mode installs the
 packed npm tarball and Python wheel into disposable consumer environments and
 records the Python sdist digest before it starts live canaries, so strict
-reports prove every shipped artifact, not only the source checkout. Use
-`--package-source source` only for local SDK development diagnostics.
+reports prove every shipped artifact, not only the source checkout. The separate
+artifact clean-install gate imports both the prebuilt Python wheel and an
+sdist-built wheel; successful pip output is suppressed so promotion logs do not
+expose local paths. Use `--package-source source` only for local SDK development
+diagnostics.
 
 In the trusted-publish workflow, `build-artifacts` creates the npm tarball,
 Python wheel, and Python sdist once and uploads them as

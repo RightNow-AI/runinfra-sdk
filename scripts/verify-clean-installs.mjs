@@ -3,7 +3,12 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { canonicalRegistryInstallEnv, npmRegistryInstallArgs, pythonRegistryInstallArgs } from "./clean-install-policy.mjs";
+import {
+  canonicalRegistryInstallEnv,
+  npmRegistryInstallArgs,
+  pypiIndexUrl,
+  pythonRegistryInstallArgs,
+} from "./clean-install-policy.mjs";
 import { registryAvailabilityErrors, registryVersionChecks } from "./registry-version-preflight.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
@@ -87,7 +92,9 @@ function run(command, commandArgs, cwd, options = {}) {
     npm_config_fund: "false",
     PIP_DISABLE_PIP_VERSION_CHECK: "1",
   };
-  const env = mode === "registry" ? canonicalRegistryInstallEnv(childEnv) : childEnv;
+  const env = mode === "registry" || options.canonicalRegistryEnv === true
+    ? canonicalRegistryInstallEnv(childEnv)
+    : childEnv;
   const captureOutput = options.captureOutput === true;
   const result = spawnSync(command, commandArgs, {
     cwd,
@@ -104,8 +111,10 @@ function run(command, commandArgs, cwd, options = {}) {
     throw new Error(summary ? `${message}: ${summary}` : message);
   }
   if (captureOutput) {
-    if (result.stdout) process.stdout.write(result.stdout);
-    if (result.stderr) process.stderr.write(result.stderr);
+    if (options.suppressOutputOnSuccess !== true) {
+      if (result.stdout) process.stdout.write(result.stdout);
+      if (result.stderr) process.stderr.write(result.stderr);
+    }
   }
   return true;
 }
@@ -245,24 +254,18 @@ console.log("Verified npm clean install/import");
 `], npmDir, { captureOutput: true, failureMessage: "npm clean import check failed" });
 }
 
-function verifyPython(workspace) {
-  const pythonDir = join(workspace, "python-consumer");
+function verifyPythonInstall(workspace, installLabel, installArgs, options = {}) {
+  const pythonDir = join(workspace, `python-${installLabel}-consumer`);
   const venvDir = join(pythonDir, "venv");
   mkdirSync(pythonDir, { recursive: true });
   const hostPython = optionValue("--python") ?? "python";
   run(hostPython, ["-m", "venv", venvDir], pythonDir);
   const python = pythonExecutable(venvDir);
-  const installArgs = mode === "registry"
-    ? pythonRegistryInstallArgs(version)
-    : [
-        "-m",
-        "pip",
-        "install",
-        "--no-index",
-        "--no-deps",
-        resolve(optionValue("--python-wheel") ?? newestMatching("python/dist", /^runinfra-.+\.whl$/u, "Python wheel")),
-      ];
-  runRegistryInstall(python, installArgs, pythonDir, "PyPI");
+  if (mode === "registry") {
+    runRegistryInstall(python, installArgs, pythonDir, "PyPI");
+  } else {
+    run(python, installArgs, pythonDir, options);
+  }
   run(python, ["-c", `
 from runinfra import RunInfra, __version__
 if __version__ != "${version}":
@@ -290,8 +293,43 @@ if not callable(client.webhooks.construct_event):
     raise SystemExit("webhooks.construct_event missing")
 if webhook_delivery_surface_row != "webhooks.delivery_surface.absent":
     raise SystemExit("webhook delivery surface row mismatch")
-print("Verified Python clean install/import")
-`], pythonDir, { captureOutput: true, failureMessage: "Python clean import check failed" });
+print("Verified Python ${installLabel} clean install/import")
+`], pythonDir, { captureOutput: true, failureMessage: `Python ${installLabel} clean import check failed` });
+}
+
+function verifyPython(workspace) {
+  if (mode === "registry") {
+    verifyPythonInstall(workspace, "registry", pythonRegistryInstallArgs(version));
+    return;
+  }
+
+  verifyPythonInstall(workspace, "wheel", [
+    "-m",
+    "pip",
+    "install",
+    "--no-index",
+    "--no-deps",
+    resolve(optionValue("--python-wheel") ?? newestMatching("python/dist", /^runinfra-.+\.whl$/u, "Python wheel")),
+  ], {
+    captureOutput: true,
+    failureMessage: "Python wheel clean install failed",
+    suppressOutputOnSuccess: true,
+  });
+
+  verifyPythonInstall(workspace, "sdist", [
+    "-m",
+    "pip",
+    "install",
+    "--index-url",
+    pypiIndexUrl,
+    "--no-deps",
+    resolve(optionValue("--python-sdist") ?? newestMatching("python/dist", /^runinfra-.+\.tar\.gz$/u, "Python sdist")),
+  ], {
+    canonicalRegistryEnv: true,
+    captureOutput: true,
+    failureMessage: "Python sdist clean install failed",
+    suppressOutputOnSuccess: true,
+  });
 }
 
 async function preflightRegistryAvailability() {

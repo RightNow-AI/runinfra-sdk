@@ -1522,10 +1522,97 @@ class RunInfra:
 
       const output = `${result.stdout}${result.stderr}`;
       expect(result.status).toBe(1);
-      expect(output).toContain("Python clean import check failed: synthetic python import summary");
+      expect(output).toContain("Python wheel clean import check failed: synthetic python import summary");
       expect(output).not.toContain(".clean-install-tmp");
       expect(output).not.toContain("[eval");
       expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  }, 20_000);
+
+  it("fails Python artifact clean installs when the sdist cannot install", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-python-clean-install-sdist-"));
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    const pythonPackageRoot = join(tmp, "python-package");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      mkdirSync(join(pythonPackageRoot, "runinfra"), { recursive: true });
+      writeFileSync(join(pythonPackageRoot, "pyproject.toml"), `
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runinfra"
+version = "${RUNINFRA_SDK_VERSION}"
+`);
+      writeFileSync(join(pythonPackageRoot, "runinfra", "__init__.py"), `
+__version__ = "${RUNINFRA_SDK_VERSION}"
+
+def _create(*args, **kwargs):
+    return None
+
+class _Namespace:
+    pass
+
+class RunInfra:
+    def __init__(self, *args, **kwargs):
+        endpoint = _Namespace()
+        endpoint.create = _create
+        self.chat = _Namespace()
+        self.chat.completions = endpoint
+        self.responses = endpoint
+        self.embeddings = endpoint
+        images = _Namespace()
+        images.generate = _create
+        self.images = images
+        self.audio = _Namespace()
+        self.audio.speech = endpoint
+        self.audio.transcriptions = endpoint
+        self.voice = _Namespace()
+        self.voice.pipeline = endpoint
+        self.webhooks = _Namespace()
+        self.webhooks.verify_signature = _create
+        self.webhooks.construct_event = _create
+`);
+      const buildResult = spawnSync("python", [
+        "-m",
+        "build",
+        pythonPackageRoot,
+        "--wheel",
+        "--outdir",
+        tmp,
+      ], { encoding: "utf8" });
+      expect(buildResult.status, `${buildResult.stdout}${buildResult.stderr}`).toBe(0);
+
+      const wheel = join(tmp, `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`);
+      const invalidSdist = join(tmp, `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`);
+      writeFileSync(invalidSdist, "not a valid Python sdist");
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "python",
+        "--mode",
+        "artifact",
+        "--python-wheel",
+        wheel,
+        "--python-sdist",
+        invalidSdist,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(output).toContain("Python sdist clean install failed");
+      expect(output).not.toContain(tmp);
+      expect(output).not.toContain(".clean-install-tmp");
+      expect(output).not.toContain("RightNow-Full");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
       rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -1708,6 +1795,8 @@ class RunInfra:
     expect(readme).toContain("The publish workflow builds the npm tarball, Python wheel, and Python sdist once");
     expect(readme).toContain("real publish runs the strict promotion gate");
     expect(readme).toContain("publishes the same downloaded artifacts");
+    expect(readme).toContain("The artifact clean-install gate imports the npm tarball, the Python wheel, and");
+    expect(readme).toContain("an sdist-built Python wheel");
     expect(readme).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
     expect(readme).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
     expect(readme).toContain("node scripts/verify-workflow-policy.mjs");
@@ -1736,9 +1825,12 @@ class RunInfra:
     expect(liveCanaries).toContain("candidate.sourceDigestSha256");
     expect(liveCanaries).toContain("candidate.artifacts");
     expect(liveCanaries).toContain("canonical live canary matrix");
+    expect(liveCanaries).toContain("artifact clean-install gate imports both the prebuilt Python wheel and an");
+    expect(liveCanaries).toContain("sdist-built wheel");
     expect(liveCanaries).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
     expect(liveCanaries).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
     expect(agentNotes).toContain("`dry_run=false` cannot bypass `promotion-gate`");
+    expect(agentNotes).toContain("Clean artifact install/import now exercises the npm tarball, Python wheel, and");
     expect(agentNotes).toContain("the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files");
     expect(agentNotes).not.toContain("The simplified workflow doesn't run the strict gate scripts");
     expect(readme).toContain("Do not use npm or PyPI tokens");
@@ -1887,6 +1979,27 @@ class RunInfra:
       hasCustomCodeqlWorkflow: false,
     });
     expect(mutatedChecks.find((check) => check.label === "promotion gate stages every promoted artifact for strict canaries")?.ok)
+      .toBe(false);
+  });
+
+  it("requires Python artifact clean installs to exercise wheel and sdist artifacts", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
+
+    expect(checks.find((check) => check.label === "Python artifact clean installs exercise wheel and sdist")?.ok)
+      .toBe(true);
+
+    const withoutSdistCleanInstall = publish.replace(/\s+--python-sdist artifacts\/python-local\/runinfra-\*\.tar\.gz/u, "");
+    expect(withoutSdistCleanInstall).not.toBe(publish);
+
+    const mutatedChecks = evaluateWorkflowPolicy({
+      publish: withoutSdistCleanInstall,
+      ci,
+      hasCustomCodeqlWorkflow: false,
+    });
+    expect(mutatedChecks.find((check) => check.label === "Python artifact clean installs exercise wheel and sdist")?.ok)
       .toBe(false);
   });
 

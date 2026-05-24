@@ -332,6 +332,11 @@ in `build-artifacts`, uploads them as
 `promotion-gate`, `publish-npm`, and `publish-pypi`. A real publish runs the strict promotion gate before either registry job can start, then publishes the same downloaded artifacts. `dry_run=false` cannot bypass `promotion-gate`.
 Dry runs build and scan artifacts but do not run live canaries or publish.
 
+The artifact clean-install gate imports the npm tarball, the Python wheel, and
+an sdist-built Python wheel in separate disposable consumer environments. The
+sdist install uses the canonical PyPI index only for build-system requirements,
+and successful pip output is suppressed so CI logs do not expose local paths.
+
 CI canary fixtures should be scoped repository or environment secrets.
 `RUNINFRA_ASR_FIXTURE_BASE64` and
 `RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64` are decoded on the GitHub runner into
