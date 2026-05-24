@@ -905,3 +905,52 @@ Current blockers remain:
 - This closes the Python public signature gap, not full GA readiness.
 - `0.1.4` is still not published to npm/PyPI.
 - Strict live canaries still need deployed and catalog-listed embeddings, image, TTS, ASR, voice fixtures, idempotency replay proof, and the RunPipe gateway contract patch for known streaming/unsupported-parameter rows.
+
+## 2026-05-24 Agent 4 Checkpoint: Gateway Contract Patch Committed
+
+The RunPipe gateway contract fixes needed before the next production LLM canary run are now committed locally in the isolated RunPipe worktree:
+
+- Worktree: `C:\Users\jaber\RightNow-Full\RunPipe-sdk-gateway-prod-20260524`
+- Branch: `fix/sdk-gateway-contracts-prod-20260524`
+- Commit: `a28f9f2b fix: harden sdk gateway streaming contracts`
+
+What the RunPipe commit fixes:
+
+- Chat streaming no longer uses an eager metrics `tee()` branch; usage parsing and client forwarding share the downstream pull path.
+- Responses streaming now accepts compact `data:` SSE frames and no longer drains upstream from `start()`.
+- Responses stream cancellation propagates to the upstream reader.
+- Direct `/v1/responses` authenticates and rate-limits before reading/parsing the body.
+- Shared V1 rate-limit helper maps limiter outages to 503 service-unavailable errors.
+- Source digest excludes stale nested `RunPipe-sdk-bypass-tmp` checkouts.
+
+Fresh RunPipe verification for that commit before it was made:
+
+- Targeted gateway/source-digest Vitest passed: 5 files, 238 tests.
+- `pnpm typecheck` passed.
+- Targeted ESLint over changed files passed.
+- `pnpm test` passed: 423 files passed, 1 skipped; 4047 tests passed, 14 skipped.
+- `pnpm build` passed.
+- `git diff --check` passed with CRLF warnings only.
+- `pnpm verify:sdk-secret-hygiene` passed.
+- Narrow changed-file scan found no real registry tokens, DB URLs, source-map references, or private local path leaks.
+
+Fresh SDK-side no-network readiness:
+
+- `node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 26 mapped surfaces, 45 rows, 0 uncovered surfaces.
+- `node scripts/run-sdk-live-canaries.mjs --runinfra-env-file C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local --preflight --strict --report artifacts/sdk/live-canary-readiness-current.json` exited blocked without network calls: 34 ready, 11 blocked.
+
+Blocked rows remain:
+
+- `embeddings.create`
+- `openai.params.embeddings`
+- `images.generate`
+- `openai.params.images`
+- `audio.speech.create`
+- `openai.params.audio.speech`
+- `audio.speech.binary_interfaces`
+- `audio.transcriptions.create`
+- `openai.params.audio.transcriptions`
+- `voice.pipeline.create`
+- `idempotency.replay.responses`
+
+Independent read-only audit conclusion: not GA. The highest-leverage next slice is still to get the RunPipe gateway patch through the protected deploy path, then rerun strict SDK source and artifact canaries against production. Only after the LLM gateway rows are green should the work move to provisioning/cataloging the remaining multimodal targets and deterministic fixtures.
