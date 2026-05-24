@@ -1799,7 +1799,8 @@ class RunInfra:
     expect(readme).toContain("embedding input must be a non-empty string or array of non-empty strings");
     expect(readme).toContain("TTS input and image prompts must be non-empty strings");
     expect(readme).toContain("ASR file must be a Blob");
-    expect(readme).toContain("ASR multipart filenames and extra form field names and values");
+    expect(readme).toContain("ASR multipart filenames are validated");
+    expect(readme).not.toContain("ASR multipart filenames and extra form field names and values");
   });
 
   it("documents credential-shaped custom header guards", () => {
@@ -4561,6 +4562,12 @@ with open(report, "w", encoding="utf-8") as handle:
           file,
           ["bad\r\nfield"]: "value",
         }),
+      () =>
+        client.audio.transcriptions.create({
+          model: "whisper",
+          file,
+          runinfra_probe: "value",
+        } as Parameters<typeof client.audio.transcriptions.create>[0]),
       () =>
         client.audio.transcriptions.create({
           model: "whisper",

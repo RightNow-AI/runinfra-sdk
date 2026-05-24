@@ -253,6 +253,16 @@ export interface TranscriptionRequest {
   temperature?: number;
 }
 
+const TRANSCRIPTION_REQUEST_KEYS = new Set([
+  "model",
+  "file",
+  "filename",
+  "language",
+  "prompt",
+  "response_format",
+  "temperature",
+]);
+
 export interface TranscriptionResponse extends RunInfraRequestMetadata {
   text?: string;
   language?: string;
@@ -975,13 +985,6 @@ function validateMimeType(value: unknown, fallback = "audio/wav"): string {
   return validateSdkHeader(trimmed, "mimeType", 255);
 }
 
-function validateMultipartFieldName(value: string): string {
-  if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(value)) {
-    throw invalidRequestOption("multipart field names must be ASCII tokens");
-  }
-  return value;
-}
-
 function validateMultipartFilename(value: string): string {
   if (typeof value !== "string") {
     throw invalidRequestOption("filename must be a string");
@@ -1020,6 +1023,14 @@ function validateTranscriptionResponseFormat(body: { response_format?: unknown }
     throw invalidRequestOption(
       "audio transcription response_format must be json or verbose_json for native SDK typed responses",
     );
+  }
+}
+
+function validateTranscriptionRequestKeys(request: TranscriptionRequest): void {
+  for (const key of Object.keys(request as unknown as Record<string, unknown>)) {
+    if (!TRANSCRIPTION_REQUEST_KEYS.has(key)) {
+      throw invalidRequestOption(`Unknown audio transcription request field: ${key}`);
+    }
   }
 }
 
@@ -1567,6 +1578,7 @@ export class RunInfra {
       },
       transcriptions: {
         create: (request, requestOptions) => {
+          validateTranscriptionRequestKeys(request);
           validateTranscriptionResponseFormat(request);
           const formData = new FormData();
           formData.append("model", validateSdkModel(request.model));
@@ -1575,10 +1587,10 @@ export class RunInfra {
             validateBlobFile(request.file),
             validateMultipartFilename(request.filename ?? "audio.wav"),
           );
-          for (const [key, value] of Object.entries(request)) {
-            if (key === "model" || key === "file" || key === "filename") continue;
+          for (const key of ["language", "prompt", "response_format", "temperature"] as const) {
+            const value = request[key];
             if (value !== undefined && value !== null) {
-              formData.append(validateMultipartFieldName(key), validateMultipartFieldValue(value));
+              formData.append(key, validateMultipartFieldValue(value));
             }
           }
           return this.request("/audio/transcriptions", {

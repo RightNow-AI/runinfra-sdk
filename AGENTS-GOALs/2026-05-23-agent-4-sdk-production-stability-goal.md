@@ -2790,3 +2790,123 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-25 01:05 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: TypeScript ASR Multipart Field Closure
+
+Closed the remaining TypeScript ASR runtime extension gap before GA:
+
+- `TranscriptionRequest` was already a closed TypeScript interface and request-option `extraBody` was already rejected for multipart ASR.
+- Runtime multipart construction still appended any extra own property from a cast request object.
+- `client.audio.transcriptions.create()` now validates request keys against the explicit ASR field set before building `FormData`.
+- FormData now appends only explicit typed fields: `model`, `file`, `filename`, `language`, `prompt`, `response_format`, and `temperature`.
+- TypeScript README no longer documents arbitrary ASR extra form fields.
+- TypeScript changelog records the runtime ASR multipart closure.
+
+TDD evidence:
+
+- Added failing regressions first:
+  - README was still documenting ASR extra form field validation.
+  - A cast ASR request with `runinfra_probe` reached the mock fetch and resolved instead of failing before network send.
+- Implemented the explicit-key validation and explicit optional-field append.
+- Initial typecheck caught a strict cast issue in the key validator; fixed by casting through `unknown`.
+
+Fresh verification:
+
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "local request payload validation|unsafe transcription multipart"` passed: 2 selected tests, 191 skipped.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript build` passed.
+- `pnpm --dir typescript test` passed: 193 tests.
+- `python -m pytest python\tests -q` passed: 130 tests, 127 subtests.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\verify-version-sync.mjs` passed.
+
+npm artifact evidence after this change:
+
+- `pnpm --dir typescript pack` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `node scripts\verify-clean-installs.mjs --package typescript --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz` passed.
+- npm tarball SHA256: `B29DA2568D1E7F57E4084E5AE467559045C1BED3379BE6854A0820DB1809AA96`.
+- npm tarball contains only `LICENSE`, `dist/index.js`, `dist/index.d.ts`, `package.json`, `CHANGELOG.md`, and `README.md`.
+
+Strict readiness evidence:
+
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --package-source source --report artifacts\sdk\live-canary-readiness-local.json` failed closed as expected because production live-canary env is absent.
+- Readiness report status: `blocked`.
+- Summary: 19 ready rows, 30 blocked rows.
+- `rowCoverageErrors`: 0.
+- `surfaceCoverage.status`: `passed`.
+- Candidate source digest: `8eac7da5b54c56afff28b494dfc08f816be61b4c7b0ace61e0fc5557e3c287d3`.
+- Candidate source file count: 14.
+- A direct readiness-report scan for token/source-map/local-path patterns returned no matches.
+
+Registry evidence:
+
+- `npm view @runinfra/sdk version --registry https://registry.npmjs.org/` returned `0.1.3`.
+- `python -m pip index versions runinfra` returned latest `0.1.3`.
+
+Remaining blockers are unchanged:
+
+- This improves TS/Python parity and closes a runtime multipart extension path, but it does not prove live endpoint GA readiness.
+- Strict production live canaries are still blocked by missing scoped canary env/fixtures.
+- npm and PyPI latest are still `0.1.3`; local `0.1.4` still needs trusted publishing and registry install/import proof.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 01:15 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: ASR Multipart Closure Final Verification
+
+Finalized the existing uncommitted TypeScript ASR multipart field-closure checkpoint:
+
+- Confirmed the current diff is scoped to TypeScript ASR multipart runtime field closure plus TypeScript README/changelog/tests and this goal checkpoint.
+- Confirmed TypeScript README/test wording now says only ASR multipart filenames are validated, not content types or arbitrary extra form fields.
+- Rebuilt fresh local `0.1.4` TypeScript and Python artifacts after verification.
+
+Fresh verification:
+
+- `git status --short --branch` showed local `main` ahead of `origin/main` with five modified files and no staged files before commit.
+- `git diff --check` passed with Windows CRLF working-copy warnings only.
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "local request payload validation|unsafe transcription multipart"` passed: 2 selected tests, 191 skipped.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` passed: 193 tests.
+- `pnpm --dir typescript build` passed.
+- `python -m pytest python\tests -q` passed: 130 tests, 127 subtests.
+- `pnpm --dir typescript pack` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `node scripts\verify-clean-installs.mjs --package typescript --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `python -m build python` passed and produced both wheel and sdist.
+- `python scripts\verify-python-package.py python\dist` passed for the wheel and sdist.
+- `python -m twine check python\dist\*` passed for the wheel and sdist.
+- `node scripts\verify-clean-installs.mjs --package python --mode artifact --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\verify-version-sync.mjs` passed.
+
+Fresh artifact hashes:
+
+- npm tarball: `typescript\runinfra-sdk-0.1.4.tgz`
+  - SHA256 `DBFED77BB895B3235EC757867653D7DD42C975B48B4C11D222EC196246EA6E99`
+- Python wheel: `python\dist\runinfra-0.1.4-py3-none-any.whl`
+  - SHA256 `28AC3846C3FEDF13B72DF57A766C14B41D4FED522970BF8C7EC1377428387823`
+- Python sdist: `python\dist\runinfra-0.1.4.tar.gz`
+  - SHA256 `1F79E8A05E7932C4B37C43291B3B20E6291938E67EED5EFC84E62C1D05C28476`
+
+Strict readiness evidence:
+
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --package-source source --report artifacts\sdk\live-canary-readiness-local.json` failed closed as expected because production live-canary env is absent.
+- Readiness report status: `blocked`.
+- Summary: 19 ready rows, 30 blocked rows.
+- `rowCoverageErrors`: 0.
+- `surfaceCoverage.status`: `passed`.
+- Candidate source digest: `8eac7da5b54c56afff28b494dfc08f816be61b4c7b0ace61e0fc5557e3c287d3`.
+- Candidate source file count: 14.
+- Child reports: 0.
+
+Remaining blockers are unchanged:
+
+- This closes a TypeScript runtime multipart extension path, but it does not prove live endpoint GA readiness.
+- Strict production live canaries are still blocked by missing scoped canary env/fixtures.
+- npm and PyPI latest are still `0.1.3`; local `0.1.4` still needs trusted publishing and registry install/import proof.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 02:01 +03:00.
