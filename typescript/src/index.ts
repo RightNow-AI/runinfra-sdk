@@ -172,6 +172,12 @@ export interface TranscriptionResponse extends RunInfraRequestMetadata {
 export interface ImageGenerateRequest extends Record<string, unknown> {
   model: string;
   prompt: string;
+  n?: number;
+  size?: string;
+  response_format?: "url" | "b64_json" | string;
+  quality?: string;
+  style?: string;
+  user?: string;
 }
 
 export interface ImageObject extends Record<string, unknown> {

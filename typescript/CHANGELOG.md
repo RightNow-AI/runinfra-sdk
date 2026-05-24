@@ -14,6 +14,9 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   `webhooks.delivery_surface.absent`, so source, artifact, and clean-install
   gates prove the dead delivery methods are absent instead of merely
   fail-closed.
+- Added explicit TypeScript request typing for OpenAI-compatible image
+  parameters `n`, `size`, `response_format`, `quality`, `style`, and `user`,
+  matching the documented SDK surface and Python keyword parameters.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but

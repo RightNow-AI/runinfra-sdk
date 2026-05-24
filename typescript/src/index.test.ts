@@ -287,6 +287,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
     expect(liveCanaries).toContain("Optional for the base ASR row; required for the OpenAI ASR parameter row");
     expect(readme).toContain("dimension control");
+    expect(readme).toContain("Image `quality`, `style`, and `user` are typed pass-through OpenAI-style");
+    expect(readme).toContain("They are not GA-verified until a strict image canary row asserts");
     expect(readme).toContain("`encoding_format` values other than `\"float\"`");
     expect(readme).toContain("`response_format` values other than `\"json\"` or `\"verbose_json\"`");
     expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
@@ -1672,6 +1674,20 @@ class RunInfra:
     expect(pythonCanary).toContain('"openai.params.audio.transcriptions"');
     expect(pythonCanary).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
     expect(pythonCanary).toContain("response_format=response_format");
+  });
+
+  it("types TypeScript image request OpenAI-compatible parameters", () => {
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    const imageRequest = source.match(
+      /export interface ImageGenerateRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+    )?.[0];
+
+    expect(imageRequest).toContain("n?: number;");
+    expect(imageRequest).toContain("size?: string;");
+    expect(imageRequest).toContain('response_format?: "url" | "b64_json" | string;');
+    expect(imageRequest).toContain("quality?: string;");
+    expect(imageRequest).toContain("style?: string;");
+    expect(imageRequest).toContain("user?: string;");
   });
 
   it("documents local request payload validation before network sends", () => {

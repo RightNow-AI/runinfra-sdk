@@ -161,6 +161,9 @@ Live-gated native SDK subset:
   when the deployed embedding backend advertises dimension control.
 - Images: `model`, `prompt`, `n`, plus optional `size` and `response_format`
   when the deployed image backend advertises them.
+- Image `quality`, `style`, and `user` are typed pass-through OpenAI-style
+  options. They are not GA-verified until a strict image canary row asserts
+  backend support for them.
 - Audio speech: `model`, `input`, `voice` or `ref_audio` plus `ref_text`, and
   optional `task_type` and `response_format`.
 - Audio transcriptions: `model`, `file`, `filename`, optional `language`,

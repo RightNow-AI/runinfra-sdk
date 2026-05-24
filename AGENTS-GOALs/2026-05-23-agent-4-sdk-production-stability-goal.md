@@ -2364,3 +2364,45 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 23:51 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: TypeScript Image Parameter Typing
+
+Closed a TypeScript/Python SDK surface-parity gap before GA:
+
+- `ImageGenerateRequest` in the TypeScript SDK now explicitly types OpenAI-compatible image parameters `n`, `size`, `response_format`, `quality`, `style`, and `user`.
+- This matches the Python SDK's public `client.images.generate()` keyword parameters.
+- README wording stays conservative: `size` and `response_format` are covered by the current strict image parameter row, while `quality`, `style`, and `user` are typed pass-through options and are not GA-verified until a strict image canary proves backend support.
+- The TypeScript changelog records this as request-typing/API-surface parity, not live backend proof.
+
+TDD evidence:
+
+- Added a failing TypeScript regression first. It proved `ImageGenerateRequest` only exposed `model` and `prompt`.
+- Added the minimal interface fields and conservative docs/changelog updates.
+- Focused green passes:
+  - `pnpm --dir typescript exec vitest run src/index.test.ts -t "types TypeScript image request OpenAI-compatible parameters"`
+  - `pnpm --dir typescript exec vitest run src/index.test.ts -t "OpenAI-compatible parameter subset"`
+
+Fresh verification:
+
+- `pnpm --dir typescript test` passed: 187 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript build` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\verify-version-sync.mjs` passed.
+- `git diff --check` passed with only expected Windows CRLF working-copy warnings.
+
+Review status:
+
+- Read-only second-opinion subagent `019e5bc6-dcba-7312-8e56-0996382c8215` found no P0/P1/P2 blockers. It verified TS/Python image parameter parity, no live-support overclaim in docs, type-surface scope, and no package-security impact.
+- CodeRabbit CLI was still not installed locally.
+
+Remaining blockers are unchanged:
+
+- This improves OpenAI-compatible SDK parameter smoothness, but it does not prove live image GA readiness.
+- Strict production live canaries still need green evidence for image backend support, including any future `quality`, `style`, or `user` row before those fields can be called GA-verified.
+- `0.1.4` is still not published to npm/PyPI, so exact registry install/import remains blocked.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 23:59 +03:00.
