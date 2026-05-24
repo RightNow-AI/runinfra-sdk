@@ -1527,6 +1527,127 @@ class RunInfra:
     }
   });
 
+  it("rejects npm package tarballs with runtime dependencies or install hooks", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-npm-runtime-deps-"));
+    try {
+      const packageJson = JSON.parse(
+        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ) as { version: string };
+      const tarball = join(tmp, "runtime-deps-package.tar");
+      writeTarball(tarball, [
+        { name: "package/CHANGELOG.md", content: "# Changelog\n" },
+        { name: "package/LICENSE", content: "MIT\n" },
+        { name: "package/README.md", content: "# RunInfra SDK\n" },
+        { name: "package/dist/index.d.ts", content: "export declare const value: string;\n" },
+        { name: "package/dist/index.js", content: "export const value = 'ok';\n" },
+        {
+          name: "package/package.json",
+          content: JSON.stringify({
+            name: "@runinfra/sdk",
+            version: packageJson.version,
+            type: "module",
+            main: "./dist/index.js",
+            module: "./dist/index.js",
+            types: "./dist/index.d.ts",
+            exports: {
+              ".": {
+                types: "./dist/index.d.ts",
+                import: "./dist/index.js",
+                default: "./dist/index.js",
+              },
+            },
+            dependencies: { "left-pad": "1.3.0" },
+            optionalDependencies: { "debug": "4.3.7" },
+            peerDependencies: { react: "^19.0.0" },
+            bundledDependencies: ["left-pad"],
+            bundleDependencies: ["debug"],
+            scripts: {
+              build: "tsc -p tsconfig.json",
+              preinstall: "node ./dist/preinstall.js",
+              install: "node ./dist/install.js",
+              postinstall: "node ./dist/postinstall.js",
+              prepare: "node ./dist/prepare.js",
+              prepublish: "node ./dist/prepublish.js",
+              prepublishOnly: "node ./dist/prepublishOnly.js",
+            },
+          }),
+        },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-npm-package.mjs",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      expect(result.stderr).toContain("package.json dependencies must be absent or empty");
+      expect(result.stderr).toContain("package.json optionalDependencies must be absent or empty");
+      expect(result.stderr).toContain("package.json peerDependencies must be absent or empty");
+      expect(result.stderr).toContain("package.json bundledDependencies must be absent or empty");
+      expect(result.stderr).toContain("package.json bundleDependencies must be absent or empty");
+      expect(result.stderr).toContain("package.json scripts.preinstall is not allowed in published artifacts");
+      expect(result.stderr).toContain("package.json scripts.install is not allowed in published artifacts");
+      expect(result.stderr).toContain("package.json scripts.postinstall is not allowed in published artifacts");
+      expect(result.stderr).toContain("package.json scripts.prepare is not allowed in published artifacts");
+      expect(result.stderr).toContain("package.json scripts.prepublish is not allowed in published artifacts");
+      expect(result.stderr).toContain("package.json scripts.prepublishOnly is not allowed in published artifacts");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects npm package tarballs with malformed dependency metadata fields", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-npm-malformed-deps-"));
+    try {
+      const packageJson = JSON.parse(
+        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ) as { version: string };
+      const tarball = join(tmp, "malformed-deps-package.tar");
+      writeTarball(tarball, [
+        { name: "package/CHANGELOG.md", content: "# Changelog\n" },
+        { name: "package/LICENSE", content: "MIT\n" },
+        { name: "package/README.md", content: "# RunInfra SDK\n" },
+        { name: "package/dist/index.d.ts", content: "export declare const value: string;\n" },
+        { name: "package/dist/index.js", content: "export const value = 'ok';\n" },
+        {
+          name: "package/package.json",
+          content: JSON.stringify({
+            name: "@runinfra/sdk",
+            version: packageJson.version,
+            type: "module",
+            main: "./dist/index.js",
+            module: "./dist/index.js",
+            types: "./dist/index.d.ts",
+            exports: {
+              ".": {
+                types: "./dist/index.d.ts",
+                import: "./dist/index.js",
+                default: "./dist/index.js",
+              },
+            },
+            dependencies: "left-pad@1.3.0",
+          }),
+        },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-npm-package.mjs",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(1);
+      expect(result.stderr).toContain("package.json dependencies must be absent or empty");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects npm package tarballs with duplicate file entries", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-npm-duplicate-"));
     try {

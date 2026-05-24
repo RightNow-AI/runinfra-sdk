@@ -760,6 +760,56 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                         verify_archive(archive_path)
                     self.assertEqual(raised.exception.code, 1)
 
+    def test_python_package_verifier_rejects_runtime_dependencies(self):
+        verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
+        spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            wheel_path = tmp_path.joinpath(f"runinfra-{__version__}-py3-none-any.whl")
+            dist_info = f"runinfra-{__version__}.dist-info"
+            package_metadata = (
+                f"Metadata-Version: 2.4\nName: runinfra\nVersion: {__version__}\n"
+                "Requires-Dist: requests>=2\n"
+            )
+            with zipfile.ZipFile(wheel_path, "w") as wheel:
+                wheel.writestr("runinfra/__init__.py", f"__version__ = '{__version__}'\n")
+                wheel.writestr("runinfra/py.typed", "")
+                wheel.writestr(f"{dist_info}/METADATA", package_metadata)
+                wheel.writestr(f"{dist_info}/RECORD", "")
+                wheel.writestr(f"{dist_info}/WHEEL", "Wheel-Version: 1.0\n")
+                wheel.writestr(f"{dist_info}/top_level.txt", "runinfra\n")
+                wheel.writestr(f"{dist_info}/licenses/LICENSE", "MIT\n")
+
+            sdist_path = tmp_path.joinpath(f"runinfra-{__version__}.tar.gz")
+            with tarfile.open(sdist_path, "w:gz") as sdist:
+                def add_file(name, content):
+                    payload = content.encode("utf-8")
+                    member = tarfile.TarInfo(f"runinfra-{__version__}/{name}")
+                    member.size = len(payload)
+                    sdist.addfile(member, io.BytesIO(payload))
+
+                for name in verifier.SDIST_ALLOWED:
+                    if name in {"PKG-INFO", "runinfra.egg-info/PKG-INFO"}:
+                        add_file(name, package_metadata)
+                    elif name == "runinfra/__init__.py":
+                        add_file(name, f"__version__ = '{__version__}'\n")
+                    else:
+                        add_file(name, "placeholder\n")
+
+            for archive_path, verify_archive in (
+                (wheel_path, verifier.verify_wheel),
+                (sdist_path, verifier.verify_sdist),
+            ):
+                with self.subTest(archive=archive_path.name):
+                    with self.assertRaises(SystemExit) as raised:
+                        verify_archive(archive_path)
+                    self.assertEqual(raised.exception.code, 1)
+
     def test_python_package_verifier_rejects_non_regular_archive_entries(self):
         root = Path(__file__).resolve().parents[2]
         verifier_path = root.joinpath("scripts", "verify-python-package.py")

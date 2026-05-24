@@ -132,6 +132,8 @@ def core_metadata_errors(label: str, content: Optional[bytes]) -> list[str]:
         errors.append(f"{label} Name must be {EXPECTED_NAME}")
     if metadata.get("Version") != EXPECTED_VERSION:
         errors.append(f"{label} Version must be {EXPECTED_VERSION}")
+    if metadata.get_all("Requires-Dist", []):
+        errors.append(f"{label} must not declare Requires-Dist runtime dependencies")
     return errors
 
 

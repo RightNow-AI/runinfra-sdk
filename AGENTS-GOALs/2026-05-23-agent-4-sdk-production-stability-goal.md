@@ -1577,3 +1577,47 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for multimodal, idempotency replay, and remaining live endpoint rows.
 - Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+## 2026-05-24 Agent 4 Checkpoint: Zero Runtime Dependency Artifact Gate
+
+Closed another supply-chain release-gate gap before GA:
+
+- npm package verification now rejects runtime dependency metadata in `dependencies`, `optionalDependencies`, `peerDependencies`, `bundledDependencies`, and `bundleDependencies`.
+- npm package verification now rejects malformed dependency fields, including strings, numbers, booleans, or `null`; only absent fields, empty objects, or empty arrays pass.
+- npm package verification now rejects install-time lifecycle hooks in published artifacts: `preinstall`, `install`, `postinstall`, `prepare`, `prepublish`, and `prepublishOnly`.
+- Python wheel and sdist verification now reject `Requires-Dist` runtime dependency metadata in `METADATA`, `PKG-INFO`, and `runinfra.egg-info/PKG-INFO`.
+- Current `0.1.4` npm and Python artifacts still pass, preserving the zero-runtime-dependency SDK posture.
+
+TDD and review evidence:
+
+- Added a failing npm dependency/install-hook regression first; it failed because a tarball with runtime dependency fields and `postinstall` was accepted.
+- Added a failing Python `Requires-Dist` regression first; it failed because wheel and sdist metadata with runtime dependencies were accepted.
+- Second-opinion review returned `ALLOW` but noted residual narrow npm coverage and malformed dependency-field behavior.
+- Added a failing npm malformed dependency-field regression first; it failed because `dependencies` as a string was accepted.
+- Broadened npm test coverage to all guarded dependency fields and all forbidden lifecycle hooks.
+- After fail-closed dependency-field validation, targeted regressions passed.
+- Second-opinion re-check returned `ALLOW` with no blockers.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "runtime dependencies or install hooks|malformed dependency metadata fields"` passed: 2 tests passed, 163 skipped.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k runtime_dependencies` passed: 1 test passed, 124 deselected, 2 subtests passed.
+- `pnpm --dir typescript test` passed: 165 tests.
+- `python -m pytest python\tests -q` passed: 125 tests, 123 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node --check scripts\verify-npm-package.mjs` passed.
+- `python -m py_compile scripts\verify-python-package.py` passed.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist artifacts\python-local` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\verify-version-sync.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes a supply-chain artifact gate, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for multimodal, idempotency replay, and remaining live endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.

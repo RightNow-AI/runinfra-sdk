@@ -41,6 +41,21 @@ const expectedPackageMetadata = {
     },
   },
 };
+const runtimeDependencyFields = [
+  "dependencies",
+  "optionalDependencies",
+  "peerDependencies",
+  "bundledDependencies",
+  "bundleDependencies",
+];
+const forbiddenLifecycleScripts = [
+  "preinstall",
+  "install",
+  "postinstall",
+  "prepare",
+  "prepublish",
+  "prepublishOnly",
+];
 
 function patternToRegex(pattern) {
   return new RegExp(
@@ -107,6 +122,13 @@ function sameStringSet(actual, expected) {
   return actual.every((value, index) => value === expected[index]);
 }
 
+function hasEntries(value) {
+  if (value === undefined) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
 function validatePackageMetadata(content) {
   let metadata;
   try {
@@ -155,6 +177,24 @@ function validatePackageMetadata(content) {
   for (const [field, expected] of Object.entries(expectedRootExport)) {
     if (rootExport[field] !== expected) {
       errors.push(`package.json exports["."].${field} must be ${expected}`);
+    }
+  }
+
+  for (const field of runtimeDependencyFields) {
+    if (hasEntries(metadata[field])) {
+      errors.push(`package.json ${field} must be absent or empty`);
+    }
+  }
+
+  if (metadata.scripts !== undefined) {
+    if (!metadata.scripts || typeof metadata.scripts !== "object" || Array.isArray(metadata.scripts)) {
+      errors.push("package.json scripts must be an object when present");
+    } else {
+      for (const script of forbiddenLifecycleScripts) {
+        if (script in metadata.scripts) {
+          errors.push(`package.json scripts.${script} is not allowed in published artifacts`);
+        }
+      }
     }
   }
   return errors;
