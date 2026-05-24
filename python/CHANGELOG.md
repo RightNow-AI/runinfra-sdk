@@ -51,9 +51,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The 0.1.0 release went out via a CI bypass that skipped live-canary
   verification for image/TTS/ASR modalities; "Production/Stable" was
   inaccurate. PyPI listing now reflects beta state honestly.
-- **`description`**: now states "beta; LLM + embeddings tested, image/audio
-  surfaces experimental" so the registry listing accurately reflects
-  verification state.
+- **`description`**: now states "beta; LLM and embeddings contract-tested,
+  image/audio surfaces experimental" so the registry listing avoids implying
+  live multimodal GA proof.
 - **`Issues` URL**: now points at `RightNow-AI/runinfra-sdk` (the public source
   repo). Previous value pointed at the non-existent `RunPipe` slug.
 
@@ -75,7 +75,8 @@ trusted-publisher rule on PyPI. Verify the project's publisher chain at
 https://pypi.org/manage/project/runinfra/publishing/.
 
 ### Known beta gaps
-- Live-canary coverage is currently restricted to LLM + embeddings. Image,
+- Live-canary coverage is currently partial for LLM and blocked for embeddings
+  until the strict promotion artifacts include a deployed embedding target. Image,
   TTS, and ASR surfaces are runnable but not yet verified end-to-end.
 - Webhook delivery routes are not shipped; `client.webhooks.create` /
   `.list()` raise `UnsupportedOperationError`. Local signature verification

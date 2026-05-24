@@ -94,7 +94,36 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertIn('license = "LicenseRef-Proprietary"', pyproject)
         self.assertIn('license-files = ["LICENSE"]', pyproject)
+        self.assertIn("LLM and embeddings contract-tested", pyproject)
+        self.assertNotIn("LLM + embeddings tested", pyproject)
         self.assertNotIn('license = { file = "LICENSE" }', pyproject)
+
+    def test_docs_do_not_overclaim_embeddings_live_verification(self):
+        package_readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        root_readme = Path(__file__).resolve().parents[2].joinpath("README.md").read_text()
+        agent_notes = Path(__file__).resolve().parents[2].joinpath("AGENT-NOTES.md").read_text()
+        changelog = Path(__file__).resolve().parents[1].joinpath("CHANGELOG.md").read_text()
+
+        self.assertIn(
+            "| Embeddings | `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |",
+            package_readme,
+        )
+        self.assertIn(
+            "| Embeddings | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |",
+            root_readme,
+        )
+        self.assertIn(
+            "| `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |",
+            agent_notes,
+        )
+        normalized_changelog = " ".join(changelog.split())
+        self.assertIn(
+            "blocked for embeddings until the strict promotion artifacts include a deployed embedding target",
+            normalized_changelog,
+        )
+        for text in (package_readme, root_readme, agent_notes, changelog):
+            self.assertNotIn("LLM + embeddings tested", text)
+            self.assertNotIn("Live-canary coverage is currently restricted to LLM + embeddings", text)
 
     def test_readme_documents_safe_base_url_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()

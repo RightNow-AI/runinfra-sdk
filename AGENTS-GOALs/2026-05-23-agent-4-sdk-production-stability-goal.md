@@ -826,3 +826,37 @@ Interpretation:
 - The three failed rows are the known production gateway contract gaps that need the RunPipe gateway patch deployed.
 - The skipped rows still require deployed and catalog-listed embeddings, image, TTS, ASR, voice fixtures, and explicit idempotency replay evidence.
 - Do not retry paid modality provisioning blindly; previous embedding provisioning attempts failed and were cleaned up. The next modality work needs a proven template or runtime/bridge fix before inserting production catalog rows.
+
+## 2026-05-24 Agent 4 Checkpoint: Embeddings Readiness Claim Tightening
+
+Corrected SDK package metadata and handoff docs that implied embeddings were already tested at the same level as the reachable LLM path:
+
+- TypeScript and Python package descriptions now say "LLM and embeddings contract-tested" instead of "LLM + embeddings tested".
+- Root README, package READMEs, and AGENT-NOTES now say embeddings are beta and contract-tested, but not strict live-canary verified in the current promotion artifacts.
+- TypeScript and Python changelogs now state that live coverage is partial for LLM and blocked for embeddings until strict promotion artifacts include a deployed embedding target.
+- Added regression tests so the package metadata and docs cannot drift back to the overclaim while the live embedding target remains missing.
+
+Fresh targeted verification:
+
+- `pnpm --dir typescript test --run -t "overclaim embeddings|modality status|fresh dist"` passed: 3 tests passed, 133 skipped.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k "overclaim_embeddings or pyproject_uses_non_deprecated_license_metadata"` passed: 2 tests passed, 114 deselected.
+
+Fresh broader verification:
+
+- `pnpm --dir typescript test` passed: 136 tests.
+- `python -m pytest python\tests -q` passed: 116 tests plus 105 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript build` passed.
+- `python -m build python --outdir artifacts\python-local` passed.
+- `pnpm --dir typescript pack --pack-destination ..\artifacts\npm-local` passed. Tarball contents remain changelog, dist, license, package.json, and README.
+- `node scripts\verify-npm-package.mjs artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py artifacts\python-local` passed.
+- `python -m twine check artifacts\python-local\*` passed.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- Package/docs scan for the old overclaim strings returned no hits outside the new negative assertions in tests.
+
+Current blockers remain:
+
+- This closes a public-readiness claim gap, not live multimodal readiness.
+- Strict live canaries still need deployed and catalog-listed embeddings, image, TTS, ASR, voice fixtures, and explicit idempotency replay evidence.
+- RunPipe production still needs the gateway contract patch deployed before production source canaries can turn the known streaming/unsupported-parameter rows green.

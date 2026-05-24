@@ -49,10 +49,12 @@ describe("RunInfra TypeScript SDK", () => {
   it("builds fresh dist files before package publication", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-    ) as { files?: string[]; scripts?: Record<string, string> };
+    ) as { description?: string; files?: string[]; scripts?: Record<string, string> };
 
     expect(packageJson.scripts?.prepack).toBe(packageJson.scripts?.build);
     expect(packageJson.files).toEqual(expect.arrayContaining(["dist", "README.md", "package.json"]));
+    expect(packageJson.description).toContain("LLM and embeddings contract-tested");
+    expect(packageJson.description).not.toContain("LLM + embeddings tested");
   });
 
   it("documents explicit API key environment guards instead of non-null assertions", () => {
@@ -83,7 +85,23 @@ describe("RunInfra TypeScript SDK", () => {
 
     expect(readme).toContain("| Webhook delivery | Not shipped");
     expect(readme).toContain("| Voice pipeline | **Experimental**, pipeline-scoped route, not live-canary verified |");
+    expect(readme).toContain("| Embeddings | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |");
+    expect(readme).not.toContain("Chat completions, Responses, Embeddings | Beta, contract-tested");
     expect(readme).not.toContain("Webhook delivery, Voice pipeline | Not shipped");
+  });
+
+  it("does not overclaim embeddings live verification before the strict target exists", () => {
+    const packageReadme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const agentNotes = readFileSync(new URL("../../AGENT-NOTES.md", import.meta.url), "utf8");
+    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+
+    for (const text of [packageReadme, agentNotes]) {
+      expect(text).toContain("Not strict live-canary verified in the current promotion artifacts");
+      expect(text).not.toContain("| Embeddings | `client.embeddings.create` | Beta, contract-tested |");
+      expect(text).not.toContain("| `client.embeddings.create` | Beta, contract-tested |");
+    }
+    expect(changelog).toContain("blocked for embeddings until the strict promotion artifacts include a deployed embedding target");
+    expect(changelog).not.toContain("Live-canary coverage is currently restricted to LLM + embeddings");
   });
 
   it("documents voice pipeline as experimental instead of unsupported", () => {

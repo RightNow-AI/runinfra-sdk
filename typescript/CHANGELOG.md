@@ -52,7 +52,7 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 - **`license`**: `UNLICENSED` -> `LicenseRef-Proprietary` (aligns with Python SDK; the prior value was contradictory for a public package).
 - **`repository.url`**: now points at `RightNow-AI/runinfra-sdk` (the public source repo). Previous value pointed at the non-existent `RunPipe` slug.
 - **`bugs.url`**: same fix.
-- **`description`**: now states "beta; LLM + embeddings tested, image/audio surfaces experimental" so the registry listing accurately reflects verification state.
+- **`description`**: now states "beta; LLM and embeddings contract-tested, image/audio surfaces experimental" so the registry listing avoids implying live multimodal GA proof.
 
 ### Added
 - **Modality status section** in the README documenting which surfaces are
@@ -76,7 +76,7 @@ v0.1.0 was published from a local machine to bootstrap the Trusted Publisher
 configuration and does not have provenance. All v0.1.1+ releases will.
 
 ### Known beta gaps
-- Live-canary coverage is currently restricted to LLM + embeddings. Image,
+- Live-canary coverage is currently partial for LLM and blocked for embeddings until the strict promotion artifacts include a deployed embedding target. Image,
   TTS, and ASR surfaces are runnable but not yet verified end-to-end.
 - Webhook delivery routes are not shipped; `client.webhooks.create` /
   `.list()` throw `UnsupportedOperationError`. Local signature verification

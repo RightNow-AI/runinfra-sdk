@@ -115,8 +115,8 @@ and have admin bypass disabled. Main branch protection also enforces admins.
 
 | Surface | Status |
 |---|---|
-| `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested |
-| `client.embeddings.create` | Beta, contract-tested |
+| `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested. Strict live GA is still blocked until streaming final/slow-consumer rows pass against production |
+| `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |
 | `client.images.generate` | **Experimental** — HTTP envelope matches OpenAI Images API but not live-canary verified end-to-end |
 | `client.audio.speech.create` | **Experimental** — same |
 | `client.audio.transcriptions.create` | **Experimental** — same |

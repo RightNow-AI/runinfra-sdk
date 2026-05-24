@@ -69,7 +69,8 @@ See each package's own README + CHANGELOG for surface-level docs.
 
 | Surface | Status |
 |---|---|
-| Chat completions, Responses, Embeddings | Beta, contract-tested |
+| Chat completions, Responses | Beta, contract-tested. Strict live GA is still blocked until streaming final/slow-consumer rows pass against production |
+| Embeddings | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |
 | Images, Audio TTS/ASR | **Experimental**, not live-canary verified |
 | Voice pipeline | **Experimental**, pipeline-scoped route, not live-canary verified |
 | Webhook delivery | Not shipped. Local verification helpers are available in both SDKs; create/list methods are not public SDK surface |
