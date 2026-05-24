@@ -1151,6 +1151,45 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
+## 2026-05-24 Agent 4 Checkpoint: Multimodal Model Retrieve Canary Rows
+
+Expanded live model-catalog proof beyond the LLM-only retrieve row:
+
+- Added `models.retrieve.embedding`, `models.retrieve.image`, `models.retrieve.tts`, and `models.retrieve.asr`.
+- Each row is gated on `RUNINFRA_API_KEY` plus the existing modality model env var.
+- TypeScript and Python child canaries now retrieve each configured modality model, require the returned object id to match the requested id, and require `x-request-id` exposure.
+- Reports record only request IDs, never configured model IDs.
+- `LIVE-CANARIES.md` now documents that `models.list` checks configured IDs are present and `models.retrieve.*` checks each configured modality model object directly.
+
+TDD and review evidence:
+
+- Added a strict-preflight regression expecting the new modality retrieve rows. It failed before the rows were added.
+- After wiring the parent manifest, readiness rules, child canaries, and docs, the focused preflight test passed.
+- Second-opinion review returned `ALLOW` with no blocking findings.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "writes a redacted strict live-canary preflight report"` passed: 1 test, 151 skipped.
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `node --check scripts\sdk-live-canary-typescript.mjs` passed.
+- `python -m py_compile scripts\sdk-live-canary-python.py` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `pnpm --dir typescript test --run -t "verifies public SDK surface has canary row coverage|writes a redacted strict live-canary preflight report"` passed: 2 tests, 150 skipped.
+- `node scripts\run-sdk-live-canaries.mjs --package-source source --report artifacts\sdk\live-canary-source-no-env-current.json` passed in no-env mode: TypeScript 19 passed/30 skipped, Python 19 passed/30 skipped.
+- `pnpm --dir typescript test` passed: 152 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `python -m pytest python\tests -q` passed: 123 tests, 119 subtests.
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --report artifacts\sdk\live-canary-readiness-current.json` remained blocked as expected: 19 ready, 30 blocked.
+- `node scripts\run-sdk-live-canaries.mjs --package-source artifact --report artifacts\sdk\live-canary-artifact-no-env-current.json` passed in no-env mode: TypeScript 19 passed/30 skipped, Python 19 passed/30 skipped.
+- Post-run filesystem check confirmed `.canary-tmp` was absent.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This strengthens live matrix coverage but does not prove live multimodal GA readiness without configured deployed models and fixtures.
+- Strict live canaries still need green production evidence for multimodal, idempotency replay, and remaining live endpoint rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
 ## 2026-05-24 Agent 4 Checkpoint: Registry Clean-Install Preflight And Redaction
 
 Closed a registry clean-install release-gate gap before GA promotion:

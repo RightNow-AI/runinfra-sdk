@@ -577,6 +577,14 @@ function assertConfiguredModelsListed(models) {
   }
 }
 
+async function retrieveConfiguredModel(model, label) {
+  const response = await client().models.retrieve(model);
+  assertObject(response, `${label} response`);
+  if (response.id !== model) throw new Error(`${label} response id did not match requested model`);
+  assertRequestId(response._request_id, label);
+  return { requestId: response._request_id };
+}
+
 function client(options = {}) {
   return new RunInfra({
     apiKey,
@@ -905,11 +913,23 @@ await record("models.list", ["RUNINFRA_API_KEY"], async () => {
 });
 
 await record("models.retrieve.llm", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
-  const response = await client().models.retrieve(llmModel);
-  assertObject(response, "models.retrieve response");
-  if (typeof response.id !== "string") throw new Error("models.retrieve response missing id");
-  assertRequestId(response._request_id, "models.retrieve");
-  return { requestId: response._request_id };
+  return retrieveConfiguredModel(llmModel, "models.retrieve.llm");
+});
+
+await record("models.retrieve.embedding", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"], async () => {
+  return retrieveConfiguredModel(embeddingModel, "models.retrieve.embedding");
+});
+
+await record("models.retrieve.image", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], async () => {
+  return retrieveConfiguredModel(imageModel, "models.retrieve.image");
+});
+
+await record("models.retrieve.tts", ["RUNINFRA_API_KEY", "RUNINFRA_TTS_MODEL"], async () => {
+  return retrieveConfiguredModel(ttsModel, "models.retrieve.tts");
+});
+
+await record("models.retrieve.asr", ["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL"], async () => {
+  return retrieveConfiguredModel(asrModel, "models.retrieve.asr");
 });
 
 await record("chat.completions.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {

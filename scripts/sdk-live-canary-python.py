@@ -757,7 +757,11 @@ def main() -> int:
             })
 
     record("models.list", ["RUNINFRA_API_KEY"], lambda: _models_list(client()))
-    record("models.retrieve.llm", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _model_retrieve(client(), llm_model))
+    record("models.retrieve.llm", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _model_retrieve(client(), llm_model, "models.retrieve.llm"))
+    record("models.retrieve.embedding", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"], lambda: _model_retrieve(client(), embedding_model, "models.retrieve.embedding"))
+    record("models.retrieve.image", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], lambda: _model_retrieve(client(), image_model, "models.retrieve.image"))
+    record("models.retrieve.tts", ["RUNINFRA_API_KEY", "RUNINFRA_TTS_MODEL"], lambda: _model_retrieve(client(), tts_model, "models.retrieve.tts"))
+    record("models.retrieve.asr", ["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL"], lambda: _model_retrieve(client(), asr_model, "models.retrieve.asr"))
     record("chat.completions.create", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_create(client(), llm_model))
     record("openai.params.chat.completions", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_params(client(), llm_model))
     record("openai.params.chat.stream_options", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _chat_stream_options(client(), llm_model))
@@ -894,12 +898,12 @@ def assert_configured_models_listed(models: Any) -> None:
         raise AssertionError(f"models.list did not include {missing_count} configured canary model(s)")
 
 
-def _model_retrieve(client: RunInfra, model: str) -> Dict[str, Any]:
+def _model_retrieve(client: RunInfra, model: str, label: str) -> Dict[str, Any]:
     response = client.models.retrieve(model)
-    assert_object(response, "models.retrieve response")
-    if not isinstance(response.get("id"), str):
-        raise AssertionError("models.retrieve response missing id")
-    assert_request_id(response.get("_request_id"), "models.retrieve")
+    assert_object(response, f"{label} response")
+    if response.get("id") != model:
+        raise AssertionError(f"{label} response id did not match requested model")
+    assert_request_id(response.get("_request_id"), label)
     return {"requestId": response.get("_request_id")}
 
 

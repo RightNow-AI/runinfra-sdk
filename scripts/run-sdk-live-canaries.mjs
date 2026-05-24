@@ -24,6 +24,10 @@ const pyReport = resolve(tempDir, "python.json");
 const expectedRows = [
   "models.list",
   "models.retrieve.llm",
+  "models.retrieve.embedding",
+  "models.retrieve.image",
+  "models.retrieve.tts",
+  "models.retrieve.asr",
   "chat.completions.create",
   "openai.params.chat.completions",
   "openai.params.chat.stream_options",
@@ -71,7 +75,17 @@ const expectedRows = [
 
 const publicSurfaceCoverage = [
   { surface: "client.models.list", rows: ["models.list", "retry.safety.get.local"] },
-  { surface: "client.models.retrieve", rows: ["models.retrieve.llm", "error.model.not_found"] },
+  {
+    surface: "client.models.retrieve",
+    rows: [
+      "models.retrieve.llm",
+      "models.retrieve.embedding",
+      "models.retrieve.image",
+      "models.retrieve.tts",
+      "models.retrieve.asr",
+      "error.model.not_found",
+    ],
+  },
   {
     surface: "client.chat.completions.create",
     rows: [
@@ -465,6 +479,10 @@ function voiceRequirements() {
 const rowReadinessRequirements = [
   ["models.list", () => missingEnv(["RUNINFRA_API_KEY"])],
   ["models.retrieve.llm", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
+  ["models.retrieve.embedding", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])],
+  ["models.retrieve.image", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"])],
+  ["models.retrieve.tts", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_TTS_MODEL"])],
+  ["models.retrieve.asr", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_ASR_MODEL"])],
   ["chat.completions.create", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["openai.params.chat.completions", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   // Child canaries validate stream_options.include_usage without recording token counts.

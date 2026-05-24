@@ -1479,6 +1479,28 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(
         report.readiness?.rows?.find((row) => row.name === "error.model.not_found")?.missing,
       ).toEqual([]);
+      expect(report.expectedRows).toEqual(expect.arrayContaining([
+        "models.retrieve.llm",
+        "models.retrieve.embedding",
+        "models.retrieve.image",
+        "models.retrieve.tts",
+        "models.retrieve.asr",
+      ]));
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "models.retrieve.llm")?.missing,
+      ).toEqual([]);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "models.retrieve.embedding")?.missing,
+      ).toEqual(["RUNINFRA_EMBEDDING_MODEL"]);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "models.retrieve.image")?.missing,
+      ).toEqual(["RUNINFRA_IMAGE_MODEL"]);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "models.retrieve.tts")?.missing,
+      ).toEqual(["RUNINFRA_TTS_MODEL"]);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "models.retrieve.asr")?.missing,
+      ).toEqual(["RUNINFRA_ASR_MODEL"]);
       expect(report.expectedRows).toContain("openai.params.chat.stream_options");
       expect(
         report.readiness?.rows?.find((row) => row.name === "openai.params.chat.stream_options")?.missing,

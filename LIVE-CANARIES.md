@@ -105,6 +105,10 @@ The runner exercises SDK methods, not raw HTTP helpers:
 
 - `models.list`
 - `models.retrieve.llm`
+- `models.retrieve.embedding`
+- `models.retrieve.image`
+- `models.retrieve.tts`
+- `models.retrieve.asr`
 - `chat.completions.create`
 - `openai.params.chat.completions`
 - `openai.params.chat.stream_options`
@@ -152,6 +156,9 @@ The runner exercises SDK methods, not raw HTTP helpers:
 When any `RUNINFRA_*_MODEL` canary variable is configured, `models.list` must
 include every configured canary model ID before the row can pass. Reports record
 only the item count and request ID, not the configured or missing model IDs.
+The `models.retrieve.*` rows perform live object lookups for each configured
+modality model ID and require the response id to match the requested id without
+recording configured model names in reports.
 
 Network success rows assert `x-request-id` exposure and the relevant
 OpenAI-compatible envelope fields: models list object plus data array, chat
