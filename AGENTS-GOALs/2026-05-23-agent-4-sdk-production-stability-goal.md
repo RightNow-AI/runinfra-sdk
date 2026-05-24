@@ -2238,3 +2238,44 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 23:02 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Promotion Gate Rejects Readiness Coverage Drift
+
+Closed a promotion-report verification gap before GA:
+
+- `scripts/verify-promotion-reports.mjs` now requires `readiness.rowCoverageErrors` to be an empty array.
+- This prevents a stale or tampered preflight report from satisfying promotion if the parent runner detected readiness requirements drifting from the strict live-canary matrix.
+- `LIVE-CANARIES.md` now documents that promotion verification requires readiness `rowCoverageErrors` to be empty.
+
+TDD evidence:
+
+- Added a failing regression first inside the existing promotion-report verifier test. The synthetic readiness report included `rowCoverageErrors: ["readiness requirements missing strict matrix rows: images.generate"]`, but the verifier returned status `0`.
+- Implemented the minimal verifier check and updated the green-path readiness fixture to match current preflight output.
+- Focused green pass: `pnpm --dir typescript exec vitest run src/index.test.ts -t "promotion reports use the same candidate digest"` passed.
+
+Fresh verification:
+
+- `node --check scripts\verify-promotion-reports.mjs` passed.
+- Focused regression pass: `pnpm --dir typescript exec vitest run src/index.test.ts -t "promotion reports use the same candidate digest"` passed: 1 test, 181 skipped.
+- Focused docs pass after line-wrap repair: `pnpm --dir typescript exec vitest run src/index.test.ts -t "documents public-repo production promotion without stale monorepo commands"` passed: 1 test, 181 skipped.
+- `pnpm --dir typescript test` passed when run by itself: 182 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript build` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `git diff --check` passed. PowerShell printed only expected CRLF working-copy warnings.
+- Read-only second-opinion review `019e5ba7-6499-75b2-ac83-8f8a1b1cc55d` reported no blocking findings. It verified the producer writes `rowCoverageErrors`, the verifier rejects missing, non-array, or non-empty values, docs match the new gate, and this checkpoint does not claim GA.
+
+Debugging note:
+
+- An initial parallel verification run made `pnpm --dir typescript test` fail because the docs assertion could not find the contiguous phrase `canonical live canary matrix`, and the existing Python sdist clean-install failure test timed out under parallel load. The docs wrap was repaired. The clean-install test passed in isolation in 14 seconds and the full TypeScript suite passed when rerun by itself.
+
+Remaining blockers are unchanged:
+
+- This makes promotion evidence stricter, but it does not prove live SDK GA readiness.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and all required live endpoint rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 23:17 +03:00.

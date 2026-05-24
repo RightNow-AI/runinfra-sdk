@@ -259,6 +259,9 @@ function readinessErrors(report) {
   if (!Array.isArray(report?.readiness?.missing) || report.readiness.missing.length !== 0) {
     reportErrors.push("readiness report missing list must be empty");
   }
+  if (!Array.isArray(report?.readiness?.rowCoverageErrors) || report.readiness.rowCoverageErrors.length !== 0) {
+    reportErrors.push("readiness report row coverage errors must be empty");
+  }
   const rows = arrayOrEmpty(report?.readiness?.rows);
   const rowNames = rows.map((row) => row?.name);
   reportErrors.push(...rowNameErrors("readiness row", rowNames));

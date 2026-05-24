@@ -465,6 +465,7 @@ describe("RunInfra TypeScript SDK", () => {
       readiness: {
         status: "ready",
         missing: [],
+        rowCoverageErrors: [],
         rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
       },
       surfaceCoverage,
@@ -551,6 +552,7 @@ describe("RunInfra TypeScript SDK", () => {
       readiness: {
         status: "ready",
         missing: [],
+        rowCoverageErrors: [],
         rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
       },
       surfaceCoverage,
@@ -631,6 +633,7 @@ describe("RunInfra TypeScript SDK", () => {
       readiness: {
         status: "ready",
         missing: [],
+        rowCoverageErrors: [],
         rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
       },
       surfaceCoverage,
@@ -818,6 +821,7 @@ describe("RunInfra TypeScript SDK", () => {
       readiness: {
         status: "ready",
         missing: [],
+        rowCoverageErrors: [],
         rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
       },
       surfaceCoverage,
@@ -864,6 +868,33 @@ describe("RunInfra TypeScript SDK", () => {
       });
       expect(success.status).toBe(0);
       expect(success.stdout).toContain(`Verified promotion reports for SDK ${RUNINFRA_SDK_VERSION}`);
+
+      writeFileSync(readinessPath, `${JSON.stringify({
+        ...readiness,
+        readiness: {
+          ...readiness.readiness,
+          rowCoverageErrors: ["readiness requirements missing strict matrix rows: images.generate"],
+        },
+      }, null, 2)}\n`);
+      const staleReadinessCoverage = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(staleReadinessCoverage.status).toBe(1);
+      expect(`${staleReadinessCoverage.stdout}${staleReadinessCoverage.stderr}`).toContain(
+        "readiness report row coverage errors must be empty",
+      );
+      expect(readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8"))
+        .toContain("requires readiness\n`rowCoverageErrors` to be empty");
+
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
 
       writeFileSync(livePath, `${JSON.stringify({
         ...live,
