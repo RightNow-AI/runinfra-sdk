@@ -22,6 +22,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   at runtime.
 - Added explicit TypeScript request typing for auxiliary embedding and audio
   parameters `user`, `speed`, and `temperature`, matching the Python SDK.
+- Closed TypeScript request body interfaces around typed fields and added
+  `extraBody` request options for deliberate JSON body extensions.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but

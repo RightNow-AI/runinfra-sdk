@@ -2575,3 +2575,52 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-25 00:23 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: TypeScript Closed Request Bodies And ExtraBody Escape Hatch
+
+Closed a TypeScript/Python contract drift before GA:
+
+- TypeScript public JSON request interfaces no longer extend `Record<string, unknown>`.
+- `RunInfraRequestOptions.extraBody` is now the explicit TypeScript escape hatch for deliberate JSON body extensions, matching Python's `extra_body` posture.
+- `extraBody` is validated before network send:
+  - it must be a plain object.
+  - keys must be non-empty strings.
+  - it cannot override typed request fields, including typed fields omitted from the current request object.
+  - it can only be used with JSON body requests, not multipart ASR, raw voice-pipeline audio, or other non-JSON requests.
+- The TypeScript unsupported-parameter live canary now sends its probe through `extraBody` instead of relying on an open request interface.
+- TypeScript README and changelog now document the closed request interface plus explicit extension posture.
+
+TDD and review evidence:
+
+- Added failing tests first:
+  - source/docs/canary assertion proved request interfaces were still open records and `extraBody` was undocumented.
+  - runtime assertion proved `extraBody` was rejected as an unknown option.
+- Implemented `extraBody`, closed the interfaces, and confirmed the focused regressions passed.
+- Second-opinion review then found a P1: `extraBody` blocked only keys present in the current payload, so omitted typed fields such as `stream` and `encoding_format` could bypass validation.
+- Added a failing regression for omitted typed-field overrides.
+- Fixed the P1 by passing full per-endpoint typed key sets into JSON body merging.
+- Re-ran focused regressions and re-review; reviewers `019e5be4-344c-7501-91c8-37482b5ec7b0` and `019e5be4-2282-7c51-a64d-15fc23b1395e` found no remaining P0/P1/P2 blockers.
+
+Fresh verification:
+
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "keeps TypeScript request bodies closed and documents explicit extraBody extensions"` passed.
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "uses extraBody as the explicit JSON body escape hatch and blocks typed overrides"` passed.
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "rejects extraBody keys for omitted typed request fields before sending"` passed.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test` passed: 192 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript build` passed.
+- `node --check scripts\sdk-live-canary-typescript.mjs` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\verify-version-sync.mjs` passed.
+- `git diff --check` passed with only expected Windows CRLF working-copy warnings.
+
+Remaining blockers are unchanged:
+
+- This improves TypeScript/Python request-extension parity and unsupported-parameter canary correctness, but it does not prove live endpoint GA readiness.
+- Strict production live canaries are still blocked by missing scoped canary env/fixtures.
+- npm and PyPI latest are still `0.1.3`; local `0.1.4` still needs trusted publishing and registry install/import proof.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 00:29 +03:00.

@@ -21,6 +21,7 @@ export interface RunInfraRequestOptions {
   maxRetries?: number;
   retryBaseMs?: number;
   headers?: Record<string, string>;
+  extraBody?: Record<string, unknown>;
 }
 
 export interface ChatMessage {
@@ -30,7 +31,7 @@ export interface ChatMessage {
   tool_call_id?: string;
 }
 
-export interface ChatCompletionRequest extends Record<string, unknown> {
+export interface ChatCompletionRequest {
   model: string;
   messages: ChatMessage[];
   stream?: boolean;
@@ -51,6 +52,28 @@ export interface ChatCompletionRequest extends Record<string, unknown> {
   logprobs?: boolean;
   top_logprobs?: number;
 }
+
+const CHAT_COMPLETION_REQUEST_KEYS = new Set([
+  "model",
+  "messages",
+  "stream",
+  "temperature",
+  "top_p",
+  "max_tokens",
+  "max_completion_tokens",
+  "stop",
+  "presence_penalty",
+  "frequency_penalty",
+  "user",
+  "metadata",
+  "stream_options",
+  "tools",
+  "tool_choice",
+  "response_format",
+  "seed",
+  "logprobs",
+  "top_logprobs",
+]);
 
 export interface ChatCompletionStreamEvent extends Record<string, unknown> {
   choices?: Array<
@@ -101,7 +124,7 @@ export interface ChatCompletionsCreate {
  * The gateway maps supported fields onto chat completions and rewraps the
  * result; this is not a full stateful OpenAI Responses implementation.
  */
-export interface ResponsesCreateRequest extends Record<string, unknown> {
+export interface ResponsesCreateRequest {
   model: string;
   input: string | Array<Record<string, unknown>>;
   instructions?: string;
@@ -119,6 +142,25 @@ export interface ResponsesCreateRequest extends Record<string, unknown> {
   previous_response_id?: string;
   user?: string;
 }
+
+const RESPONSES_CREATE_REQUEST_KEYS = new Set([
+  "model",
+  "input",
+  "instructions",
+  "max_output_tokens",
+  "stream",
+  "temperature",
+  "top_p",
+  "metadata",
+  "store",
+  "include",
+  "reasoning",
+  "tools",
+  "tool_choice",
+  "response_format",
+  "previous_response_id",
+  "user",
+]);
 
 export interface ResponsesStreamEvent extends Record<string, unknown> {
   type?: string;
@@ -150,13 +192,21 @@ export interface ResponsesCreate {
   ): Promise<ResponsesCreateResponse | RunInfraStream<ResponsesStreamEvent>>;
 }
 
-export interface EmbeddingRequest extends Record<string, unknown> {
+export interface EmbeddingRequest {
   model: string;
   input: string | string[];
   encoding_format?: "float" | string;
   dimensions?: number;
   user?: string;
 }
+
+const EMBEDDING_REQUEST_KEYS = new Set([
+  "model",
+  "input",
+  "encoding_format",
+  "dimensions",
+  "user",
+]);
 
 export interface EmbeddingObject extends Record<string, unknown> {
   object?: string;
@@ -171,7 +221,7 @@ export interface EmbeddingResponse extends RunInfraRequestMetadata {
   usage?: Record<string, unknown>;
 }
 
-export interface SpeechRequest extends Record<string, unknown> {
+export interface SpeechRequest {
   model: string;
   input: string;
   voice?: string;
@@ -182,7 +232,18 @@ export interface SpeechRequest extends Record<string, unknown> {
   speed?: number;
 }
 
-export interface TranscriptionRequest extends Record<string, unknown> {
+const SPEECH_REQUEST_KEYS = new Set([
+  "model",
+  "input",
+  "voice",
+  "ref_audio",
+  "ref_text",
+  "task_type",
+  "response_format",
+  "speed",
+]);
+
+export interface TranscriptionRequest {
   model: string;
   file: Blob;
   filename?: string;
@@ -199,7 +260,7 @@ export interface TranscriptionResponse extends RunInfraRequestMetadata {
   segments?: Array<Record<string, unknown>>;
 }
 
-export interface ImageGenerateRequest extends Record<string, unknown> {
+export interface ImageGenerateRequest {
   model: string;
   prompt: string;
   n?: number;
@@ -209,6 +270,17 @@ export interface ImageGenerateRequest extends Record<string, unknown> {
   style?: string;
   user?: string;
 }
+
+const IMAGE_GENERATE_REQUEST_KEYS = new Set([
+  "model",
+  "prompt",
+  "n",
+  "size",
+  "response_format",
+  "quality",
+  "style",
+  "user",
+]);
 
 export interface ImageObject extends Record<string, unknown> {
   url?: string;
@@ -639,6 +711,7 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
 interface RequestOptions {
   method?: "GET" | "POST";
   body?: unknown;
+  typedBodyKeys?: ReadonlySet<string>;
   rawBody?: BodyInit;
   rawContentType?: string;
   accept?: string;
@@ -937,7 +1010,7 @@ function validateMultipartFieldValue(value: unknown): string {
   return String(value);
 }
 
-function validateTranscriptionResponseFormat(body: Record<string, unknown>): void {
+function validateTranscriptionResponseFormat(body: { response_format?: unknown }): void {
   const responseFormat = body.response_format;
   if (
     responseFormat !== undefined &&
@@ -987,6 +1060,31 @@ function sanitizeJsonValue(value: unknown, seen = new WeakSet<object>()): unknow
 
 function encodeJsonBody(payload: unknown): string {
   return JSON.stringify(sanitizeJsonValue(payload));
+}
+
+function mergeExtraJsonBody(
+  payload: unknown,
+  extraBody: unknown,
+  typedKeys: ReadonlySet<string> = new Set(),
+): unknown {
+  if (extraBody === undefined) return payload;
+  if (!isPlainRecord(extraBody)) {
+    throw invalidRequestOption("extraBody must be an object");
+  }
+  if (!isPlainRecord(payload)) {
+    throw invalidRequestOption("extraBody can only be used with JSON object request bodies");
+  }
+  const merged = { ...payload };
+  for (const [key, value] of Object.entries(extraBody)) {
+    if (!key.trim()) {
+      throw invalidRequestOption("extraBody keys must be non-empty strings");
+    }
+    if (typedKeys.has(key) || key in payload) {
+      throw invalidRequestOption(`extraBody must not override typed request field: ${key}`);
+    }
+    merged[key] = value;
+  }
+  return merged;
 }
 
 function invalidRequestOption(message: string): RunInfraError {
@@ -1090,6 +1188,7 @@ const REQUEST_OPTION_KEYS = new Set([
   "maxRetries",
   "retryBaseMs",
   "headers",
+  "extraBody",
 ]);
 
 function validateRequestOptions(requestOptions: unknown): RunInfraRequestOptions {
@@ -1417,6 +1516,7 @@ export class RunInfra {
       return this.request("/chat/completions", {
         method: "POST",
         body,
+        typedBodyKeys: CHAT_COMPLETION_REQUEST_KEYS,
         stream: body.stream === true,
       }, requestOptions);
     }) as ChatCompletionsCreate;
@@ -1434,6 +1534,7 @@ export class RunInfra {
         return this.request("/embeddings", {
           method: "POST",
           body,
+          typedBodyKeys: EMBEDDING_REQUEST_KEYS,
         }, requestOptions);
       },
     };
@@ -1444,6 +1545,7 @@ export class RunInfra {
         return this.request("/responses", {
           method: "POST",
           body,
+          typedBodyKeys: RESPONSES_CREATE_REQUEST_KEYS,
           stream: body.stream === true,
         }, requestOptions);
       }) as ResponsesCreate,
@@ -1457,6 +1559,7 @@ export class RunInfra {
           const response = await this.rawRequest("/audio/speech", {
             method: "POST",
             body,
+            typedBodyKeys: SPEECH_REQUEST_KEYS,
             binary: true,
           }, requestOptions);
           return new RunInfraAudioResponse(response, this.requestTimeoutMs(requestOptions));
@@ -1501,6 +1604,7 @@ export class RunInfra {
         return this.request("/images/generations", {
           method: "POST",
           body,
+          typedBodyKeys: IMAGE_GENERATE_REQUEST_KEYS,
         }, requestOptions);
       },
     };
@@ -1594,14 +1698,28 @@ export class RunInfra {
 
     let body: BodyInit | undefined;
     if (options.formData) {
+      if (validatedRequestOptions.extraBody !== undefined) {
+        throw invalidRequestOption("extraBody can only be used with JSON request bodies");
+      }
       body = options.formData;
     } else if (options.rawBody !== undefined) {
+      if (validatedRequestOptions.extraBody !== undefined) {
+        throw invalidRequestOption("extraBody can only be used with JSON request bodies");
+      }
       body = options.rawBody;
       headers["Content-Type"] = options.rawContentType ?? "application/octet-stream";
       if (options.accept) headers.Accept = options.accept;
     } else if (options.body !== undefined) {
       headers["Content-Type"] = "application/json";
-      body = encodeJsonBody(options.body);
+      body = encodeJsonBody(
+        mergeExtraJsonBody(
+          options.body,
+          validatedRequestOptions.extraBody,
+          options.typedBodyKeys,
+        ),
+      );
+    } else if (validatedRequestOptions.extraBody !== undefined) {
+      throw invalidRequestOption("extraBody can only be used with JSON request bodies");
     }
 
     let attempt = 0;

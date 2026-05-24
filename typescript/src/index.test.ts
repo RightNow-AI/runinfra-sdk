@@ -1679,7 +1679,7 @@ class RunInfra:
   it("types TypeScript image request OpenAI-compatible parameters", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const imageRequest = source.match(
-      /export interface ImageGenerateRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+      /export interface ImageGenerateRequest \{[\s\S]*?\n\}/u,
     )?.[0];
 
     expect(imageRequest).toContain("n?: number;");
@@ -1694,10 +1694,10 @@ class RunInfra:
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
     const chatRequest = source.match(
-      /export interface ChatCompletionRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+      /export interface ChatCompletionRequest \{[\s\S]*?\n\}/u,
     )?.[0];
     const responsesRequest = source.match(
-      /export interface ResponsesCreateRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+      /export interface ResponsesCreateRequest \{[\s\S]*?\n\}/u,
     )?.[0];
 
     for (const field of [
@@ -1745,13 +1745,13 @@ class RunInfra:
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
     const embeddingRequest = source.match(
-      /export interface EmbeddingRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+      /export interface EmbeddingRequest \{[\s\S]*?\n\}/u,
     )?.[0];
     const speechRequest = source.match(
-      /export interface SpeechRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+      /export interface SpeechRequest \{[\s\S]*?\n\}/u,
     )?.[0];
     const transcriptionRequest = source.match(
-      /export interface TranscriptionRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+      /export interface TranscriptionRequest \{[\s\S]*?\n\}/u,
     )?.[0];
 
     expect(embeddingRequest).toContain("user?: string;");
@@ -1759,6 +1759,31 @@ class RunInfra:
     expect(transcriptionRequest).toContain("temperature?: number;");
     expect(readme).toContain("Embedding `user`, TTS `speed`, and ASR `temperature` are typed pass-through");
     expect(readme).toMatch(/not GA-verified until strict modality canaries\s+assert backend support/u);
+  });
+
+  it("keeps TypeScript request bodies closed and documents explicit extraBody extensions", () => {
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+
+    for (const interfaceName of [
+      "ChatCompletionRequest",
+      "ResponsesCreateRequest",
+      "EmbeddingRequest",
+      "SpeechRequest",
+      "TranscriptionRequest",
+      "ImageGenerateRequest",
+    ]) {
+      expect(source).not.toContain(`export interface ${interfaceName} extends Record<string, unknown>`);
+      expect(source).toContain(`export interface ${interfaceName} {`);
+    }
+
+    expect(source).toContain("extraBody?: Record<string, unknown>;");
+    expect(readme).toContain("TypeScript request interfaces are closed around typed fields");
+    expect(readme).toContain("Use `extraBody` in request options for deliberate JSON body extensions");
+    expect(readme).toContain("`extraBody` cannot override typed request fields");
+    expect(typescriptCanary).toContain("extraBody: {");
+    expect(typescriptCanary).toContain("runinfra_unsupported_parameter_probe");
   });
 
   it("documents local request payload validation before network sends", () => {
@@ -4648,6 +4673,92 @@ with open(report, "w", encoding="utf-8") as handle:
       }),
     );
     expect(init.body).toBe('{"model":"llama-3.1-8b","input":"Hi"}');
+  });
+
+  it("uses extraBody as the explicit JSON body escape hatch and blocks typed overrides", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({ object: "response", output_text: "hi" }));
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+    });
+
+    await client.responses.create(
+      {
+        model: "llama-3.1-8b",
+        input: "Hi",
+      },
+      {
+        extraBody: {
+          runinfra_unsupported_parameter_probe: "must_error",
+        },
+      },
+    );
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect((fetcher.mock.calls[0]?.[1] as RequestInit).body).toBe(
+      '{"model":"llama-3.1-8b","input":"Hi","runinfra_unsupported_parameter_probe":"must_error"}',
+    );
+
+    await expect(
+      client.responses.create(
+        {
+          model: "llama-3.1-8b",
+          input: "Hi",
+        },
+        {
+          extraBody: {
+            model: "other",
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "extraBody must not override typed request field: model",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects extraBody keys for omitted typed request fields before sending", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({ object: "response", output_text: "hi" }));
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+    });
+
+    await expect(
+      client.responses.create(
+        {
+          model: "llama-3.1-8b",
+          input: "Hi",
+        },
+        {
+          extraBody: {
+            stream: true,
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "extraBody must not override typed request field: stream",
+    });
+
+    await expect(
+      client.embeddings.create(
+        {
+          model: "bge-m3",
+          input: "Hi",
+        },
+        {
+          extraBody: {
+            encoding_format: "base64",
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "extraBody must not override typed request field: encoding_format",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("rejects blank client request ids and idempotency keys before sending", async () => {

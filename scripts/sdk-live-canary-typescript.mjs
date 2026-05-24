@@ -1443,12 +1443,18 @@ await record("error.request.invalid_options", [], async () => {
 
 await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
   try {
-    await client().responses.create({
-      model: llmModel,
-      input: "Reply with the single word ok.",
-      max_output_tokens: 1,
-      runinfra_unsupported_parameter_probe: "must_error",
-    });
+    await client().responses.create(
+      {
+        model: llmModel,
+        input: "Reply with the single word ok.",
+        max_output_tokens: 1,
+      },
+      {
+        extraBody: {
+          runinfra_unsupported_parameter_probe: "must_error",
+        },
+      },
+    );
   } catch (error) {
     return assertClearUnsupportedParameterError(error, "unsupported body parameter");
   }
