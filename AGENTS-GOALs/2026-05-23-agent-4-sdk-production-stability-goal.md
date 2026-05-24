@@ -2406,3 +2406,43 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 23:59 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: TypeScript LLM Parameter Typing
+
+Closed another TypeScript/Python SDK surface-parity gap before GA:
+
+- `ChatCompletionRequest` now explicitly types OpenAI-style chat parameters already supported as runtime pass-throughs: `temperature`, `top_p`, `max_tokens`, `max_completion_tokens`, `stop`, `presence_penalty`, `frequency_penalty`, `user`, `metadata`, `stream_options`, `tools`, `tool_choice`, `response_format`, `seed`, `logprobs`, and `top_logprobs`.
+- `ResponsesCreateRequest` now explicitly types adapter parameters already exposed by Python: `temperature`, `top_p`, `metadata`, `store`, `include`, `reasoning`, `tools`, `tool_choice`, `response_format`, `previous_response_id`, and `user`.
+- Runtime behavior is unchanged. These fields were already forwarded because the TS request interfaces extend `Record<string, unknown>`.
+- README wording stays conservative: LLM pass-through options are typed for parity and OpenAI-style request-shape smoothness, but are not GA-verified until strict canary rows assert backend support for each behavior.
+
+TDD evidence:
+
+- Added a failing TypeScript regression first. It proved the exported `ChatCompletionRequest` and `ResponsesCreateRequest` interfaces omitted the explicit LLM parameter fields and docs did not state the typed pass-through guardrail.
+- Added the minimal interface fields plus README/changelog wording.
+- Focused green pass: `pnpm --dir typescript exec vitest run src/index.test.ts -t "types TypeScript LLM request OpenAI-compatible parameters"` passed.
+
+Fresh verification:
+
+- `pnpm --dir typescript test` passed: 188 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript build` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\verify-version-sync.mjs` passed.
+- `git diff --check` passed with only expected Windows CRLF working-copy warnings.
+
+Review status:
+
+- Read-only second-opinion subagent `019e5bcd-f27c-7240-8a64-8c3a7d77a2bb` found no P0/P1/P2 blockers. It checked TS/Python parity, unchanged runtime forwarding, no live-support overclaim, docs compatibility with unsupported-parameter language, and test suitability for this declaration-surface checkpoint.
+- CodeRabbit CLI was still not installed locally.
+
+Remaining blockers are unchanged:
+
+- This improves OpenAI-compatible SDK parameter smoothness, but it does not prove live LLM or Responses GA readiness.
+- Strict production live canaries still need green evidence for every LLM/Responses pass-through behavior before those behaviors can be called GA-verified.
+- `0.1.4` is still not published to npm/PyPI, so exact registry install/import remains blocked.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 00:04 +03:00.

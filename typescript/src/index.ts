@@ -34,6 +34,22 @@ export interface ChatCompletionRequest extends Record<string, unknown> {
   model: string;
   messages: ChatMessage[];
   stream?: boolean;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  max_completion_tokens?: number;
+  stop?: string | string[];
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  user?: string;
+  metadata?: Record<string, unknown>;
+  stream_options?: { include_usage?: boolean } & Record<string, unknown>;
+  tools?: Array<Record<string, unknown>>;
+  tool_choice?: string | Record<string, unknown>;
+  response_format?: Record<string, unknown>;
+  seed?: number;
+  logprobs?: boolean;
+  top_logprobs?: number;
 }
 
 export interface ChatCompletionStreamEvent extends Record<string, unknown> {
@@ -91,6 +107,17 @@ export interface ResponsesCreateRequest extends Record<string, unknown> {
   instructions?: string;
   max_output_tokens?: number;
   stream?: boolean;
+  temperature?: number;
+  top_p?: number;
+  metadata?: Record<string, unknown>;
+  store?: boolean;
+  include?: string[];
+  reasoning?: Record<string, unknown>;
+  tools?: Array<Record<string, unknown>>;
+  tool_choice?: string | Record<string, unknown>;
+  response_format?: Record<string, unknown>;
+  previous_response_id?: string;
+  user?: string;
 }
 
 export interface ResponsesStreamEvent extends Record<string, unknown> {

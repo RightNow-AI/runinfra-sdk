@@ -181,6 +181,9 @@ locally because they would not match the typed native SDK response objects.
 Unsupported OpenAI-style body parameters must fail with a clear traced 4xx
 gateway error before GA.
 
+LLM pass-through options are typed for parity with the TypeScript SDK and
+OpenAI-style request shapes, but are not GA-verified until strict canary rows assert backend support for each behavior.
+
 ## Text to speech
 
 TTS deployments can expose named voices or Base/reference-audio voice cloning.

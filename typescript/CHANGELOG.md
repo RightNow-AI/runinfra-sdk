@@ -17,6 +17,9 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 - Added explicit TypeScript request typing for OpenAI-compatible image
   parameters `n`, `size`, `response_format`, `quality`, `style`, and `user`,
   matching the documented SDK surface and Python keyword parameters.
+- Added explicit TypeScript request typing for OpenAI-style chat completions
+  and Responses adapter parameters that were already pass-through compatible
+  at runtime.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but

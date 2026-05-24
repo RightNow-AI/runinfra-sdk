@@ -1690,6 +1690,57 @@ class RunInfra:
     expect(imageRequest).toContain("user?: string;");
   });
 
+  it("types TypeScript LLM request OpenAI-compatible parameters", () => {
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const chatRequest = source.match(
+      /export interface ChatCompletionRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+    )?.[0];
+    const responsesRequest = source.match(
+      /export interface ResponsesCreateRequest extends Record<string, unknown> \{[\s\S]*?\n\}/u,
+    )?.[0];
+
+    for (const field of [
+      "temperature?: number;",
+      "top_p?: number;",
+      "max_tokens?: number;",
+      "max_completion_tokens?: number;",
+      "stop?: string | string[];",
+      "presence_penalty?: number;",
+      "frequency_penalty?: number;",
+      "user?: string;",
+      "metadata?: Record<string, unknown>;",
+      "stream_options?: { include_usage?: boolean } & Record<string, unknown>;",
+      "tools?: Array<Record<string, unknown>>;",
+      "tool_choice?: string | Record<string, unknown>;",
+      "response_format?: Record<string, unknown>;",
+      "seed?: number;",
+      "logprobs?: boolean;",
+      "top_logprobs?: number;",
+    ]) {
+      expect(chatRequest).toContain(field);
+    }
+
+    for (const field of [
+      "temperature?: number;",
+      "top_p?: number;",
+      "metadata?: Record<string, unknown>;",
+      "store?: boolean;",
+      "include?: string[];",
+      "reasoning?: Record<string, unknown>;",
+      "tools?: Array<Record<string, unknown>>;",
+      "tool_choice?: string | Record<string, unknown>;",
+      "response_format?: Record<string, unknown>;",
+      "previous_response_id?: string;",
+      "user?: string;",
+    ]) {
+      expect(responsesRequest).toContain(field);
+    }
+
+    expect(readme).toContain("LLM pass-through options are typed for parity");
+    expect(readme).toContain("not GA-verified until strict canary rows assert backend support");
+  });
+
   it("documents local request payload validation before network sends", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
