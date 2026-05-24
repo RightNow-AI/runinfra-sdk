@@ -865,6 +865,33 @@ describe("RunInfra TypeScript SDK", () => {
       expect(success.status).toBe(0);
       expect(success.stdout).toContain(`Verified promotion reports for SDK ${RUNINFRA_SDK_VERSION}`);
 
+      writeFileSync(livePath, `${JSON.stringify({
+        ...live,
+        candidate: {
+          ...live.candidate,
+          artifacts: liveArtifacts.map((artifact) =>
+            artifact.name === "pythonSdist"
+              ? { ...artifact, fileName: "runinfra-0.0.0.tar.gz" }
+              : artifact,
+          ),
+        },
+      }, null, 2)}\n`);
+      const staleSdistFileName = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(staleSdistFileName.status).toBe(1);
+      expect(`${staleSdistFileName.stdout}${staleSdistFileName.stderr}`).toContain(
+        `candidate artifact pythonSdist fileName must be runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`,
+      );
+
       for (const diagnostic of [
         "failed loading /root/private/secret-project/config.json",
         "failed loading /workspace/private/secret-project/config.json",

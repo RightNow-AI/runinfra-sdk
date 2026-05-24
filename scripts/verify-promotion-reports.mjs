@@ -174,6 +174,11 @@ function candidateErrors(label, report, options) {
 
 function artifactCandidateErrors(label, candidate) {
   const reportErrors = [];
+  const expectedArtifactFileNames = new Map([
+    ["npm", `runinfra-sdk-${expectedSdkVersion}.tgz`],
+    ["pythonWheel", `runinfra-${expectedSdkVersion}-py3-none-any.whl`],
+    ["pythonSdist", `runinfra-${expectedSdkVersion}.tar.gz`],
+  ]);
   if (candidate.artifactDigestsChecked !== true) {
     reportErrors.push(`${label} artifactDigestsChecked must be true`);
   }
@@ -195,6 +200,10 @@ function artifactCandidateErrors(label, candidate) {
     }
     if (/[\\/]/u.test(artifact.fileName)) {
       reportErrors.push(`${label} candidate artifact fileName must not contain path separators`);
+    }
+    const expectedFileName = expectedArtifactFileNames.get(artifact?.name);
+    if (expectedFileName && artifact.fileName !== expectedFileName) {
+      reportErrors.push(`${label} candidate artifact ${artifact.name} fileName must be ${expectedFileName}`);
     }
     if (!isSha256(artifact?.sha256)) {
       reportErrors.push(`${label} candidate artifact ${artifact.fileName} sha256 must be a SHA-256 hex digest`);

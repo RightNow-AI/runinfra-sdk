@@ -121,8 +121,9 @@ Every preflight and full report includes `candidate.sourceDigestSha256` plus
 the SDK version and package source so release reviewers can prove which source
 state generated the canary evidence without recording local paths. Full
 `--package-source artifact` reports also set `candidate.artifactDigestsChecked`
-and record only package file names plus SHA-256 values in `candidate.artifacts`;
-preflight reports do not require built artifacts and leave that list empty.
+and record only exact versioned package file names plus SHA-256 values in
+`candidate.artifacts`; preflight reports do not require built artifacts and
+leave that list empty.
 `verify-promotion-reports.mjs` is the release gate that compares the readiness
 and live reports, requires the same candidate source digest, requires the live
 artifact report to include npm, Python wheel, and Python sdist hashes, and

@@ -2070,3 +2070,48 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 22:13 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Exact Promotion Artifact Filenames
+
+Closed another promotion-report integrity gap before GA:
+
+- `scripts/verify-promotion-reports.mjs` now binds each live `candidate.artifacts` entry to the exact versioned artifact filename for the SDK version:
+  - `npm` must be `runinfra-sdk-<version>.tgz`.
+  - `pythonWheel` must be `runinfra-<version>-py3-none-any.whl`.
+  - `pythonSdist` must be `runinfra-<version>.tar.gz`.
+- Existing path-separator and SHA-256 digest checks still apply.
+- README and `LIVE-CANARIES.md` now state that promotion reports record exact versioned artifact filenames plus digests.
+
+TDD evidence:
+
+- Added a failing regression inside the promotion report verifier test. It changed only the live `pythonSdist` filename to `runinfra-0.0.0.tar.gz`; the verifier incorrectly accepted it with exit 0.
+- Implemented exact filename validation in the verifier.
+- Focused green pass: `pnpm --dir typescript test --run -t "promotion reports use the same candidate digest"` passed.
+
+Fresh verification:
+
+- `pnpm --dir typescript test` passed: 179 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node --check scripts\verify-promotion-reports.mjs` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- Local artifact-mode probe confirmed the current artifact report filenames are `runinfra-sdk-0.1.4.tgz`, `runinfra-0.1.4-py3-none-any.whl`, and `runinfra-0.1.4.tar.gz`.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist` passed for the wheel and sdist.
+- `python -m twine check python\dist\*` passed for the wheel and sdist.
+- `git diff --check` passed with only Windows CRLF normalization warnings.
+
+Review status:
+
+- Read-only second-opinion review `019e5b6b-a6b7-7112-81c1-6dfa0bec140d` reported no P0/P1/P2 findings.
+- The reviewer also ran the focused promotion-report test successfully.
+
+Remaining blockers are unchanged:
+
+- This closes a local promotion-report integrity gap, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and all required live endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 22:19 +03:00.
