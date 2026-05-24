@@ -1910,3 +1910,40 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 21:34 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Canonical Source File Count Gate
+
+Closed another local promotion-evidence integrity gap before GA:
+
+- Added `scripts/live-canary-source-files.mjs` as the side-effect-free canonical manifest for live-canary source digest labels.
+- `scripts/run-sdk-live-canaries.mjs` now derives source digest file paths from that manifest, keeping the digest source set in one place.
+- The source digest manifest includes itself, so future source-set changes move canary source identity.
+- `scripts/verify-promotion-reports.mjs` now requires `candidate.sourceFileCount` to match the canonical live-canary source manifest count, not merely be positive and self-consistent between readiness/live reports.
+- The valid promotion-report fixture now uses the manifest count, so the success path tracks the current canonical source set.
+- LIVE-CANARIES now documents that stale candidate source file counts cannot satisfy the promotion gate.
+
+TDD evidence:
+
+- Added a failing TypeScript regression first; it failed because a readiness/live report pair with matching `sourceFileCount: 1` was accepted with status `0`.
+- Implemented the minimal shared manifest and verifier count check.
+- Updated the source-digest tests to assert the manifest contents and runner import instead of duplicating path literals.
+- Focused green pass: `pnpm --dir typescript test --run -t "stale candidate source file counts|promotion reports use the same candidate digest|source manifest|source digests"` passed 8 selected tests.
+
+Fresh verification:
+
+- `node --check scripts\live-canary-source-files.mjs`, `node --check scripts\run-sdk-live-canaries.mjs`, and `node --check scripts\verify-promotion-reports.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 coverage surfaces, 49 rows, no uncovered surfaces, and no uncovered rows.
+- `pnpm --dir typescript test` passed: 177 tests.
+- `python -m pytest python\tests -q` passed: 127 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed with only CRLF normalization warnings.
+- Independent read-only code review returned no Critical or Important findings and assessed the patch as ready to commit. Minor note only: older negative promotion fixtures still hardcode stale source counts, but they still assert their intended error messages.
+
+Remaining blockers are unchanged:
+
+- This closes another local promotion-evidence integrity gap, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and remaining endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 21:46 +03:00.

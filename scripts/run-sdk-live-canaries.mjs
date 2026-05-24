@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, st
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expectedRows } from "./live-canary-matrix.mjs";
+import { sourceDigestFileLabels } from "./live-canary-source-files.mjs";
 import { publicSurfaceCoverage } from "./live-canary-surface-coverage.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
@@ -25,20 +26,7 @@ const tempDir = join(tempRoot, `${Date.now()}-${process.pid}`);
 const tsReport = resolve(tempDir, "typescript.json");
 const pyReport = resolve(tempDir, "python.json");
 let resolvedArtifactCandidate;
-const sourceDigestFiles = [
-  ["typescript/package.json", join(repositoryRoot, "typescript", "package.json")],
-  ["typescript/src/index.ts", join(repositoryRoot, "typescript", "src", "index.ts")],
-  ["python/pyproject.toml", join(repositoryRoot, "python", "pyproject.toml")],
-  ["python/runinfra/__init__.py", join(repositoryRoot, "python", "runinfra", "__init__.py")],
-  ["scripts/run-sdk-live-canaries.mjs", join(repositoryRoot, "scripts", "run-sdk-live-canaries.mjs")],
-  ["scripts/canary-report-base-url.mjs", join(repositoryRoot, "scripts", "canary-report-base-url.mjs")],
-  ["scripts/live-canary-matrix.mjs", join(repositoryRoot, "scripts", "live-canary-matrix.mjs")],
-  ["scripts/live-canary-surface-coverage.mjs", join(repositoryRoot, "scripts", "live-canary-surface-coverage.mjs")],
-  ["scripts/secret-scan-policy.mjs", join(repositoryRoot, "scripts", "secret-scan-policy.mjs")],
-  ["scripts/sdk-live-canary-typescript.mjs", join(repositoryRoot, "scripts", "sdk-live-canary-typescript.mjs")],
-  ["scripts/sdk-live-canary-python.py", join(repositoryRoot, "scripts", "sdk-live-canary-python.py")],
-  ["LIVE-CANARIES.md", join(repositoryRoot, "LIVE-CANARIES.md")],
-];
+const sourceDigestFiles = sourceDigestFileLabels.map((label) => [label, join(repositoryRoot, ...label.split("/"))]);
 
 function optionValueFrom(values, name) {
   const exact = values.find((arg) => arg.startsWith(`${name}=`));

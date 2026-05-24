@@ -24,7 +24,10 @@ a row outside the strict matrix. It also fails if a canonical strict matrix row
 is not attached to any public surface coverage entry.
 `verify-promotion-reports.mjs` also requires the report's listed coverage
 surfaces and counts to match the canonical public surface coverage manifest, so
-a shortened or stale surface manifest cannot satisfy the release gate.
+a shortened or stale surface manifest cannot satisfy the release gate. It also
+requires `candidate.sourceFileCount` to match the canonical live-canary source
+file manifest, so a self-consistent stale report pair cannot reuse old source
+identity metadata after the canary source set changes.
 
 `--preflight` is a no-network readiness check. It writes the same redacted
 environment status plus row-by-row missing inputs, then fails in strict mode
@@ -125,10 +128,11 @@ and live reports, requires the same candidate source digest, requires the live
 artifact report to include npm and Python wheel hashes, and fails if either
 language has skipped or failed rows. It also requires `expectedRows` to match
 the canonical live canary matrix exactly, so a shortened self-consistent report
-cannot satisfy the gate. Promotion evidence must come from strict child canaries
-against `https://api.runinfra.ai/v1`; reports generated with any other custom
-`RUNINFRA_BASE_URL` are useful for staging smoke tests but cannot satisfy the
-real publish gate.
+cannot satisfy the gate. The report's candidate source file count must also
+match the canonical live-canary source file manifest. Promotion evidence must
+come from strict child canaries against `https://api.runinfra.ai/v1`; reports
+generated with any other custom `RUNINFRA_BASE_URL` are useful for staging
+smoke tests but cannot satisfy the real publish gate.
 
 ## Matrix Rows
 

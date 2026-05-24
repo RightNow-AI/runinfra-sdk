@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { productionBaseURL } from "./canary-report-base-url.mjs";
 import { expectedRows as canonicalExpectedRows } from "./live-canary-matrix.mjs";
+import { sourceDigestFileLabels as canonicalSourceDigestFileLabels } from "./live-canary-source-files.mjs";
 import { publicSurfaceCoverage as canonicalPublicSurfaceCoverage } from "./live-canary-surface-coverage.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
@@ -9,6 +10,7 @@ const readinessPath = optionValue("--readiness") ?? "artifacts/sdk/live-canary-r
 const livePath = optionValue("--live") ?? "artifacts/sdk/live-canary.json";
 const expectedSdkVersion = readExpectedSdkVersion();
 const canonicalSurfaceCoverageSurfaces = canonicalPublicSurfaceCoverage.map((entry) => entry.surface);
+const canonicalSourceFileCount = canonicalSourceDigestFileLabels.length;
 const errors = [];
 
 const readiness = readReport(readinessPath, "readiness report");
@@ -154,6 +156,8 @@ function candidateErrors(label, report, options) {
   }
   if (!Number.isInteger(candidate.sourceFileCount) || candidate.sourceFileCount <= 0) {
     reportErrors.push(`${label} candidate sourceFileCount must be a positive integer`);
+  } else if (candidate.sourceFileCount !== canonicalSourceFileCount) {
+    reportErrors.push(`${label} candidate sourceFileCount must match the canonical live canary source file count (${canonicalSourceFileCount})`);
   }
   if (options.artifactDigests === "required") {
     reportErrors.push(...artifactCandidateErrors(label, candidate));

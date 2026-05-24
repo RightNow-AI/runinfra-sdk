@@ -1,0 +1,15 @@
+export const sourceDigestFileLabels = [
+  "typescript/package.json",
+  "typescript/src/index.ts",
+  "python/pyproject.toml",
+  "python/runinfra/__init__.py",
+  "scripts/run-sdk-live-canaries.mjs",
+  "scripts/canary-report-base-url.mjs",
+  "scripts/live-canary-matrix.mjs",
+  "scripts/live-canary-surface-coverage.mjs",
+  "scripts/live-canary-source-files.mjs",
+  "scripts/secret-scan-policy.mjs",
+  "scripts/sdk-live-canary-typescript.mjs",
+  "scripts/sdk-live-canary-python.py",
+  "LIVE-CANARIES.md",
+];
