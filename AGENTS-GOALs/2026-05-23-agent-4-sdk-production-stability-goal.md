@@ -2624,3 +2624,64 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-25 00:29 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: Post-ExtraBody Artifact And Readiness Refresh
+
+Refreshed local package and readiness evidence after the TypeScript closed-request-body and `extraBody` checkpoint changed the package source.
+
+Fresh install/build evidence:
+
+- `pnpm --dir typescript install --frozen-lockfile` passed. The existing pnpm warning for ignored `esbuild@0.25.12` build scripts remained unchanged.
+- `python -m pip install -r python\requirements-dev.txt` passed with pinned build/test/check tooling already installed.
+- `pnpm --dir typescript pack` passed and rebuilt TypeScript `dist` through `prepack`.
+- `python -m build python` passed and produced both wheel and sdist.
+
+Artifact hashes:
+
+- npm tarball: `typescript\runinfra-sdk-0.1.4.tgz`
+  - SHA256 `C7A8ED07066DE318CF0035FDF198B4AB15EDB43181AC4332AE2C1403393677BC`
+- Python wheel: `python\dist\runinfra-0.1.4-py3-none-any.whl`
+  - SHA256 `14A142251D7AA866DD6BAC7C041E3B1E285A15E5A023CBB069689C0052B5FAC5`
+- Python sdist: `python\dist\runinfra-0.1.4.tar.gz`
+  - SHA256 `DC63708CBD4B6D24D0125A3345492F47004C2A0C32A07562E80B10C7497D94F1`
+
+Package scanner and install evidence:
+
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py python\dist` passed for the wheel and sdist.
+- `python -m twine check python\dist\*` passed for the wheel and sdist.
+- `node scripts\verify-clean-installs.mjs --package both --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz` passed:
+  - npm clean install/import verified.
+  - Python wheel clean install/import verified.
+  - Python sdist clean install/import verified.
+
+Observed package file lists:
+
+- npm tarball contains only `LICENSE`, `dist/index.js`, `dist/index.d.ts`, `package.json`, `CHANGELOG.md`, and `README.md`.
+- Python wheel contains only package metadata, license metadata, `runinfra/__init__.py`, and `runinfra/py.typed`.
+- Python sdist contains package metadata/docs/license, `MANIFEST.in`, `pyproject.toml`, `setup.cfg`, `runinfra/__init__.py`, `runinfra/py.typed`, and egg-info metadata.
+
+Strict readiness evidence:
+
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --package-source source --report artifacts\sdk\live-canary-readiness-local.json` failed closed as expected because production live-canary env is absent.
+- Readiness report status: `blocked`.
+- Summary: 19 ready rows, 30 blocked rows.
+- `rowCoverageErrors`: 0.
+- `surfaceCoverage.status`: `passed`.
+- Candidate source digest: `940f830852fd1747920f17a0f7780f0d38ede2da8b46e97dd09401f91cf8b4d2`.
+- Candidate source file count: 14.
+- A direct readiness-report scan for token/source-map/local-path patterns returned no matches.
+
+Registry evidence:
+
+- `npm view @runinfra/sdk version --registry https://registry.npmjs.org/` returned `0.1.3`.
+- `python -m pip index versions runinfra` returned latest `0.1.3`.
+- Therefore exact registry clean install/import for local `0.1.4` is still impossible until trusted publishing releases `0.1.4`.
+
+Remaining blockers are unchanged:
+
+- Do not call SDK GA: strict production live canaries are still blocked by missing scoped canary env/fixtures.
+- Do not claim published `0.1.4`: npm and PyPI latest are still `0.1.3`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 00:58 +03:00.
