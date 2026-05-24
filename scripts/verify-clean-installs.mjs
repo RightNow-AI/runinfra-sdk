@@ -8,6 +8,7 @@ import {
   npmRegistryInstallArgs,
   pypiIndexUrl,
   pythonRegistryInstallArgs,
+  pythonRegistrySourceInstallArgs,
 } from "./clean-install-policy.mjs";
 import { registryAvailabilityErrors, registryVersionChecks } from "./registry-version-preflight.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
@@ -149,14 +150,14 @@ function safeFailureSummary(candidate) {
   return summary;
 }
 
-function runRegistryInstall(command, commandArgs, cwd, label) {
+function runRegistryInstall(command, commandArgs, cwd, label, options = {}) {
   if (mode !== "registry") {
-    run(command, commandArgs, cwd);
+    run(command, commandArgs, cwd, options);
     return;
   }
   for (let attempt = 1; attempt <= registryInstallAttempts; attempt += 1) {
     const isLastAttempt = attempt === registryInstallAttempts;
-    const ok = run(command, commandArgs, cwd, { allowFailure: !isLastAttempt });
+    const ok = run(command, commandArgs, cwd, { ...options, allowFailure: !isLastAttempt });
     if (ok) {
       return;
     }
@@ -262,7 +263,7 @@ function verifyPythonInstall(workspace, installLabel, installArgs, options = {})
   run(hostPython, ["-m", "venv", venvDir], pythonDir);
   const python = pythonExecutable(venvDir);
   if (mode === "registry") {
-    runRegistryInstall(python, installArgs, pythonDir, "PyPI");
+    runRegistryInstall(python, installArgs, pythonDir, "PyPI", options);
   } else {
     run(python, installArgs, pythonDir, options);
   }
@@ -299,7 +300,16 @@ print("Verified Python ${installLabel} clean install/import")
 
 function verifyPython(workspace) {
   if (mode === "registry") {
-    verifyPythonInstall(workspace, "registry", pythonRegistryInstallArgs(version));
+    verifyPythonInstall(workspace, "registry", pythonRegistryInstallArgs(version), {
+      captureOutput: true,
+      failureMessage: "Python registry clean install failed",
+      suppressOutputOnSuccess: true,
+    });
+    verifyPythonInstall(workspace, "registry-sdist", pythonRegistrySourceInstallArgs(version), {
+      captureOutput: true,
+      failureMessage: "Python registry sdist clean install failed",
+      suppressOutputOnSuccess: true,
+    });
     return;
   }
 

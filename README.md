@@ -110,6 +110,8 @@ Verify registry install/import for an exact release:
 ```bash
 node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>
 ```
+For PyPI, registry mode verifies both the default install and a forced
+`runinfra` source/sdist install from the canonical PyPI index.
 
 Check strict live-canary readiness without exposing env values:
 ```bash

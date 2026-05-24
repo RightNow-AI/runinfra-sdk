@@ -35,3 +35,17 @@ export function pythonRegistryInstallArgs(version) {
     `runinfra==${version}`,
   ];
 }
+
+export function pythonRegistrySourceInstallArgs(version) {
+  return [
+    "-m",
+    "pip",
+    "install",
+    "--index-url",
+    pypiIndexUrl,
+    "--no-deps",
+    "--no-binary",
+    "runinfra",
+    `runinfra==${version}`,
+  ];
+}

@@ -2159,3 +2159,42 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 22:47 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: PyPI Registry Sdist Install Gate
+
+Closed a post-publish registry verification gap before GA:
+
+- `scripts/clean-install-policy.mjs` now exposes `pythonRegistrySourceInstallArgs(version)` for a canonical PyPI install that forces `runinfra` from source/sdist with `--no-binary runinfra`.
+- `scripts/verify-clean-installs.mjs --package python --mode registry --version <version>` now verifies two PyPI consumer environments after publish:
+  - default PyPI install/import.
+  - forced PyPI source/sdist install/import.
+- Registry-mode Python pip output is captured and suppressed on success so clean publish logs do not expose local temporary paths.
+- README files now state that PyPI registry verification covers both default and forced source/sdist installs.
+
+TDD evidence:
+
+- Added a failing regression first in the TypeScript suite. It failed because `pythonRegistrySourceInstallArgs` did not exist and the clean-install verifier did not call a `registry-sdist` Python install.
+- Implemented the minimal policy helper and verifier call, then confirmed the focused regression passed.
+
+Fresh verification:
+
+- `pnpm --dir typescript exec vitest run src/index.test.ts -t "pins registry clean-install checks"` passed: 1 selected test.
+- `node --check scripts\clean-install-policy.mjs` passed.
+- `node --check scripts\verify-clean-installs.mjs` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `pnpm --dir typescript test` passed: 181 tests.
+- `python -m pytest python\tests -q` passed: 129 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\verify-clean-installs.mjs --package both --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz` passed.
+- `git diff --check` passed with only Windows CRLF normalization warnings.
+- Read-only second-opinion review `019e5b8e-8130-7bf1-b8af-8ac39eaae0ef` reported no P0/P1/P2 findings. Residual risk: the exact PyPI registry source gate remains unproven for `0.1.4` until that version is published.
+
+Remaining blockers are unchanged:
+
+- This strengthens post-publish PyPI registry evidence, but it does not prove live SDK GA readiness.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and all required live endpoint rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 22:54 +03:00.

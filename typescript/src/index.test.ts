@@ -2174,7 +2174,7 @@ class RunInfra:
   });
 
   it("pins registry clean-install checks to canonical npm and PyPI indexes", async () => {
-    const { canonicalRegistryInstallEnv, npmRegistryInstallArgs, pythonRegistryInstallArgs } =
+    const { canonicalRegistryInstallEnv, npmRegistryInstallArgs, pythonRegistryInstallArgs, pythonRegistrySourceInstallArgs } =
       await import("../../scripts/clean-install-policy.mjs");
     const env = canonicalRegistryInstallEnv({
       npm_config_registry: "http://127.0.0.1:9/",
@@ -2195,12 +2195,30 @@ class RunInfra:
       "--no-deps",
       "runinfra==0.1.3",
     ]);
+    expect(pythonRegistrySourceInstallArgs("0.1.3")).toEqual([
+      "-m",
+      "pip",
+      "install",
+      "--index-url",
+      "https://pypi.org/simple",
+      "--no-deps",
+      "--no-binary",
+      "runinfra",
+      "runinfra==0.1.3",
+    ]);
     expect(env.npm_config_registry).toBe("https://registry.npmjs.org/");
     expect(env.NPM_CONFIG_REGISTRY).toBe("https://registry.npmjs.org/");
     expect(env.PIP_INDEX_URL).toBe("https://pypi.org/simple");
     expect(env.PIP_EXTRA_INDEX_URL).toBe("");
     expect("PIP_NO_INDEX" in env).toBe(false);
     expect("PIP_FIND_LINKS" in env).toBe(false);
+
+    const cleanInstallVerifier = readFileSync(
+      new URL("../../scripts/verify-clean-installs.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(cleanInstallVerifier).toContain("pythonRegistrySourceInstallArgs(version)");
+    expect(cleanInstallVerifier).toContain('verifyPythonInstall(workspace, "registry-sdist"');
   });
 
   it("blocks broader credential and local-path families in release scanners", async () => {

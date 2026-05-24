@@ -389,7 +389,9 @@ publishing is the only supported publish path.
 
 A real publish must also prove registry install/import of the exact released
 version. The publish workflow runs per-package registry checks after each
-successful publish; for manual post-publish verification:
+successful publish. For PyPI, registry mode verifies both the default install
+and a forced `runinfra` source/sdist install from the canonical PyPI index.
+For manual post-publish verification:
 
 ```bash
 node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>
