@@ -17,6 +17,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Replaced arbitrary `**kwargs` on public request helpers with explicit
   OpenAI-style keyword parameters plus an `extra_body` mapping for deliberate
   gateway compatibility probes.
+- Limited `extra_body` to JSON body helpers; multipart ASR uses explicit typed
+  parameters only, matching the TypeScript SDK's extension posture.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but

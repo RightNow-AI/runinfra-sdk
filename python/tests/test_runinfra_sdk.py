@@ -313,7 +313,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("embedding input must be a non-empty string or array of non-empty strings", readme)
         self.assertIn("TTS input and image prompts must be non-empty strings", readme)
         self.assertIn("ASR file must be bytes or bytearray", readme)
-        self.assertIn("ASR multipart filenames, content types, and extra form field names and values", readme)
+        self.assertIn("ASR multipart filenames and content types", readme)
+        self.assertIn("`extra_body` is only accepted on JSON body helpers", readme)
 
     def test_readme_documents_credential_shaped_custom_header_guards(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -1109,6 +1110,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertEqual(len(transport.calls), 0)
 
+    def test_extra_body_is_not_exposed_on_multipart_asr(self):
+        signature = inspect.signature(RunInfra(api_key="sk-ri-test").audio.transcriptions.create)
+
+        self.assertNotIn("extra_body", signature.parameters)
+
     def test_pipeline_chat_uses_openai_compatible_path(self):
         transport = RecordingTransport(json_response({"choices": []}))
         client = RunInfra(
@@ -1881,7 +1887,6 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         cases = [
             {"filename": 'clip"\r\nX-Bad: 1.wav'},
             {"content_type": "audio/wav\r\nX-Bad: 1"},
-            {"extra_body": {"bad\r\nfield": "value"}},
             {"temperature": {"value": 0}},
             {"prompt": ["bad"]},
             {"temperature": math.nan},

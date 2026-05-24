@@ -1365,18 +1365,16 @@ class _Transcriptions:
         response_format: Optional[str] = None,
         temperature: Optional[float] = None,
         request_options: Optional[Mapping[str, Any]] = None,
-        extra_body: Optional[Mapping[str, object]] = None,
     ) -> TranscriptionResponse:
-        payload = _json_payload_with_extra(
-            {
-                "model": _validated_model(model),
-                "language": language,
-                "prompt": prompt,
-                "response_format": response_format,
-                "temperature": temperature,
-            },
-            extra_body,
-        )
+        payload: Dict[str, object] = {"model": _validated_model(model)}
+        for key, value in {
+            "language": language,
+            "prompt": prompt,
+            "response_format": response_format,
+            "temperature": temperature,
+        }.items():
+            if value is not None:
+                payload[key] = value
         _validate_transcription_response_format(payload)
         fields = {key: _validated_multipart_field_value(value) for key, value in payload.items()}
         body, multipart_type = _multipart_body(

@@ -2726,3 +2726,67 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-25 01:01 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: Python ExtraBody ASR Surface Parity
+
+Closed a TypeScript/Python request-extension parity gap before GA:
+
+- Python `client.audio.transcriptions.create()` no longer exposes `extra_body`.
+- Python `extra_body` is now documented as JSON-body-helper only, matching TypeScript `extraBody`.
+- Multipart ASR now uses explicit typed parameters only: `model`, `file`, `filename`, `content_type`, `language`, `prompt`, `response_format`, `temperature`, and `request_options`.
+- Python changelog records that multipart ASR no longer accepts the generic extension mapping.
+
+TDD and debugging evidence:
+
+- Added failing regressions first:
+  - README did not state that `extra_body` is JSON-body-helper only.
+  - ASR multipart signature still exposed `extra_body`.
+- Initial implementation used a non-existent compact-payload helper. Full Python tests caught it with `NameError`; root cause was replacing `_json_payload_with_extra()` with a helper that did not exist. Fixed by building the ASR payload locally from typed fields.
+- Updated the older unsafe-multipart-metadata test to stop treating `extra_body` as a valid ASR keyword; the absence of `extra_body` is now covered by a dedicated signature test.
+
+Fresh verification:
+
+- `python -m pytest python\tests -q -k "extra_body or local_request_payload_validation or transcription"` passed: 6 tests and 6 subtests.
+- `python -m pytest python\tests -q -k "non_blank_idempotency_key_requirements"` passed.
+- `python -m pytest python\tests -q` passed: 130 tests, 127 subtests.
+- `python -m build python` passed and produced both wheel and sdist.
+- `python scripts\verify-python-package.py python\dist` passed for the wheel and sdist.
+- `python -m twine check python\dist\*` passed for the wheel and sdist.
+- `node scripts\verify-clean-installs.mjs --package python --mode artifact --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz` passed:
+  - Python wheel clean install/import verified.
+  - Python sdist clean install/import verified.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\verify-version-sync.mjs` passed.
+
+Python artifact hashes after this change:
+
+- Python wheel: `python\dist\runinfra-0.1.4-py3-none-any.whl`
+  - SHA256 `327D5795817B8BDCC079E038857649083AD32A6B8370B9099A4F8EA78274C621`
+- Python sdist: `python\dist\runinfra-0.1.4.tar.gz`
+  - SHA256 `3CB7C94A3AAEF4B5146F70BB8FCE16DAEA8210CB73C6119FCD3BE1E623C344F8`
+
+Strict readiness evidence:
+
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --package-source source --report artifacts\sdk\live-canary-readiness-local.json` failed closed as expected because production live-canary env is absent.
+- Readiness report status: `blocked`.
+- Summary: 19 ready rows, 30 blocked rows.
+- `rowCoverageErrors`: 0.
+- `surfaceCoverage.status`: `passed`.
+- Candidate source digest: `b09ab25617c7fc62ac8ca4ef8ade7b69403daa9ac29068bf99f097e19581a595`.
+- Candidate source file count: 14.
+- A direct readiness-report scan for token/source-map/local-path patterns returned no matches.
+
+Registry evidence:
+
+- `npm view @runinfra/sdk version --registry https://registry.npmjs.org/` returned `0.1.3`.
+- `python -m pip index versions runinfra` returned latest `0.1.3`.
+
+Remaining blockers are unchanged:
+
+- This improves TS/Python parity and reduces the multipart ASR extension surface, but it does not prove live endpoint GA readiness.
+- Strict production live canaries are still blocked by missing scoped canary env/fixtures.
+- npm and PyPI latest are still `0.1.3`; local `0.1.4` still needs trusted publishing and registry install/import proof.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-25 01:05 +03:00.
