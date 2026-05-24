@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -80,7 +81,7 @@ function tarHeader(entry: TarEntry): Buffer {
   return header;
 }
 
-function writeTarball(path: string, entries: TarEntry[]): void {
+function tarballBuffer(entries: TarEntry[]): Buffer {
   const blocks: Buffer[] = [];
   for (const entry of entries) {
     const payload = Buffer.from(entry.content ?? "", "utf8");
@@ -92,7 +93,15 @@ function writeTarball(path: string, entries: TarEntry[]): void {
     }
   }
   blocks.push(Buffer.alloc(1024, 0));
-  writeFileSync(path, Buffer.concat(blocks));
+  return Buffer.concat(blocks);
+}
+
+function writeTarball(path: string, entries: TarEntry[]): void {
+  writeFileSync(path, tarballBuffer(entries));
+}
+
+function writeGzippedTarball(path: string, entries: TarEntry[]): void {
+  writeFileSync(path, gzipSync(tarballBuffer(entries)));
 }
 
 describe("RunInfra TypeScript SDK", () => {
@@ -360,6 +369,402 @@ describe("RunInfra TypeScript SDK", () => {
     expect(cleanInstallVerifier).toContain('hasattr(client.webhooks, "create")');
     expect(cleanInstallVerifier).toContain('hasattr(client.webhooks, "list")');
   });
+
+  it("preflights registry clean installs against both exact package versions", async () => {
+    const preflight = await import("../../scripts/registry-version-preflight.mjs") as {
+      registryVersionChecks: (version: string, packageSelection: "both" | "typescript" | "python") => Array<{
+        label: string;
+        packageName: string;
+        version: string;
+        url: string;
+      }>;
+      registryAvailabilityErrors: (
+        checks: Array<{ label: string; packageName: string; version: string; url: string }>,
+        packageExists: (url: string) => Promise<boolean>,
+      ) => Promise<string[]>;
+    };
+
+    const checks = preflight.registryVersionChecks("0.1.4", "both");
+    expect(checks).toEqual([
+      {
+        label: "npm",
+        packageName: "@runinfra/sdk",
+        version: "0.1.4",
+        url: "https://registry.npmjs.org/%40runinfra%2Fsdk/0.1.4",
+      },
+      {
+        label: "PyPI",
+        packageName: "runinfra",
+        version: "0.1.4",
+        url: "https://pypi.org/pypi/runinfra/0.1.4/json",
+      },
+    ]);
+
+    await expect(preflight.registryAvailabilityErrors(checks, async (url) => !url.includes("pypi"))).resolves.toEqual([
+      "PyPI package runinfra==0.1.4 is not available from the canonical registry.",
+    ]);
+    await expect(preflight.registryAvailabilityErrors(checks, async () => false)).resolves.toEqual([
+      "npm package @runinfra/sdk@0.1.4 is not available from the canonical registry.",
+      "PyPI package runinfra==0.1.4 is not available from the canonical registry.",
+    ]);
+    expect(preflight.registryVersionChecks("0.1.4", "typescript").map((check) => check.label)).toEqual(["npm"]);
+    expect(preflight.registryVersionChecks("0.1.4", "python").map((check) => check.label)).toEqual(["PyPI"]);
+  });
+
+  it("fails registry clean-install CLI preflight before creating workspaces", () => {
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "both",
+        "--mode",
+        "registry",
+        "--version",
+        "0.0.0-runinfra-missing",
+        "--registry-attempts",
+        "1",
+        "--registry-retry-delay-ms",
+        "1",
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(output).toContain("Registry version preflight failed:");
+      expect(output).toContain(
+        "npm package @runinfra/sdk@0.0.0-runinfra-missing is not available from the canonical registry.",
+      );
+      expect(output).toContain(
+        "PyPI package runinfra==0.0.0-runinfra-missing is not available from the canonical registry.",
+      );
+      expect(output).not.toContain("npm error");
+      expect(output).not.toContain("registry install attempt");
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it("removes clean-install workspaces when artifact verification fails after workspace creation", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-clean-install-failure-"));
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "typescript",
+        "--mode",
+        "artifact",
+        "--npm-tarball",
+        join(tmp, "missing.tgz"),
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it("redacts clean-install import failures from temporary workspace paths", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-clean-install-redaction-"));
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      const tarball = join(tmp, "runinfra-sdk-0.1.4.tgz");
+      writeGzippedTarball(tarball, [
+        {
+          name: "package/package.json",
+          content: JSON.stringify({
+            name: "@runinfra/sdk",
+            version: RUNINFRA_SDK_VERSION,
+            type: "module",
+            main: "./dist/index.js",
+            exports: { ".": "./dist/index.js" },
+          }),
+        },
+        {
+          name: "package/dist/index.js",
+          content: `
+export const RUNINFRA_SDK_VERSION = "${RUNINFRA_SDK_VERSION}";
+const create = () => undefined;
+export class RunInfra {
+  constructor() {
+    this.chat = { completions: { create } };
+    this.responses = { create };
+    this.embeddings = { create };
+    this.images = { generate: create };
+    this.audio = { speech: { create }, transcriptions: { create } };
+    this.voice = { pipeline: { create } };
+    this.webhooks = { create, verifySignature: create, constructEvent: create };
+  }
+}
+`,
+        },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "typescript",
+        "--mode",
+        "artifact",
+        "--npm-tarball",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(output).toContain("webhooks.create must not be public");
+      expect(output).not.toContain(".clean-install-tmp");
+      expect(output).not.toContain("[eval");
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it("redacts arbitrary clean-install import errors that contain temporary paths", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-clean-install-arbitrary-redaction-"));
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      const tarball = join(tmp, "runinfra-sdk-0.1.4.tgz");
+      writeGzippedTarball(tarball, [
+        {
+          name: "package/package.json",
+          content: JSON.stringify({
+            name: "@runinfra/sdk",
+            version: RUNINFRA_SDK_VERSION,
+            type: "module",
+            main: "./dist/index.js",
+            exports: { ".": "./dist/index.js" },
+          }),
+        },
+        {
+          name: "package/dist/index.js",
+          content: `
+export const RUNINFRA_SDK_VERSION = "${RUNINFRA_SDK_VERSION}";
+export class RunInfra {}
+throw new Error(import.meta.url);
+`,
+        },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "typescript",
+        "--mode",
+        "artifact",
+        "--npm-tarball",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(output).toContain("npm clean import check failed: import check failed");
+      expect(output).not.toContain(".clean-install-tmp");
+      expect(output).not.toContain("node_modules");
+      expect(output).not.toContain("[eval");
+      expect(output).not.toContain("file://");
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it("redacts arbitrary clean-install import errors with embedded absolute paths", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-clean-install-embedded-path-redaction-"));
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      const tarball = join(tmp, "runinfra-sdk-0.1.4.tgz");
+      writeGzippedTarball(tarball, [
+        {
+          name: "package/package.json",
+          content: JSON.stringify({
+            name: "@runinfra/sdk",
+            version: RUNINFRA_SDK_VERSION,
+            type: "module",
+            main: "./dist/index.js",
+            exports: { ".": "./dist/index.js" },
+          }),
+        },
+        {
+          name: "package/dist/index.js",
+          content: `
+export const RUNINFRA_SDK_VERSION = "${RUNINFRA_SDK_VERSION}";
+export class RunInfra {}
+throw new Error("failed loading D:\\\\private\\\\secret-project\\\\config.json");
+`,
+        },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "typescript",
+        "--mode",
+        "artifact",
+        "--npm-tarball",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(output).toContain("npm clean import check failed: import check failed");
+      expect(output).not.toContain("D:\\private");
+      expect(output).not.toContain("secret-project");
+      expect(output).not.toContain(".clean-install-tmp");
+      expect(output).not.toContain("[eval");
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it("redacts arbitrary clean-install import errors with embedded Unix root paths", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-clean-install-root-path-redaction-"));
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      const tarball = join(tmp, "runinfra-sdk-0.1.4.tgz");
+      writeGzippedTarball(tarball, [
+        {
+          name: "package/package.json",
+          content: JSON.stringify({
+            name: "@runinfra/sdk",
+            version: RUNINFRA_SDK_VERSION,
+            type: "module",
+            main: "./dist/index.js",
+            exports: { ".": "./dist/index.js" },
+          }),
+        },
+        {
+          name: "package/dist/index.js",
+          content: `
+export const RUNINFRA_SDK_VERSION = "${RUNINFRA_SDK_VERSION}";
+export class RunInfra {}
+throw new Error("failed loading /root/private/secret-project/config.json");
+`,
+        },
+      ]);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "typescript",
+        "--mode",
+        "artifact",
+        "--npm-tarball",
+        tarball,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(output).toContain("npm clean import check failed: import check failed");
+      expect(output).not.toContain("/root/private");
+      expect(output).not.toContain("secret-project");
+      expect(output).not.toContain(".clean-install-tmp");
+      expect(output).not.toContain("[eval");
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it("preserves safe Python clean-install SystemExit failure summaries", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-python-clean-install-summary-"));
+    const repoRoot = join(process.cwd(), "..");
+    const tempRoot = join(repoRoot, ".clean-install-tmp");
+    const pythonPackageRoot = join(tmp, "python-package");
+    try {
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      mkdirSync(join(pythonPackageRoot, "runinfra"), { recursive: true });
+      writeFileSync(join(pythonPackageRoot, "pyproject.toml"), `
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runinfra"
+version = "${RUNINFRA_SDK_VERSION}"
+`);
+      writeFileSync(join(pythonPackageRoot, "runinfra", "__init__.py"), `
+__version__ = "${RUNINFRA_SDK_VERSION}"
+
+class RunInfra:
+    def __init__(self, *args, **kwargs):
+        raise SystemExit("synthetic python import summary")
+`);
+      const buildResult = spawnSync("python", [
+        "-m",
+        "build",
+        pythonPackageRoot,
+        "--wheel",
+        "--outdir",
+        tmp,
+      ], { encoding: "utf8" });
+      expect(buildResult.status, `${buildResult.stdout}${buildResult.stderr}`).toBe(0);
+
+      const wheel = join(tmp, `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`);
+      const result = spawnSync(process.execPath, [
+        "../scripts/verify-clean-installs.mjs",
+        "--package",
+        "python",
+        "--mode",
+        "artifact",
+        "--python-wheel",
+        wheel,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(output).toContain("Python clean import check failed: synthetic python import summary");
+      expect(output).not.toContain(".clean-install-tmp");
+      expect(output).not.toContain("[eval");
+      expect(existsSync(tempRoot)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  }, 20_000);
 
   it("keeps child canaries in parity for audio OpenAI parameter coverage", () => {
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");

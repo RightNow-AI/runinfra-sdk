@@ -1151,6 +1151,49 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
+## 2026-05-24 Agent 4 Checkpoint: Registry Clean-Install Preflight And Redaction
+
+Closed a registry clean-install release-gate gap before GA promotion:
+
+- Registry clean-install mode now preflights exact package availability from the canonical npm and PyPI registries before creating `.clean-install-tmp` workspaces.
+- Exact `0.1.4` registry checks fail fast because npm and PyPI currently publish only up through `0.1.3`.
+- Published `0.1.3` is intentionally rejected by the current verifier because its public surface still exposes `webhooks.create`.
+- Clean-install workspaces now clean up on installer/import failures, artifact lookup failures, and safe-summary failures.
+- Import failure summaries now keep safe short messages such as `webhooks.create must not be public` and `synthetic python import summary`.
+- Import failure summaries reject `.clean-install-tmp`, `node_modules`, `file://`, embedded Windows drive paths, embedded Unix absolute multi-segment paths such as `/root/private/...`, and anything blocked by the shared secret-scan policy.
+
+TDD and review evidence:
+
+- Added registry preflight helper tests and a CLI-level preflight regression proving missing exact npm/PyPI versions fail before workspace creation.
+- Added cleanup regressions for artifact verification failures after workspace creation.
+- Added redaction regressions for temp workspace paths, `file://` import URLs, embedded Windows absolute paths, and embedded Unix `/root/...` paths.
+- The embedded Windows path regression failed before the sanitizer rejected drive-letter paths.
+- Second-opinion review then found the `/root/...` leak class.
+- The embedded Unix root-path regression failed before replacing the narrow Unix allowlist with a fail-closed multi-segment absolute-path check.
+- Second-opinion re-review returned `ALLOW` with no blocking findings.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "embedded Unix root paths|embedded absolute paths|arbitrary clean-install import errors|safe Python clean-install SystemExit"` passed: 4 tests, 148 skipped.
+- `pnpm --dir typescript test` passed: 152 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `python -m pytest python\tests -q` passed: 123 tests, 119 subtests.
+- `node --check scripts\verify-clean-installs.mjs` passed.
+- `node --check scripts\registry-version-preflight.mjs` passed.
+- `node scripts\verify-clean-installs.mjs --package both --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `node scripts\verify-clean-installs.mjs --package both --mode registry --version 0.1.4 --registry-attempts 2 --registry-retry-delay-ms 1000` failed as expected with only consolidated npm/PyPI missing-version messages.
+- `node scripts\verify-clean-installs.mjs --package both --mode registry --version 0.1.3 --registry-attempts 1 --registry-retry-delay-ms 1000` failed as expected with `npm clean import check failed: webhooks.create must not be public`.
+- Post-run filesystem check confirmed `.clean-install-tmp` was absent.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 45 rows, 0 uncovered surfaces.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes a clean-install release-gate hardening gap, not live SDK GA readiness.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- Strict live canaries still need green production evidence for multimodal, idempotency replay, and remaining live endpoint rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
 ## 2026-05-24 Agent 4 Checkpoint: Canary Temp Report Cleanup
 
 Closed a canary-runner hygiene gap before GA promotion:
