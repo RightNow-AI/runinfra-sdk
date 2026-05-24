@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { productionBaseURL } from "./canary-report-base-url.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const readinessPath = optionValue("--readiness") ?? "artifacts/sdk/live-canary-readiness.json";
 const livePath = optionValue("--live") ?? "artifacts/sdk/live-canary.json";
 const expectedSdkVersion = readExpectedSdkVersion();
-const productionBaseURL = "https://api.runinfra.ai/v1";
 const errors = [];
 
 const readiness = readReport(readinessPath, "readiness report");

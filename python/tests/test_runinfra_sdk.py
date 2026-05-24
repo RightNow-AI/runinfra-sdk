@@ -635,6 +635,27 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             self.assertIn("`--runinfra-env-file <path-to-env-file>`", doc)
             self.assertIn("Do not use Node's `--env-file` option in promotion commands", doc)
 
+    def test_python_child_canary_reports_explicit_production_base_url_without_redacting_it(self):
+        root = Path(__file__).resolve().parents[2]
+        canary_path = root.joinpath("scripts", "sdk-live-canary-python.py")
+        spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        canary = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(canary)
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(canary.report_base_url(canary.PRODUCTION_BASE_URL), canary.PRODUCTION_BASE_URL)
+
+        with patch.dict(os.environ, {"RUNINFRA_BASE_URL": canary.PRODUCTION_BASE_URL}, clear=True):
+            self.assertEqual(canary.report_base_url(canary.PRODUCTION_BASE_URL), canary.PRODUCTION_BASE_URL)
+
+        with patch.dict(os.environ, {"RUNINFRA_BASE_URL": "https://staging.runinfra.ai/v1"}, clear=True):
+            self.assertEqual(
+                canary.report_base_url("https://staging.runinfra.ai/v1"),
+                "custom_set_redacted",
+            )
+
     def test_python_package_verifier_blocks_broader_secret_and_path_families(self):
         verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
         spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)

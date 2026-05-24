@@ -35,6 +35,7 @@ from runinfra import (  # noqa: E402
 
 TTS_RESPONSE_FORMATS = {"mp3", "opus", "aac", "flac", "wav", "pcm"}
 MISSING_MODEL_ID = "runinfra-sdk-canary-missing-model"
+PRODUCTION_BASE_URL = "https://api.runinfra.ai/v1"
 SLOW_CONSUMER_DELAY_REQUIREMENT = "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000"
 SLOW_CONSUMER_DELAY_ERROR = "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS must be a non-negative integer <= 5000"
 
@@ -581,7 +582,9 @@ def is_responses_terminal_event(event: Dict[str, Any]) -> bool:
 
 
 def report_base_url(value: str) -> str:
-    return "custom_set_redacted" if env("RUNINFRA_BASE_URL") else value
+    if not env("RUNINFRA_BASE_URL"):
+        return value
+    return value if value == PRODUCTION_BASE_URL else "custom_set_redacted"
 
 
 def get_path_value(value: Any, path: str) -> Any:
@@ -684,7 +687,7 @@ def main() -> int:
         "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD",
     ]
     api_key = env("RUNINFRA_API_KEY")
-    base_url = env("RUNINFRA_BASE_URL") or "https://api.runinfra.ai/v1"
+    base_url = env("RUNINFRA_BASE_URL") or PRODUCTION_BASE_URL
     llm_model = env("RUNINFRA_LLM_MODEL")
     embedding_model = env("RUNINFRA_EMBEDDING_MODEL")
     image_model = env("RUNINFRA_IMAGE_MODEL")

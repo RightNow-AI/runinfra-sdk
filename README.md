@@ -134,7 +134,7 @@ After the strict artifact live canary passes, verify that the readiness and
 live reports prove the same candidate source digest and that both language
 reports passed every row. The promotion verifier requires strict child canary
 reports from `https://api.runinfra.ai/v1`; reports generated with custom
-`RUNINFRA_BASE_URL` values are staging smoke evidence, not publish evidence:
+non-production `RUNINFRA_BASE_URL` values are staging smoke evidence, not publish evidence:
 ```bash
 node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json
 ```

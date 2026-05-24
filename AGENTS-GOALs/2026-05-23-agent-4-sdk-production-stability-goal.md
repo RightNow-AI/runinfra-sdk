@@ -1717,3 +1717,51 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 20:23 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Explicit Production Base URL Parity
+
+Closed the follow-up gap in the production-base promotion gate:
+
+- TypeScript child canaries now report an explicit `RUNINFRA_BASE_URL=https://api.runinfra.ai/v1` as production evidence instead of redacting it as `custom_set_redacted`.
+- Python child canaries now use the same production-base reporting rule.
+- Non-production custom base URLs are still recorded only as `custom_set_redacted`.
+- `verify-promotion-reports.mjs` and the TypeScript child canary now share the same production base URL constant.
+- The new canary base URL helper is included in `candidate.sourceDigestSha256`, so helper-only changes move promotion evidence.
+- README and LIVE-CANARIES now distinguish explicit production base URL evidence from non-production staging smoke evidence.
+
+TDD and verification evidence:
+
+- Added a failing TypeScript regression first; it failed because `scripts/canary-report-base-url.mjs` was absent.
+- Added a failing Python regression first; it failed because `PRODUCTION_BASE_URL` was absent from `sdk-live-canary-python.py`.
+- Added a failing source-digest regression first; it failed because the new helper was not listed in `sourceDigestFiles`.
+- Implemented the minimal helper, child canary parity, promotion verifier reuse, source-digest inclusion, and docs wording updates.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "reports explicit production child canary base URLs|includes the canary base URL helper|public-repo production promotion"` passed: 3 tests.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k explicit_production_base_url` passed: 1 test.
+- `pnpm --dir typescript test` passed: 167 tests.
+- `python -m pytest python\tests -q` passed: 127 tests, 128 subtests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `pnpm --dir typescript install --frozen-lockfile` passed.
+- `pnpm --dir typescript build` passed.
+- `python -m build python --outdir artifacts\python-local` passed.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\verify-version-sync.mjs` passed.
+- `pnpm --dir typescript pack --pack-destination ..\artifacts\npm-local` passed.
+- `node scripts\verify-npm-package.mjs artifacts\npm-local\runinfra-sdk-0.1.4.tgz` passed.
+- `python scripts\verify-python-package.py artifacts\python-local` passed.
+- `python -m twine check artifacts\python-local\*` passed.
+- `node scripts\verify-clean-installs.mjs --mode artifact --npm-tarball artifacts\npm-local\runinfra-sdk-0.1.4.tgz --python-wheel artifacts\python-local\runinfra-0.1.4-py3-none-any.whl` passed.
+- `node --check scripts\run-sdk-live-canaries.mjs`, `node --check scripts\canary-report-base-url.mjs`, `node --check scripts\sdk-live-canary-typescript.mjs`, `node --check scripts\verify-promotion-reports.mjs`, and `python -m py_compile scripts\sdk-live-canary-python.py` passed.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes a canary evidence integrity gap, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and remaining endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 20:41 +03:00.

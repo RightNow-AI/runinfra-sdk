@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { productionBaseURL, reportBaseURL as redactedReportBaseURL } from "./canary-report-base-url.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -429,7 +430,7 @@ function isResponsesTerminalEvent(event) {
 }
 
 function reportBaseURL(value) {
-  return env("RUNINFRA_BASE_URL") ? "custom_set_redacted" : value;
+  return redactedReportBaseURL(value, Boolean(env("RUNINFRA_BASE_URL")));
 }
 
 function getPathValue(value, path) {
@@ -542,7 +543,7 @@ const {
 } = sdkModule;
 
 const apiKey = env("RUNINFRA_API_KEY");
-const baseURL = env("RUNINFRA_BASE_URL") ?? "https://api.runinfra.ai/v1";
+const baseURL = env("RUNINFRA_BASE_URL") ?? productionBaseURL;
 const llmModel = env("RUNINFRA_LLM_MODEL");
 const embeddingModel = env("RUNINFRA_EMBEDDING_MODEL");
 const imageModel = env("RUNINFRA_IMAGE_MODEL");

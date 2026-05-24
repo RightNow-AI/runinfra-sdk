@@ -293,7 +293,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("error.model.not_found");
     expect(liveCanaries).toContain("error.body.unsupported_parameter");
     expect(liveCanaries).toContain("strict\nchild canaries against `https://api.runinfra.ai/v1`");
-    expect(liveCanaries).toContain("custom `RUNINFRA_BASE_URL` are useful for staging smoke tests");
+    expect(liveCanaries).toContain("A `RUNINFRA_BASE_URL` equal to `https://api.runinfra.ai/v1` is recorded as production");
+    expect(liveCanaries).toContain("any other custom `RUNINFRA_BASE_URL`");
     expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
     expect(readme).toContain("forwards the supported request through the chat-completions serving path");
     expect(readme).toContain(
@@ -420,6 +421,18 @@ describe("RunInfra TypeScript SDK", () => {
     ]);
     expect(preflight.registryVersionChecks("0.1.4", "typescript").map((check) => check.label)).toEqual(["npm"]);
     expect(preflight.registryVersionChecks("0.1.4", "python").map((check) => check.label)).toEqual(["PyPI"]);
+  });
+
+  it("reports explicit production child canary base URLs without exposing custom staging URLs", async () => {
+    const helper = await import("../../scripts/canary-report-base-url.mjs") as {
+      productionBaseURL: string;
+      reportBaseURL: (value: string, hasCustomBaseURL: boolean) => string;
+    };
+
+    expect(helper.productionBaseURL).toBe("https://api.runinfra.ai/v1");
+    expect(helper.reportBaseURL(helper.productionBaseURL, false)).toBe(helper.productionBaseURL);
+    expect(helper.reportBaseURL(helper.productionBaseURL, true)).toBe(helper.productionBaseURL);
+    expect(helper.reportBaseURL("https://staging.runinfra.ai/v1", true)).toBe("custom_set_redacted");
   });
 
   it("verifies promotion reports use the same candidate digest and all-passed artifact canaries", () => {
@@ -1170,6 +1183,14 @@ class RunInfra:
     expect(runner).toContain('"typescript/src/index.ts"');
     expect(runner).not.toContain('"typescript/dist/index.js"');
     expect(runner).not.toContain('"typescript/dist/index.d.ts"');
+  });
+
+  it("includes the canary base URL helper in live canary source digests", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+
+    expect(runner).toContain(
+      '["scripts/canary-report-base-url.mjs", join(repositoryRoot, "scripts", "canary-report-base-url.mjs")]',
+    );
   });
 
   it("documents the safe live-canary env-file flag instead of Node's flag", () => {

@@ -106,7 +106,8 @@ model-specific backend support stay out of GA until a strict canary row proves
 them against the deployed model.
 
 The report stores only `set_redacted` or `missing` for environment variables.
-Custom `RUNINFRA_BASE_URL` values are recorded only as `custom_set_redacted`.
+A `RUNINFRA_BASE_URL` equal to `https://api.runinfra.ai/v1` is recorded as production;
+any other custom `RUNINFRA_BASE_URL` value is recorded only as `custom_set_redacted`.
 Reports must not contain API keys, registry tokens, local absolute paths,
 request payload secrets, source maps, or private repo metadata.
 Every preflight and full report includes `candidate.sourceDigestSha256` plus
@@ -119,9 +120,9 @@ preflight reports do not require built artifacts and leave that list empty.
 and live reports, requires the same candidate source digest, requires the live
 artifact report to include npm and Python wheel hashes, and fails if either
 language has skipped or failed rows. Promotion evidence must come from strict
-child canaries against `https://api.runinfra.ai/v1`; reports generated with a
-custom `RUNINFRA_BASE_URL` are useful for staging smoke tests but cannot satisfy
-the real publish gate.
+child canaries against `https://api.runinfra.ai/v1`; reports generated with any
+other custom `RUNINFRA_BASE_URL` are useful for staging smoke tests but cannot
+satisfy the real publish gate.
 
 ## Matrix Rows
 
