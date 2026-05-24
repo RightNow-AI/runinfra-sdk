@@ -593,7 +593,11 @@ def get_path_value(value: Any, path: str) -> Any:
     return current
 
 
-def assert_idempotency_replay_evidence(response: Dict[str, Any]) -> Dict[str, str]:
+IDEMPOTENCY_EVIDENCE_FIELD_ERROR = "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths"
+IDEMPOTENCY_EVIDENCE_FIELD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+def idempotency_evidence_fields() -> List[str]:
     fields = [
         field.strip()
         for field in (
@@ -602,6 +606,21 @@ def assert_idempotency_replay_evidence(response: Dict[str, Any]) -> Dict[str, st
         ).split(",")
         if field.strip()
     ]
+    if not fields or any(IDEMPOTENCY_EVIDENCE_FIELD_RE.fullmatch(field) is None for field in fields):
+        raise AssertionError(IDEMPOTENCY_EVIDENCE_FIELD_ERROR)
+    return fields
+
+
+def optional_idempotency_evidence_field_requirement() -> List[str]:
+    try:
+        idempotency_evidence_fields()
+    except AssertionError:
+        return [IDEMPOTENCY_EVIDENCE_FIELD_ERROR]
+    return []
+
+
+def assert_idempotency_replay_evidence(response: Dict[str, Any]) -> Dict[str, str]:
+    fields = idempotency_evidence_fields()
     for field in fields:
         value = get_path_value(response, field)
         if value is True or value in {"true", "replayed", "hit"}:
@@ -674,6 +693,36 @@ def main() -> int:
     pipeline_id = first_env("RUNINFRA_VOICE_PIPELINE_ID", "TEST_PIPELINE_ID")
     pipeline_api_key = first_env("RUNINFRA_VOICE_PIPELINE_API_KEY", "RUNINFRA_PIPELINE_API_KEY", "RUNINFRA_API_KEY")
     timeout_seconds = float(env("RUNINFRA_CANARY_TIMEOUT_SECONDS") or "120")
+    configuration_errors = optional_idempotency_evidence_field_requirement()
+    if configuration_errors:
+        summary = {"passed": 0, "failed": 1, "skipped": 0}
+        report = {
+            "schemaVersion": 1,
+            "language": "python",
+            "sdkVersion": __version__,
+            "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "strict": args.strict,
+            "baseURL": "not_checked",
+            "env": redacted_env(relevant_env),
+            "summary": summary,
+            "results": [{
+                "name": "configuration",
+                "status": "failed",
+                "durationMs": 0,
+                "error": {
+                    "name": "ConfigurationError",
+                    "type": "invalid_configuration",
+                    "message": "redacted",
+                },
+            }],
+            "configuration": {"status": "failed", "errors": configuration_errors},
+        }
+        if args.report:
+            report_path = Path(args.report).resolve()
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        print("Live canary configuration invalid:\n" + "\n".join(configuration_errors), file=sys.stderr)
+        return 1
 
     def client(**overrides: Any) -> RunInfra:
         options: Dict[str, Any] = {

@@ -529,6 +529,19 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertEqual(events, [{"event": 1}, {"event": 2}, {"event": 3}])
         self.assertTrue(stream.iterator.closed)
 
+    def test_python_live_canary_rejects_unsafe_idempotency_evidence_field_paths(self):
+        canary_path = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py")
+        spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        live_canary = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(live_canary)
+
+        unsafe_field = "sk-ri-" + "A" * 24
+        with patch.dict(os.environ, {"RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD": unsafe_field}):
+            with self.assertRaisesRegex(AssertionError, "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD"):
+                live_canary.assert_idempotency_replay_evidence({unsafe_field: True})
+
     def test_readme_documents_sync_only_async_runtime_guidance(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 

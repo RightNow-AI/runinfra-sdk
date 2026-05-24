@@ -1151,6 +1151,45 @@ Remaining blockers are unchanged:
 - Strict live canaries still need green production evidence for the remaining multimodal and idempotency rows.
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
+## 2026-05-24 Agent 4 Checkpoint: Idempotency Evidence Field Validation
+
+Closed a live-canary report-leak and false-readiness gap for the idempotency replay row:
+
+- Parent canary runner now validates `RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD` as comma-separated dot-paths before preflight or full canary child setup.
+- TypeScript child canary now validates the same field list before SDK import or live calls.
+- Python child canary now validates the same field list before live calls.
+- Default replay evidence paths remain valid: `idempotency_replayed`, `_idempotency_replayed`, `idempotency.replayed`, and `replay.replayed`.
+- Invalid values are reported only as a generic requirement string and are redacted from reports and stderr.
+
+TDD and review evidence:
+
+- Parent preflight regression failed first because unsafe evidence field paths did not block `idempotency.replay.responses`.
+- Parent full-run regression failed first because unsafe values reached configuration handling without the dedicated idempotency-field error.
+- Python child helper regression failed first because a secret-shaped evidence field was accepted.
+- After validation was added, targeted TypeScript and Python regressions passed.
+- Second-opinion review returned `ALLOW` with no blockers or important findings. Minor residual: direct child process report-redaction paths are only lightly covered, while parent release paths and Python helper behavior are covered.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "idempotency replay evidence field|idempotency evidence fields"` passed: 2 tests passed, 140 skipped.
+- `python -m pytest python\tests\test_runinfra_sdk.py -q -k idempotency_evidence_field_paths` passed: 1 test passed, 122 deselected.
+- `pnpm --dir typescript test` passed: 142 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `python -m pytest python\tests -q` passed: 123 tests, 119 subtests.
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `node --check scripts\sdk-live-canary-typescript.mjs` passed.
+- `python -m py_compile scripts\sdk-live-canary-python.py` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 45 rows, 0 uncovered surfaces.
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --report artifacts\sdk\live-canary-readiness-current.json` remained blocked as expected: 19 ready, 26 blocked.
+- `node scripts\run-sdk-live-canaries.mjs --package-source artifact --report artifacts\sdk\live-canary-artifact-no-env-current.json` passed in no-env mode: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes a canary-safety gap, not live SDK GA readiness.
+- Strict live canaries still need green production evidence for the remaining multimodal and idempotency replay rows.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
 ## 2026-05-24 Agent 4 Checkpoint: Non-Regular Archive Entry Rejection
 
 Closed another package-scanner bypass class before GA promotion:

@@ -345,6 +345,9 @@ const relevantEnv = [
   "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD",
 ];
 const ttsResponseFormats = ["mp3", "opus", "aac", "flac", "wav", "pcm"];
+const idempotencyEvidenceFieldRequirementMessage =
+  "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths";
+const idempotencyEvidenceFieldPattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/u;
 
 function missingEnv(names) {
   return names.filter((name) => !env(name));
@@ -377,6 +380,16 @@ function optionalNonNegativeIntegerRequirement(name) {
     return [`${name} non-negative integer <= 5000`];
   }
   return Number(value) <= 5000 ? [] : [`${name} non-negative integer <= 5000`];
+}
+
+function optionalIdempotencyEvidenceFieldRequirement() {
+  const value = env("RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD");
+  if (!value) return [];
+  const fields = value.split(",").map((field) => field.trim()).filter(Boolean);
+  if (!fields.length) return [idempotencyEvidenceFieldRequirementMessage];
+  return fields.every((field) => idempotencyEvidenceFieldPattern.test(field))
+    ? []
+    : [idempotencyEvidenceFieldRequirementMessage];
 }
 
 function readableNonEmptyFileRequirement(name) {
@@ -519,6 +532,7 @@ const rowReadinessRequirements = [
   ["idempotency.replay.responses", () => [
     ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"]),
     ...(env("RUNINFRA_CANARY_ENABLE_IDEMPOTENCY") === "1" ? [] : ["RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1"]),
+    ...optionalIdempotencyEvidenceFieldRequirement(),
   ]],
 ];
 
@@ -790,6 +804,7 @@ function configurationErrors() {
   return [
     ...optionalPositiveNumberRequirement("RUNINFRA_CANARY_TIMEOUT_SECONDS"),
     ...optionalNonNegativeIntegerRequirement("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS"),
+    ...optionalIdempotencyEvidenceFieldRequirement(),
   ];
 }
 

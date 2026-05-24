@@ -33,6 +33,31 @@ function redactedEnv(names) {
   return Object.fromEntries(names.map((name) => [name, env(name) ? "set_redacted" : "missing"]));
 }
 
+const idempotencyEvidenceFieldError =
+  "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths";
+const idempotencyEvidenceFieldPattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/u;
+
+function idempotencyEvidenceFields() {
+  const fields = (env("RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD") ??
+    "idempotency_replayed,_idempotency_replayed,idempotency.replayed,replay.replayed")
+    .split(",")
+    .map((field) => field.trim())
+    .filter(Boolean);
+  if (!fields.length || !fields.every((field) => idempotencyEvidenceFieldPattern.test(field))) {
+    throw new Error(idempotencyEvidenceFieldError);
+  }
+  return fields;
+}
+
+function optionalIdempotencyEvidenceFieldRequirement() {
+  try {
+    idempotencyEvidenceFields();
+    return [];
+  } catch {
+    return [idempotencyEvidenceFieldError];
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -414,11 +439,7 @@ function getPathValue(value, path) {
 }
 
 function assertIdempotencyReplayEvidence(response) {
-  const fields = (env("RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD") ??
-    "idempotency_replayed,_idempotency_replayed,idempotency.replayed,replay.replayed")
-    .split(",")
-    .map((field) => field.trim())
-    .filter(Boolean);
+  const fields = idempotencyEvidenceFields();
   for (const field of fields) {
     const value = getPathValue(response, field);
     if (value === true || value === "true" || value === "replayed" || value === "hit") {
@@ -462,6 +483,42 @@ const relevantEnv = [
   "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY",
   "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD",
 ];
+
+const configurationErrors = optionalIdempotencyEvidenceFieldRequirement();
+if (configurationErrors.length) {
+  const summary = { passed: 0, failed: 1, skipped: 0 };
+  const report = {
+    schemaVersion: 1,
+    language: "typescript",
+    sdkVersion: "unknown",
+    generatedAt: nowIso(),
+    strict,
+    baseURL: "not_checked",
+    env: redactedEnv(relevantEnv),
+    summary,
+    results: [{
+      name: "configuration",
+      status: "failed",
+      durationMs: 0,
+      error: {
+        name: "ConfigurationError",
+        type: "invalid_configuration",
+        message: "redacted",
+      },
+    }],
+    configuration: {
+      status: "failed",
+      errors: configurationErrors,
+    },
+  };
+  if (reportPath) {
+    const absolute = resolve(reportPath);
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, `${JSON.stringify(report, null, 2)}\n`);
+  }
+  console.error(`Live canary configuration invalid:\n${configurationErrors.join("\n")}`);
+  process.exit(1);
+}
 
 function sdkModuleURL() {
   const installedModule = env("RUNINFRA_CANARY_TS_MODULE");

@@ -1562,6 +1562,49 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
+  it("blocks idempotency replay evidence field paths that could leak report data", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-idempotency-field-"));
+    const reportPath = join(tmp, "readiness.json");
+    const unsafeField = "/Users/example/.env.local";
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "preflight-api-key-placeholder",
+          RUNINFRA_LLM_MODEL: "llm-preflight-model",
+          RUNINFRA_CANARY_ENABLE_IDEMPOTENCY: "1",
+          RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD: unsafeField,
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        readiness?: {
+          env?: Record<string, string>;
+          rows?: Array<{ name: string; status: string; missing?: string[] }>;
+        };
+      };
+      expect(report.readiness?.env?.RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD).toBe("set_redacted");
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "idempotency.replay.responses")?.missing,
+      ).toContain("RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths");
+      expect(JSON.stringify(report)).not.toContain(unsafeField);
+      expect(result.stderr).not.toContain(unsafeField);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("blocks full live-canary runs on invalid optional slow-consumer delay before child canaries spawn", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-canary-config-"));
     const reportPath = join(tmp, "live-canary.json");
@@ -1594,6 +1637,44 @@ with open(report, "w", encoding="utf-8") as handle:
       );
       expect(report.reports).toEqual([]);
       expect(JSON.stringify(report)).not.toContain("6000");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks full live-canary runs on invalid idempotency evidence fields before child canaries spawn", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-canary-idempotency-field-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const unsafeField = "sk-ri-" + "A".repeat(24);
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_BASE_URL: "http://localhost:1/v1",
+          RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD: unsafeField,
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+        reports?: unknown[];
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain(
+        "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths",
+      );
+      expect(report.reports).toEqual([]);
+      expect(JSON.stringify(report)).not.toContain(unsafeField);
+      expect(result.stderr).not.toContain(unsafeField);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
