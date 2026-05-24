@@ -231,6 +231,8 @@ If the gateway successfully finishes a request but the response body is too larg
 
 `timeout_seconds` must be positive, `max_retries` must be a non-negative integer, and `retry_base_seconds` must be non-negative. Unknown per-request option keys are rejected so typos do not silently disable idempotency, tracing, timeout, or retry behavior. Python request option aliases cannot be mixed; choose either snake_case or camelCase for a given option. Invalid values raise `RunInfraError` with `type == "invalid_request_options"` before any network request is sent.
 
+Python request helpers expose explicit OpenAI-style keyword parameters instead of arbitrary `**kwargs`. For deliberate gateway compatibility probes or newly rolled out gateway fields, pass an `extra_body` mapping; `extra_body` cannot override typed request fields such as `model`, `input`, or `messages`.
+
 ## Request validation
 
 Required request fields are validated before any network request is sent. The model must be a non-blank string, chat messages must be a non-empty array, each chat message must be an object with a non-empty role, Responses input must be a non-empty string or array, Responses input array items must be objects, JSON request bodies must be serializable and contain only finite numbers, embedding input must be a non-empty string or array of non-empty strings, TTS input and image prompts must be non-empty strings, and ASR file must be bytes or bytearray. ASR multipart filenames, content types, and extra form field names and values are validated before the multipart body is built. Invalid request values raise `RunInfraError` with `type == "invalid_request_options"` and do not reach the gateway or billing path.

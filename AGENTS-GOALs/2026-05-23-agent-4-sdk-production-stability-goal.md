@@ -860,3 +860,48 @@ Current blockers remain:
 - This closes a public-readiness claim gap, not live multimodal readiness.
 - Strict live canaries still need deployed and catalog-listed embeddings, image, TTS, ASR, voice fixtures, and explicit idempotency replay evidence.
 - RunPipe production still needs the gateway contract patch deployed before production source canaries can turn the known streaming/unsupported-parameter rows green.
+
+## Compact Optimal SDK Goal (Under 3800 Chars)
+
+Take `runinfra-sdk` from secure beta to production-grade GA without weakening security or overstating readiness. Done means the TypeScript and Python packages install cleanly from npm/PyPI, expose stable OpenAI-compatible request shapes, and pass local, artifact, registry, and live canary gates for every surface we claim: models, chat completions, Responses, streaming SSE, embeddings, image generation, audio speech, audio transcription, voice pipeline, errors, request IDs, retries, idempotency, and webhook signature helpers.
+
+Method: read current repo state first, patch narrowly, keep TS and Python behavior aligned, add failing tests before fixes, run full package verification, scan artifacts for secrets, source maps, local paths, private config, caches, fixtures, `.env`, and `.npmrc`, and update docs only to claims proven by tests or live artifacts. Any change over 2 files or 100 lines needs independent review.
+
+Release bar: no long-lived npm/PyPI tokens, no secrets in reports/logs/artifacts, no direct browser API-key use, and trusted publishing only through protected GitHub OIDC workflows with provenance. Merge/publish only after strict live canaries pass with no required skips for every GA-claimed modality, registry clean-install/import passes for the exact version, CodeQL/security checks are clean or explicitly accepted, docs match behavior, and protected main receives required non-author review.
+
+Current non-GA blockers to close before publish: deploy the RunPipe gateway contract patch so streaming final/slow-consumer and unsupported-parameter rows pass; provision or catalog verified embeddings, image, TTS, ASR, and voice targets plus deterministic fixtures; prove idempotency replay; finish Python explicit signature hardening; rerun source, artifact, registry, and live canaries; record evidence in this file. Until those are green, call it beta contract-tested, not production GA.
+
+## 2026-05-24 Agent 4 Checkpoint: Python Explicit Request Signatures
+
+Finished Python SDK public-signature hardening:
+
+- Public Python request helpers now use explicit OpenAI-style keyword-only parameters instead of arbitrary `**kwargs`.
+- `extra_body` is the only deliberate JSON/body extension hatch for gateway compatibility probes or newly rolled out fields.
+- `extra_body` rejects non-mappings, blank/non-string keys, and any override of typed request fields, including omitted typed fields such as `stream`.
+- Chat, Responses, embeddings, TTS, ASR, images, and webhook helper methods were tightened; voice pipeline was already explicit.
+- ASR multipart validation still covers typed fields and `extra_body` fields before body construction.
+- Python unsupported-parameter live canary now sends the probe through `extra_body`.
+- Python README and changelog document the explicit-parameter behavior without claiming GA.
+
+Fresh verification:
+
+- Targeted signature/`extra_body` tests passed: 4 tests, 9 subtests.
+- Full Python tests passed: 120 tests, 114 subtests.
+- Python canary/verifier syntax compile passed.
+- Python wheel/sdist built in `artifacts/python-local` and `python/dist`.
+- Python package scanner passed for both artifact locations.
+- `twine check` passed for both artifact locations.
+- Clean artifact install/import passed for the fresh local Python wheel.
+- Source no-env canaries passed: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- Artifact no-env canaries passed after rebuilding `python/dist`: TypeScript 19 passed/26 skipped, Python 19 passed/26 skipped.
+- Surface coverage verification passed: 22 declared surfaces, 26 mapped surfaces, 45 rows, 0 uncovered surfaces.
+- `git diff --check` passed with CRLF warnings only.
+- Source grep found no public SDK `**kwargs` definitions in `python/runinfra/__init__.py`.
+- CodeRabbit CLI was not installed, so the external CodeRabbit path was unavailable.
+- Independent read-only reviewer returned `NO BLOCKERS`; residual curated-list risk was addressed with a source-level no-`**kwargs` regression test.
+
+Current blockers remain:
+
+- This closes the Python public signature gap, not full GA readiness.
+- `0.1.4` is still not published to npm/PyPI.
+- Strict live canaries still need deployed and catalog-listed embeddings, image, TTS, ASR, voice fixtures, idempotency replay proof, and the RunPipe gateway contract patch for known streaming/unsupported-parameter rows.

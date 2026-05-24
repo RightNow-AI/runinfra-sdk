@@ -1375,7 +1375,7 @@ def _unsupported_body_parameter(client: RunInfra, model: str) -> Dict[str, Any]:
             model=model,
             input="Reply with the single word ok.",
             max_output_tokens=1,
-            runinfra_unsupported_parameter_probe="must_error",
+            extra_body={"runinfra_unsupported_parameter_probe": "must_error"},
         )
     except BaseException as error:  # noqa: BLE001
         return assert_clear_unsupported_parameter_error(error, "unsupported body parameter")

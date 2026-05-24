@@ -14,6 +14,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `webhooks.delivery_surface.absent`, so source, artifact, and clean-install
   gates prove the dead delivery methods are absent instead of merely
   fail-closed.
+- Replaced arbitrary `**kwargs` on public request helpers with explicit
+  OpenAI-style keyword parameters plus an `extra_body` mapping for deliberate
+  gateway compatibility probes.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but

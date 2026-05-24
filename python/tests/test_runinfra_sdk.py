@@ -1,9 +1,11 @@
 import hashlib
 import hmac
+import inspect
 import importlib.util
 import json
 import math
 import os
+import re
 import unittest
 from collections import UserDict
 from email.utils import formatdate
@@ -155,6 +157,9 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Idempotency keys must be non-blank", readme)
         self.assertIn("255 characters or less", readme)
         self.assertIn("must not contain secrets or personal data", readme)
+        self.assertIn("explicit OpenAI-style keyword parameters instead of arbitrary `**kwargs`", readme)
+        self.assertIn("pass an `extra_body` mapping", readme)
+        self.assertIn("`extra_body` cannot override typed request fields", readme)
 
     def test_readme_documents_exact_replay_safe_non_streaming_json_operations(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -633,6 +638,66 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIs(get_type_hints(client.images.generate)["return"], ImageGenerationResponse)
         self.assertIs(get_type_hints(client.models.list)["return"], ModelListResponse)
         self.assertIs(get_type_hints(client.models.retrieve)["return"], ModelObject)
+
+    def test_public_request_methods_do_not_accept_arbitrary_kwargs(self):
+        client = RunInfra(api_key="sk-ri-test", transport=RecordingTransport())
+        methods = [
+            client.chat.completions.create,
+            client.responses.create,
+            client.embeddings.create,
+            client.audio.speech.create,
+            client.audio.transcriptions.create,
+            client.images.generate,
+            client.webhooks.verify_signature,
+            client.webhooks.construct_event,
+            client.voice.pipeline.create,
+        ]
+
+        for method in methods:
+            with self.subTest(method=method):
+                signature = inspect.signature(method)
+                self.assertNotIn(
+                    inspect.Parameter.VAR_KEYWORD,
+                    {parameter.kind for parameter in signature.parameters.values()},
+                )
+
+    def test_runtime_package_source_does_not_define_kwargs_parameters(self):
+        source_path = Path(runinfra.__file__).resolve()
+        source = source_path.read_text()
+
+        self.assertNotRegex(source, re.compile(r"def\s+\w+\([^)]*\*\*", re.DOTALL))
+
+    def test_extra_body_is_the_explicit_escape_hatch_for_request_body_extensions(self):
+        transport = RecordingTransport(json_response({"object": "response", "output_text": "hi"}))
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        client.responses.create(
+            model="llama-3.1-8b",
+            input="Hi",
+            extra_body={"runinfra_unsupported_parameter_probe": "must_error"},
+        )
+
+        self.assertIn(b'"runinfra_unsupported_parameter_probe":"must_error"', transport.calls[0].body)
+
+    def test_extra_body_cannot_override_typed_request_fields(self):
+        transport = RecordingTransport(json_response({"object": "response", "output_text": "hi"}))
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        with self.assertRaisesRegex(RunInfraError, "extra_body must not override typed request field: model"):
+            client.responses.create(
+                model="llama-3.1-8b",
+                input="Hi",
+                extra_body={"model": "other"},
+            )
+
+        with self.assertRaisesRegex(RunInfraError, "extra_body must not override typed request field: stream"):
+            client.responses.create(
+                model="llama-3.1-8b",
+                input="Hi",
+                extra_body={"stream": True},
+            )
+
+        self.assertEqual(len(transport.calls), 0)
 
     def test_pipeline_chat_uses_openai_compatible_path(self):
         transport = RecordingTransport(json_response({"choices": []}))
@@ -1406,7 +1471,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         cases = [
             {"filename": 'clip"\r\nX-Bad: 1.wav'},
             {"content_type": "audio/wav\r\nX-Bad: 1"},
-            {"bad\r\nfield": "value"},
+            {"extra_body": {"bad\r\nfield": "value"}},
             {"temperature": {"value": 0}},
             {"prompt": ["bad"]},
             {"temperature": math.nan},

@@ -539,6 +539,25 @@ def _validate_embedding_response_options(options: Mapping[str, Any]) -> None:
         raise _invalid_request_option("embedding dimensions must be a positive integer")
 
 
+def _json_payload_with_extra(
+    fields: Mapping[str, object],
+    extra_body: Optional[Mapping[str, object]],
+) -> Dict[str, object]:
+    payload = {key: value for key, value in fields.items() if value is not None}
+    typed_keys = set(fields.keys())
+    if extra_body is None:
+        return payload
+    if not isinstance(extra_body, MappingABC):
+        raise _invalid_request_option("extra_body must be a mapping")
+    for key, value in extra_body.items():
+        if not isinstance(key, str) or not key.strip():
+            raise _invalid_request_option("extra_body keys must be non-empty strings")
+        if key in typed_keys:
+            raise _invalid_request_option(f"extra_body must not override typed request field: {key}")
+        payload[key] = value
+    return payload
+
+
 def _validated_audio_file(value: Any) -> bytes:
     if not isinstance(value, (bytes, bytearray)):
         raise _invalid_request_option("file must be bytes or bytearray")
@@ -1106,18 +1125,64 @@ class _ChatCompletions:
     def __init__(self, requester: _Requester) -> None:
         self._requester = requester
 
-    def create(self, **kwargs: Any) -> Union[ChatCompletionResponse, RunInfraStream]:
-        request_options = kwargs.pop("request_options", None)
-        kwargs = {**kwargs, "model": _validated_model(kwargs.get("model"))}
-        _validate_chat_messages(kwargs.get("messages"))
-        stream = kwargs.get("stream") is True
+    def create(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Mapping[str, object]],
+        stream: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        stop: Optional[Union[str, Sequence[str]]] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        user: Optional[str] = None,
+        metadata: Optional[Mapping[str, object]] = None,
+        stream_options: Optional[Mapping[str, object]] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        seed: Optional[int] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> Union[ChatCompletionResponse, RunInfraStream]:
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "messages": messages,
+                "stream": True if stream else None,
+                "temperature": temperature,
+                "top_p": top_p,
+                "max_tokens": max_tokens,
+                "max_completion_tokens": max_completion_tokens,
+                "stop": stop,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "user": user,
+                "metadata": metadata,
+                "stream_options": stream_options,
+                "tools": tools,
+                "tool_choice": tool_choice,
+                "response_format": response_format,
+                "seed": seed,
+                "logprobs": logprobs,
+                "top_logprobs": top_logprobs,
+            },
+            extra_body,
+        )
+        _validate_chat_messages(payload.get("messages"))
+        is_stream = payload.get("stream") is True
         response = self._requester.request(
             "/chat/completions",
-            json_payload=kwargs,
-            stream=stream,
+            json_payload=payload,
+            stream=is_stream,
             request_options=request_options,
         )
-        if stream:
+        if is_stream:
             return RunInfraStream(
                 response.body,
                 _request_id_from_headers(response.headers),
@@ -1134,23 +1199,63 @@ class _Responses:
     def __init__(self, requester: _Requester) -> None:
         self._requester = requester
 
-    def create(self, **kwargs: Any) -> Union[ResponsesCreateResponse, RunInfraStream]:
+    def create(
+        self,
+        *,
+        model: str,
+        input: Union[str, Sequence[Mapping[str, object]]],
+        instructions: Optional[str] = None,
+        stream: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        metadata: Optional[Mapping[str, object]] = None,
+        store: Optional[bool] = None,
+        include: Optional[Sequence[str]] = None,
+        reasoning: Optional[Mapping[str, object]] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        previous_response_id: Optional[str] = None,
+        user: Optional[str] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> Union[ResponsesCreateResponse, RunInfraStream]:
         """Create through RunInfra's Responses compatibility adapter.
 
         The gateway maps supported fields onto chat completions and rewraps
         the result; this is not a full stateful OpenAI Responses implementation.
         """
-        request_options = kwargs.pop("request_options", None)
-        kwargs = {**kwargs, "model": _validated_model(kwargs.get("model"))}
-        _validate_responses_input(kwargs.get("input"))
-        stream = kwargs.get("stream") is True
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "input": input,
+                "instructions": instructions,
+                "stream": True if stream else None,
+                "temperature": temperature,
+                "top_p": top_p,
+                "max_output_tokens": max_output_tokens,
+                "metadata": metadata,
+                "store": store,
+                "include": include,
+                "reasoning": reasoning,
+                "tools": tools,
+                "tool_choice": tool_choice,
+                "response_format": response_format,
+                "previous_response_id": previous_response_id,
+                "user": user,
+            },
+            extra_body,
+        )
+        _validate_responses_input(payload.get("input"))
+        is_stream = payload.get("stream") is True
         response = self._requester.request(
             "/responses",
-            json_payload=kwargs,
-            stream=stream,
+            json_payload=payload,
+            stream=is_stream,
             request_options=request_options,
         )
-        if stream:
+        if is_stream:
             return RunInfraStream(
                 response.body,
                 _request_id_from_headers(response.headers),
@@ -1167,14 +1272,27 @@ class _Embeddings:
         *,
         model: str,
         input: Union[str, Sequence[str]],
+        encoding_format: Optional[str] = None,
+        dimensions: Optional[int] = None,
+        user: Optional[str] = None,
         request_options: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any,
+        extra_body: Optional[Mapping[str, object]] = None,
     ) -> EmbeddingResponse:
         _validate_embedding_input(input)
-        _validate_embedding_response_options(kwargs)
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "input": input,
+                "encoding_format": encoding_format,
+                "dimensions": dimensions,
+                "user": user,
+            },
+            extra_body,
+        )
+        _validate_embedding_response_options(payload)
         return _json_response(self._requester.request(
             "/embeddings",
-            json_payload={"model": _validated_model(model), "input": input, **kwargs},
+            json_payload=payload,
             request_options=request_options,
         ))
 
@@ -1189,20 +1307,33 @@ class _Speech:
         model: str,
         input: str,
         voice: Optional[str] = None,
+        response_format: Optional[str] = None,
+        speed: Optional[float] = None,
+        ref_audio: Optional[str] = None,
+        ref_text: Optional[str] = None,
+        task_type: Optional[str] = None,
         request_options: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any,
+        extra_body: Optional[Mapping[str, object]] = None,
     ) -> AudioResponse:
         validated_input = _validated_non_empty_string(input, "input")
-        payload: Dict[str, Any] = {
-            "model": _validated_model(model),
-            "input": validated_input,
-            **kwargs,
-        }
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "input": validated_input,
+                "voice": voice,
+                "response_format": response_format,
+                "speed": speed,
+                "ref_audio": ref_audio,
+                "ref_text": ref_text,
+                "task_type": task_type,
+            },
+            extra_body,
+        )
         if voice is not None:
             payload["voice"] = _validated_non_empty_string(voice, "voice")
-        elif "ref_audio" in kwargs or "ref_text" in kwargs:
-            payload["ref_audio"] = _validated_non_empty_string(kwargs.get("ref_audio"), "ref_audio")
-            payload["ref_text"] = _validated_non_empty_string(kwargs.get("ref_text"), "ref_text")
+        elif ref_audio is not None or ref_text is not None:
+            payload["ref_audio"] = _validated_non_empty_string(ref_audio, "ref_audio")
+            payload["ref_text"] = _validated_non_empty_string(ref_text, "ref_text")
         else:
             raise _invalid_request_option(
                 "speech requests require either voice, or both ref_audio and ref_text"
@@ -1229,14 +1360,25 @@ class _Transcriptions:
         file: Union[bytes, bytearray],
         filename: str = "audio.wav",
         content_type: str = "audio/wav",
+        language: Optional[str] = None,
+        prompt: Optional[str] = None,
+        response_format: Optional[str] = None,
+        temperature: Optional[float] = None,
         request_options: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any,
+        extra_body: Optional[Mapping[str, object]] = None,
     ) -> TranscriptionResponse:
-        _validate_transcription_response_format(kwargs)
-        fields = {
-            "model": _validated_model(model),
-            **{key: _validated_multipart_field_value(value) for key, value in kwargs.items()},
-        }
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "language": language,
+                "prompt": prompt,
+                "response_format": response_format,
+                "temperature": temperature,
+            },
+            extra_body,
+        )
+        _validate_transcription_response_format(payload)
+        fields = {key: _validated_multipart_field_value(value) for key, value in payload.items()}
         body, multipart_type = _multipart_body(
             fields,
             {"file": (filename, _validated_audio_file(file), content_type)},
@@ -1303,23 +1445,70 @@ class _Images:
         *,
         model: str,
         prompt: str,
+        n: Optional[int] = None,
+        size: Optional[str] = None,
+        response_format: Optional[str] = None,
+        quality: Optional[str] = None,
+        style: Optional[str] = None,
+        user: Optional[str] = None,
         request_options: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any,
+        extra_body: Optional[Mapping[str, object]] = None,
     ) -> ImageGenerationResponse:
         validated_prompt = _validated_non_empty_string(prompt, "prompt")
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "prompt": validated_prompt,
+                "n": n,
+                "size": size,
+                "response_format": response_format,
+                "quality": quality,
+                "style": style,
+                "user": user,
+            },
+            extra_body,
+        )
         return _json_response(self._requester.request(
             "/images/generations",
-            json_payload={"model": _validated_model(model), "prompt": validated_prompt, **kwargs},
+            json_payload=payload,
             request_options=request_options,
         ))
 
 
 class _Webhooks:
-    def verify_signature(self, **kwargs: Any) -> bool:
-        return verify_webhook_signature(**kwargs)
+    def verify_signature(
+        self,
+        *,
+        payload: Union[str, bytes, bytearray],
+        signature_header: str,
+        secret: str,
+        tolerance_seconds: float = 300,
+        now: Optional[float] = None,
+    ) -> bool:
+        return verify_webhook_signature(
+            payload=payload,
+            signature_header=signature_header,
+            secret=secret,
+            tolerance_seconds=tolerance_seconds,
+            now=now,
+        )
 
-    def construct_event(self, **kwargs: Any) -> Any:
-        return construct_webhook_event(**kwargs)
+    def construct_event(
+        self,
+        *,
+        payload: Union[str, bytes, bytearray],
+        signature_header: str,
+        secret: str,
+        tolerance_seconds: float = 300,
+        now: Optional[float] = None,
+    ) -> Any:
+        return construct_webhook_event(
+            payload=payload,
+            signature_header=signature_header,
+            secret=secret,
+            tolerance_seconds=tolerance_seconds,
+            now=now,
+        )
 
 
 class _VoicePipeline:
