@@ -1765,3 +1765,34 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-24 20:41 +03:00.
+
+## 2026-05-24 Agent 4 Checkpoint: Canary Leak Policy Source Identity
+
+Closed another canary evidence integrity gap before GA:
+
+- `scripts/run-sdk-live-canaries.mjs` now includes `scripts/secret-scan-policy.mjs` in `candidate.sourceDigestSha256`.
+- This means changes to the report leak-detection policy now move the canary candidate digest instead of silently reusing old source identity.
+- This keeps promotion evidence tied to the code and policy that decided whether a live-canary report was safe to write.
+
+TDD evidence:
+
+- Added a failing TypeScript regression first; it failed because `scripts/secret-scan-policy.mjs` was not listed in `sourceDigestFiles`.
+- Implemented the minimal runner change by adding the policy file to `sourceDigestFiles`.
+
+Fresh verification:
+
+- `pnpm --dir typescript test --run -t "report leak policy|source digests"` passed: 2 tests.
+- `node --check scripts\run-sdk-live-canaries.mjs` passed.
+- `pnpm --dir typescript test` passed: 168 tests.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed: 22 declared surfaces, 49 rows, 0 uncovered surfaces.
+- `git diff --check` passed with CRLF warnings only.
+
+Remaining blockers are unchanged:
+
+- This closes source identity coverage for the live-canary leak policy, not live SDK GA readiness.
+- Strict production live canaries still need green evidence for multimodal, idempotency replay, and remaining endpoint rows.
+- Exact registry clean install/import for `0.1.4` remains impossible until trusted publishing publishes `0.1.4`.
+- The production RunPipe gateway still needs the local gateway patch deployed before LLM production canaries can be considered closed.
+
+Checkpoint timestamp: 2026-05-24 20:47 +03:00.

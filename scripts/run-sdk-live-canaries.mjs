@@ -30,6 +30,7 @@ const sourceDigestFiles = [
   ["python/runinfra/__init__.py", join(repositoryRoot, "python", "runinfra", "__init__.py")],
   ["scripts/run-sdk-live-canaries.mjs", join(repositoryRoot, "scripts", "run-sdk-live-canaries.mjs")],
   ["scripts/canary-report-base-url.mjs", join(repositoryRoot, "scripts", "canary-report-base-url.mjs")],
+  ["scripts/secret-scan-policy.mjs", join(repositoryRoot, "scripts", "secret-scan-policy.mjs")],
   ["scripts/sdk-live-canary-typescript.mjs", join(repositoryRoot, "scripts", "sdk-live-canary-typescript.mjs")],
   ["scripts/sdk-live-canary-python.py", join(repositoryRoot, "scripts", "sdk-live-canary-python.py")],
   ["LIVE-CANARIES.md", join(repositoryRoot, "LIVE-CANARIES.md")],

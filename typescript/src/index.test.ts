@@ -1193,6 +1193,14 @@ class RunInfra:
     );
   });
 
+  it("includes the report leak policy in live canary source digests", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+
+    expect(runner).toContain(
+      '["scripts/secret-scan-policy.mjs", join(repositoryRoot, "scripts", "secret-scan-policy.mjs")]',
+    );
+  });
+
   it("documents the safe live-canary env-file flag instead of Node's flag", () => {
     const docs = [
       readFileSync(new URL("../../README.md", import.meta.url), "utf8"),
