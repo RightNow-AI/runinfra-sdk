@@ -217,3 +217,12 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 ### 2026-05-25T14:10:24+03:00 - Agent 4
 - Rechecked the GitHub security gate using the authenticated `gh` CLI token without printing or storing the token. `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` passed: no open high/critical code-scanning alerts for `RightNow-AI/runinfra-sdk`.
 - No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:14:53+03:00 - Agent 4
+- Hardened promotion identity for repo-level public SDK docs. `README.md` and `AGENT-NOTES.md` now participate in the canonical live-canary source digest, so public GA/beta/readiness/security claims in those files invalidate stale readiness and live promotion evidence.
+- Followed a focused TDD cycle. Added `includes repo-level public SDK docs in live promotion source digests`; it failed before the manifest change because `README.md` was absent from `sourceDigestFileLabels`, then passed after `scripts/live-canary-source-files.mjs` included both repo-level docs.
+- Refreshed current-shell strict artifact preflight and no-env artifact live reports after the manifest change. Both reports now use source digest `d9189db411e8ea2c700518752e706bc79e45b75ed218fb5551c6ac6cd09bf638`, source file count `35`, SDK `0.1.4`, package source `artifact`.
+- Current-shell strict artifact preflight remains blocked because no live `RUNINFRA_*` canary environment is loaded in this shell: readiness summary `19` ready rows and `30` blocked rows.
+- Current no-env artifact live report remains strict-failing by design: TypeScript `19` passed / `0` failed / `30` skipped, Python `19` passed / `0` failed / `30` skipped. Skipped rows remain the live multimodal, voice pipeline, model-specific, and idempotency rows that require real canary env/fixtures.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json` fails on blocked readiness rows and skipped live rows. It no longer reports stale source digest or source file count disagreement for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.

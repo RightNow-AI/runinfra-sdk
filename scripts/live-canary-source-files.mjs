@@ -31,5 +31,7 @@ export const sourceDigestFileLabels = [
   "scripts/sdk-live-canary-python.py",
   ".github/workflows/ci.yml",
   ".github/workflows/publish.yml",
+  "README.md",
+  "AGENT-NOTES.md",
   "LIVE-CANARIES.md",
 ];
