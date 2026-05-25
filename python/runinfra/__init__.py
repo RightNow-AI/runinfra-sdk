@@ -215,9 +215,15 @@ class AudioResponse:
 
 
 class RunInfraStream:
-    def __init__(self, body: ResponseBody, request_id: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        body: ResponseBody,
+        request_id: Optional[str] = None,
+        sensitive_values: Iterable[str] = (),
+    ) -> None:
         self._body = body
         self.request_id = request_id
+        self._sensitive_values = tuple(sensitive_values)
 
     def __iter__(self) -> Iterator[JsonDict]:
         buffer = ""
@@ -258,6 +264,7 @@ class RunInfraStream:
             chunks = self._body
             close_chunks = getattr(chunks, "close", None)
 
+        error_to_raise: Optional[RunInfraError] = None
         try:
             for chunk in chunks:
                 buffer += decoder.decode(chunk, final=False)
@@ -276,13 +283,19 @@ class RunInfraStream:
                 parsed = dispatch_event()
                 if parsed is not None:
                     yield parsed
-        except RunInfraError:
-            raise
+        except RunInfraError as exc:
+            error_to_raise = _redacted_runinfra_error(exc, self._sensitive_values)
         except Exception as exc:
-            raise _transport_error(exc, request_id=self.request_id) from exc
+            error_to_raise = _transport_error(
+                exc,
+                request_id=self.request_id,
+                sensitive_values=self._sensitive_values,
+            )
         finally:
             if callable(close_chunks):
                 close_chunks()
+        if error_to_raise is not None:
+            raise error_to_raise
 
 
 def _base_url_already_has_pipeline_id(base_url: str, pipeline_id: str) -> bool:
@@ -832,16 +845,60 @@ def _is_timeout_error(error: BaseException) -> bool:
     return "timed out" in message or "timeout" in message
 
 
-def _transport_error(error: BaseException, request_id: Optional[str] = None) -> RunInfraError:
+def _redacted_error_message(error: BaseException, sensitive_values: Iterable[str] = ()) -> str:
+    message = str(error)
+    for value in sensitive_values:
+        if value:
+            message = message.replace(value, "[redacted]")
+    return message
+
+
+def _redacted_runinfra_error(
+    error: RunInfraError,
+    sensitive_values: Iterable[str] = (),
+) -> RunInfraError:
+    message = _redacted_error_message(error, sensitive_values)
+    if isinstance(error, RunInfraStreamParseError):
+        return RunInfraStreamParseError(message, request_id=error.request_id)
+    if isinstance(error, UnsupportedOperationError):
+        return UnsupportedOperationError(message)
+    if isinstance(error, WebhookVerificationError):
+        return WebhookVerificationError(message)
+    try:
+        return error.__class__(
+            message,
+            status=error.status,
+            error_type=error.type,
+            request_id=error.request_id,
+            retry_after_seconds=error.retry_after_seconds,
+        )
+    except TypeError:
+        return RunInfraError(
+            message,
+            status=error.status,
+            error_type=error.type,
+            request_id=error.request_id,
+            retry_after_seconds=error.retry_after_seconds,
+        )
+
+
+def _transport_error(
+    error: BaseException,
+    request_id: Optional[str] = None,
+    sensitive_values: Iterable[str] = (),
+) -> RunInfraError:
+    if isinstance(error, RunInfraError):
+        return _redacted_runinfra_error(error, sensitive_values)
+    message = _redacted_error_message(error, sensitive_values)
     if _is_timeout_error(error):
         return RunInfraTimeoutError(
-            str(error),
+            message,
             status=0,
             error_type="timeout_error",
             request_id=request_id,
         )
     return RunInfraConnectionError(
-        str(error),
+        message,
         status=0,
         error_type="connection_error",
         request_id=request_id,
@@ -913,17 +970,28 @@ def _json_body(payload: Mapping[str, Any]) -> bytes:
         ) from exc
 
 
-def _json_response(response: RunInfraResponse) -> Any:
-    payload = response.json()
+def _json_response(response: RunInfraResponse, sensitive_values: Iterable[str] = ()) -> Any:
+    request_id = _request_id_from_headers(response.headers)
+    error_to_raise: Optional[RunInfraError] = None
+    try:
+        payload = response.json()
+    except RunInfraError as exc:
+        error_to_raise = _redacted_runinfra_error(exc, sensitive_values)
+    except Exception as exc:
+        error_to_raise = _transport_error(
+            exc,
+            request_id=request_id,
+            sensitive_values=sensitive_values,
+        )
+    if error_to_raise is not None:
+        raise error_to_raise
     if isinstance(payload, dict):
-        request_id = _request_id_from_headers(response.headers)
         metadata: Dict[str, Any] = {}
         if request_id:
             metadata["_request_id"] = request_id
         if _idempotent_replay_from_headers(response.headers):
             metadata["_idempotent_replay"] = True
         return {**payload, **metadata} if metadata else payload
-    request_id = _request_id_from_headers(response.headers)
     raise RunInfraError(
         f"RunInfra JSON response shape error: expected object, got {_json_payload_kind(payload)}.",
         status=response.status,
@@ -1108,6 +1176,7 @@ class _Requester:
             has_idempotency_key and has_replayable_json_body
         )
         while True:
+            error_to_raise: Optional[RunInfraError] = None
             try:
                 response = self.transport(
                     RunInfraRequest(
@@ -1124,15 +1193,17 @@ class _Requester:
                     attempt += 1
                     time.sleep(_retry_delay_seconds(attempt, retry_base_seconds))
                     continue
-                raise exc.error from exc
-            except RunInfraError:
-                raise
+                error_to_raise = _redacted_runinfra_error(exc.error, [self.api_key])
+            except RunInfraError as exc:
+                error_to_raise = _redacted_runinfra_error(exc, [self.api_key])
             except Exception as exc:
                 if can_retry and attempt < max_retries:
                     attempt += 1
                     time.sleep(_retry_delay_seconds(attempt, retry_base_seconds))
                     continue
-                raise _transport_error(exc) from exc
+                error_to_raise = _transport_error(exc, sensitive_values=[self.api_key])
+            if error_to_raise is not None:
+                raise error_to_raise
 
             if 200 <= response.status < 300:
                 return response
@@ -1141,7 +1212,7 @@ class _Requester:
                 _discard_response_body(response)
                 time.sleep(_retry_delay_seconds(attempt, retry_base_seconds, response))
                 continue
-            raise _error_from_response(response)
+            raise _redacted_runinfra_error(_error_from_response(response), [self.api_key])
 
 
 class _ChatCompletions:
@@ -1290,8 +1361,9 @@ class _ChatCompletions:
             return RunInfraStream(
                 response.body,
                 _request_id_from_headers(response.headers),
+                [self._requester.api_key],
             )
-        return _json_response(response)
+        return _json_response(response, [self._requester.api_key])
 
 
 class _Chat:
@@ -1405,8 +1477,9 @@ class _Responses:
             return RunInfraStream(
                 response.body,
                 _request_id_from_headers(response.headers),
+                [self._requester.api_key],
             )
-        return _json_response(response)
+        return _json_response(response, [self._requester.api_key])
 
 
 class _Embeddings:
@@ -1440,7 +1513,7 @@ class _Embeddings:
             "/embeddings",
             json_payload=payload,
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Speech:
@@ -1533,7 +1606,7 @@ class _Transcriptions:
             headers={"Content-Type": multipart_type},
             idempotent_replay_safe=False,
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Audio:
@@ -1560,7 +1633,7 @@ class _Models:
             "/models",
             method="GET",
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
     def retrieve(self, model: str, *, request_options: Optional[Mapping[str, Any]] = None) -> ModelObject:
         encoded_model = urllib.parse.quote(_validated_identifier(model, "model"), safe="")
@@ -1568,7 +1641,7 @@ class _Models:
             f"/models/{encoded_model}",
             method="GET",
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Images:
@@ -1616,7 +1689,7 @@ class _Images:
             "/images/generations",
             json_payload=payload,
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Webhooks:
@@ -1679,7 +1752,7 @@ class _VoicePipeline:
             },
             idempotent_replay_safe=False,
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Voice:

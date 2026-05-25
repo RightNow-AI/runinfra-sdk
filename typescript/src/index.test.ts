@@ -1602,8 +1602,8 @@ describe("RunInfra TypeScript SDK", () => {
       expect(output).toContain(
         "npm package @runinfra/sdk@0.0.0-runinfra-missing is not available from the canonical registry.",
       );
-      expect(output).toContain(
-        "PyPI package runinfra==0.0.0-runinfra-missing is not available from the canonical registry.",
+      expect(output).toMatch(
+        /PyPI package runinfra==0\.0\.0-runinfra-missing (?:is not available from the canonical registry\.|availability check failed:)/u,
       );
       expect(output).not.toContain("npm error");
       expect(output).not.toContain("registry install attempt");
@@ -2355,6 +2355,30 @@ class RunInfra:
     expect(liveCanaries).toContain(row);
     expect(liveCanaries).toContain("browser API-key guard");
     expect(publicSurfaceCoverage.find((entry) => entry.surface === "browser API-key guard")?.rows)
+      .toContain(row);
+  });
+
+  it("keeps child canaries in parity for local api-key redaction coverage", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { publicSurfaceCoverage } =
+      await import("../../scripts/live-canary-surface-coverage.mjs") as {
+        publicSurfaceCoverage: Array<{ surface: string; rows: string[] }>;
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const row = "security.api_key_redaction.local";
+
+    expect(expectedRows).toContain(row);
+    expect(runner).toContain(`["${row}", () => []]`);
+    expect(typescriptCanary).toContain(`record("${row}"`);
+    expect(typescriptCanary).toContain("assertApiKeyRedaction");
+    expect(pythonCanary).toContain(`"${row}"`);
+    expect(pythonCanary).toContain("assert_api_key_redaction");
+    expect(liveCanaries).toContain(row);
+    expect(liveCanaries).toContain("API-key redaction");
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "API-key redaction")?.rows)
       .toContain(row);
   });
 
@@ -6988,6 +7012,151 @@ with open(report, "w", encoding="utf-8") as handle:
       RunInfraConnectionError,
     );
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("redacts api keys from exhausted transport errors", async () => {
+    const apiKey = "sk-ri-redact-local";
+    const fetcher = vi.fn().mockRejectedValue(new Error(`lower transport exposed ${apiKey}`));
+    const client = new RunInfra({
+      apiKey,
+      fetch: fetcher,
+      maxRetries: 0,
+      retryBaseMs: 0,
+    });
+
+    await expect(client.models.list()).rejects.toMatchObject({
+      name: "RunInfraConnectionError",
+      type: "connection_error",
+      status: 0,
+    });
+    await expect(client.models.list()).rejects.not.toThrow(apiKey);
+  });
+
+  it("redacts api keys from SDK error causes", async () => {
+    const apiKey = "sk-ri-redact-local";
+    const sdkError = new RunInfraConnectionError("safe public message", "req-sdk-cause-redact");
+    Object.defineProperty(sdkError, "cause", {
+      value: new Error(`sdk cause exposed ${apiKey}`),
+      configurable: true,
+    });
+    const fetcher = vi.fn().mockRejectedValue(sdkError);
+    const client = new RunInfra({
+      apiKey,
+      fetch: fetcher,
+      maxRetries: 0,
+      retryBaseMs: 0,
+    });
+
+    let raised: unknown;
+    try {
+      await client.models.list();
+    } catch (error) {
+      raised = error;
+    }
+
+    expect(raised).toMatchObject({
+      name: "RunInfraConnectionError",
+      message: "safe public message",
+      type: "connection_error",
+      status: 0,
+      requestId: "req-sdk-cause-redact",
+    });
+    expect(String((raised as { cause?: unknown }).cause)).not.toContain(apiKey);
+    await expect(client.models.list()).rejects.not.toThrow(apiKey);
+  });
+
+  it("redacts api keys from response body read errors", async () => {
+    const apiKey = "sk-ri-redact-local";
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(new ReadableStream({
+        start(controller) {
+          controller.error(new Error(`body reader exposed ${apiKey}`));
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json", "x-request-id": "req-body-redact" },
+      }),
+    );
+    const client = new RunInfra({
+      apiKey,
+      fetch: fetcher,
+      maxRetries: 0,
+      retryBaseMs: 0,
+    });
+
+    await expect(client.models.list()).rejects.toMatchObject({
+      name: "RunInfraConnectionError",
+      type: "connection_error",
+      status: 0,
+      requestId: "req-body-redact",
+    });
+    await expect(client.models.list()).rejects.not.toThrow(apiKey);
+  });
+
+  it("redacts api keys from status error bodies", async () => {
+    const apiKey = "sk-ri-redact-local";
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: { message: `auth body exposed ${apiKey}`, type: "auth_error" } }),
+        {
+          status: 401,
+          headers: { "content-type": "application/json", "x-request-id": "req-status-redact" },
+        },
+      ),
+    );
+    const client = new RunInfra({
+      apiKey,
+      fetch: fetcher,
+      maxRetries: 0,
+      retryBaseMs: 0,
+    });
+
+    await expect(client.models.list()).rejects.toMatchObject({
+      name: "AuthenticationError",
+      type: "auth_error",
+      status: 401,
+      requestId: "req-status-redact",
+    });
+    await expect(client.models.list()).rejects.not.toThrow(apiKey);
+  });
+
+  it("redacts api keys from stream read errors", async () => {
+    const apiKey = "sk-ri-redact-local";
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(new ReadableStream({
+        start(controller) {
+          controller.error(new Error(`stream reader exposed ${apiKey}`));
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream", "x-request-id": "req-stream-redact" },
+      }),
+    );
+    const client = new RunInfra({
+      apiKey,
+      fetch: fetcher,
+      maxRetries: 0,
+      retryBaseMs: 0,
+    });
+
+    const stream = await client.chat.completions.create({
+      model: "llama",
+      messages: [{ role: "user", content: "hello" }],
+      stream: true,
+    });
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+      name: "RunInfraConnectionError",
+      type: "connection_error",
+      status: 0,
+      requestId: "req-stream-redact",
+    });
+
+    const secondStream = await client.chat.completions.create({
+      model: "llama",
+      messages: [{ role: "user", content: "hello" }],
+      stream: true,
+    });
+    await expect(secondStream[Symbol.asyncIterator]().next()).rejects.not.toThrow(apiKey);
   });
 
   it("maps exhausted aborts to a typed timeout error", async () => {

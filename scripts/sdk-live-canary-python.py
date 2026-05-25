@@ -12,6 +12,7 @@ import random
 import re
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
@@ -1005,6 +1006,7 @@ def main() -> int:
     record("request.extra_body.local", [], _request_extra_body_local)
     record("request.unknown_fields.local", [], _request_unknown_fields_local)
     record("browser.api_key_guard.local", [], _browser_api_key_guard_local)
+    record("security.api_key_redaction.local", [], assert_api_key_redaction)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
     record("retry.safety.get.local", [], _retry_safety_get_local)
     record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
@@ -1897,6 +1899,281 @@ def _browser_api_key_guard_local() -> Dict[str, Any]:
         "browser_token_surface": "absent",
         "runtime": "python",
     }
+
+
+class LocalApiKeyRedactionTransport:
+    def __init__(self, secret: str) -> None:
+        self.secret = secret
+        self.calls: List[Any] = []
+
+    def __call__(self, request: Any) -> RunInfraResponse:
+        self.calls.append(request)
+        raise OSError(f"lower transport exposed {self.secret}")
+
+
+def assert_api_key_redaction() -> Dict[str, Any]:
+    secret = "sk-ri-redact-local"
+
+    def assert_redacted_public_error(error: BaseException, label: str) -> None:
+        serialized = json.dumps({
+            "name": error.__class__.__name__,
+            "message": str(error),
+            "status": getattr(error, "status", None),
+            "type": getattr(error, "type", None),
+            "requestId": getattr(error, "request_id", None),
+        })
+        if secret in serialized:
+            raise AssertionError(f"{label} leaked the API key in the public error") from error
+        if secret in "".join(traceback.format_exception(error)):
+            raise AssertionError(f"{label} leaked the API key in traceback output") from error
+        current: Optional[BaseException] = error
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if secret in str(current) or secret in repr(current):
+                raise AssertionError(f"{label} leaked the API key in the exception chain") from error
+            current = current.__cause__ or current.__context__
+
+    def assert_redacted_connection_error(error: RunInfraConnectionError, label: str) -> None:
+        assert_redacted_public_error(error, label)
+
+    def assert_credential_placement(calls: List[Any], label: str) -> None:
+        if len(calls) != 1:
+            raise AssertionError(f"{label} expected one local request, got {len(calls)}")
+        request = calls[0]
+        if secret in str(getattr(request, "url", "")):
+            raise AssertionError(f"{label} leaked the API key in the request URL")
+        if getattr(request, "headers", {}).get("Authorization") != f"Bearer {secret}":
+            raise AssertionError(f"{label} did not send the API key only as a bearer header")
+
+    transport = LocalApiKeyRedactionTransport(secret)
+    local = RunInfra(
+        api_key=secret,
+        base_url="http://localhost:1/v1",
+        max_retries=0,
+        retry_base_seconds=0,
+        timeout_seconds=1,
+        transport=transport,
+    )
+    try:
+        local.models.list(request_options={"max_retries": 0})
+    except RunInfraConnectionError as error:
+        assert_redacted_connection_error(error, "security.api_key_redaction.local transport")
+        assert_credential_placement(transport.calls, "security.api_key_redaction.local transport")
+    except BaseException as error:
+        raise AssertionError(
+            f"security.api_key_redaction.local expected RunInfraConnectionError, got {error.__class__.__name__}"
+        ) from error
+    else:
+        raise AssertionError("security.api_key_redaction.local transport unexpectedly succeeded")
+
+    class LocalApiKeyRedactionSdkErrorTransport:
+        def __init__(self, secret_value: str) -> None:
+            self.secret = secret_value
+            self.calls: List[Any] = []
+
+        def __call__(self, request: Any) -> RunInfraResponse:
+            self.calls.append(request)
+            try:
+                raise OSError(f"sdk cause exposed {self.secret}")
+            except OSError as exc:
+                raise RunInfraConnectionError(
+                    "safe public message",
+                    status=0,
+                    error_type="connection_error",
+                    request_id="req-local-api-key-sdk-cause-redaction",
+                ) from exc
+
+    sdk_error_transport = LocalApiKeyRedactionSdkErrorTransport(secret)
+    sdk_error_client = RunInfra(
+        api_key=secret,
+        base_url="http://localhost:1/v1",
+        max_retries=0,
+        retry_base_seconds=0,
+        timeout_seconds=1,
+        transport=sdk_error_transport,
+    )
+    try:
+        sdk_error_client.models.list(request_options={"max_retries": 0})
+    except RunInfraConnectionError as error:
+        assert_redacted_connection_error(error, "security.api_key_redaction.local sdk_error")
+        assert_credential_placement(sdk_error_transport.calls, "security.api_key_redaction.local sdk_error")
+    except BaseException as error:
+        raise AssertionError(
+            f"security.api_key_redaction.local sdk_error expected RunInfraConnectionError, got {error.__class__.__name__}"
+        ) from error
+    else:
+        raise AssertionError("security.api_key_redaction.local sdk_error unexpectedly succeeded")
+
+    class FailingBodyResponse:
+        status = 200
+        headers = {"content-type": "application/json", "x-request-id": "req-local-api-key-body-redaction"}
+
+        def __enter__(self) -> "FailingBodyResponse":
+            return self
+
+        def __exit__(self, *_args: Any) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            raise OSError(f"body reader exposed {secret}")
+
+    body_calls: List[Any] = []
+    original_urlopen = runinfra_module.urllib.request.urlopen
+
+    def fake_urlopen(request: Any, timeout: Optional[float] = None) -> FailingBodyResponse:
+        del timeout
+        body_calls.append(request)
+        return FailingBodyResponse()
+
+    runinfra_module.urllib.request.urlopen = fake_urlopen
+    try:
+        body_client = RunInfra(
+            api_key=secret,
+            base_url="http://localhost:1/v1",
+            max_retries=0,
+            retry_base_seconds=0,
+            timeout_seconds=1,
+            transport=runinfra_module._default_transport(1),
+        )
+        try:
+            body_client.models.list(request_options={"max_retries": 0})
+        except RunInfraConnectionError as error:
+            assert_redacted_connection_error(error, "security.api_key_redaction.local body")
+        except BaseException as error:
+            raise AssertionError(
+                f"security.api_key_redaction.local body expected RunInfraConnectionError, got {error.__class__.__name__}"
+            ) from error
+        else:
+            raise AssertionError("security.api_key_redaction.local body unexpectedly succeeded")
+    finally:
+        runinfra_module.urllib.request.urlopen = original_urlopen
+    if len(body_calls) != 1:
+        raise AssertionError(f"security.api_key_redaction.local body expected one local request, got {len(body_calls)}")
+    if secret in getattr(body_calls[0], "full_url", ""):
+        raise AssertionError("security.api_key_redaction.local body leaked the API key in the request URL")
+    if body_calls[0].headers.get("Authorization") != f"Bearer {secret}":
+        raise AssertionError("security.api_key_redaction.local body did not send the API key only as a bearer header")
+
+    class LocalApiKeyRedactionJsonBodyTransport:
+        def __init__(self, secret_value: str) -> None:
+            self.secret = secret_value
+            self.calls: List[Any] = []
+
+        def chunks(self) -> Iterable[bytes]:
+            raise OSError(f"custom body reader exposed {self.secret}")
+            yield b""  # pragma: no cover
+
+        def __call__(self, request: Any) -> RunInfraResponse:
+            self.calls.append(request)
+            return RunInfraResponse(
+                200,
+                {"content-type": "application/json", "x-request-id": "req-local-api-key-custom-body-redaction"},
+                self.chunks(),
+            )
+
+    custom_body_transport = LocalApiKeyRedactionJsonBodyTransport(secret)
+    custom_body_client = RunInfra(
+        api_key=secret,
+        base_url="http://localhost:1/v1",
+        max_retries=0,
+        retry_base_seconds=0,
+        timeout_seconds=1,
+        transport=custom_body_transport,
+    )
+    try:
+        custom_body_client.models.list(request_options={"max_retries": 0})
+    except RunInfraConnectionError as error:
+        assert_redacted_connection_error(error, "security.api_key_redaction.local custom_body")
+        assert_credential_placement(custom_body_transport.calls, "security.api_key_redaction.local custom_body")
+    except BaseException as error:
+        raise AssertionError(
+            f"security.api_key_redaction.local custom_body expected RunInfraConnectionError, got {error.__class__.__name__}"
+        ) from error
+    else:
+        raise AssertionError("security.api_key_redaction.local custom_body unexpectedly succeeded")
+
+    status_transport = LocalRetryTransport([
+        RunInfraResponse(
+            401,
+            {"content-type": "application/json", "x-request-id": "req-local-api-key-status-redaction"},
+            json.dumps({"error": {"message": f"status body exposed {secret}", "type": "auth_error"}}).encode("utf-8"),
+        )
+    ])
+    status_client = RunInfra(
+        api_key=secret,
+        base_url="http://localhost:1/v1",
+        max_retries=0,
+        retry_base_seconds=0,
+        timeout_seconds=1,
+        transport=status_transport,
+    )
+    try:
+        status_client.models.list(request_options={"max_retries": 0})
+    except AuthenticationError as error:
+        assert_redacted_public_error(error, "security.api_key_redaction.local status")
+        assert_credential_placement(status_transport.calls, "security.api_key_redaction.local status")
+    except BaseException as error:
+        raise AssertionError(
+            f"security.api_key_redaction.local status expected AuthenticationError, got {error.__class__.__name__}"
+        ) from error
+    else:
+        raise AssertionError("security.api_key_redaction.local status unexpectedly succeeded")
+
+    class LocalApiKeyRedactionStreamTransport:
+        def __init__(self, secret_value: str) -> None:
+            self.secret = secret_value
+            self.calls: List[Any] = []
+
+        def chunks(self) -> Iterable[bytes]:
+            raise OSError(f"stream reader exposed {self.secret}")
+            yield b""  # pragma: no cover
+
+        def __call__(self, request: Any) -> RunInfraResponse:
+            self.calls.append(request)
+            return RunInfraResponse(
+                200,
+                {"content-type": "text/event-stream", "x-request-id": "req-local-api-key-stream-redaction"},
+                self.chunks(),
+            )
+
+    stream_transport = LocalApiKeyRedactionStreamTransport(secret)
+    stream_client = RunInfra(
+        api_key=secret,
+        base_url="http://localhost:1/v1",
+        max_retries=0,
+        retry_base_seconds=0,
+        timeout_seconds=1,
+        transport=stream_transport,
+    )
+    stream = stream_client.chat.completions.create(
+        model="runinfra-local-redaction-model",
+        messages=[{"role": "user", "content": "local api key redaction canary"}],
+        stream=True,
+        request_options={"max_retries": 0},
+    )
+    try:
+        next(iter(stream))
+    except RunInfraConnectionError as error:
+        assert_redacted_connection_error(error, "security.api_key_redaction.local stream")
+        assert_credential_placement(stream_transport.calls, "security.api_key_redaction.local stream")
+        return {
+            "errorType": "connection_error",
+            "errorStatus": 0,
+            "authorization": "bearer",
+            "urlRedacted": "present",
+            "transportErrorRedacted": "present",
+            "sdkErrorCauseRedacted": "present",
+            "bodyReadErrorRedacted": "present",
+            "customBodyReadErrorRedacted": "present",
+            "statusErrorRedacted": "present",
+            "streamReadErrorRedacted": "present",
+        }
+    except BaseException as error:
+        raise AssertionError(
+            f"security.api_key_redaction.local stream expected RunInfraConnectionError, got {error.__class__.__name__}"
+        ) from error
+    raise AssertionError("security.api_key_redaction.local stream unexpectedly succeeded")
 
 
 def _retry_safety_get_local() -> Dict[str, Any]:

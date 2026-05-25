@@ -220,6 +220,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `request.extra_body.local`
 - `request.unknown_fields.local`
 - `browser.api_key_guard.local`
+- `security.api_key_redaction.local`
 - `error.body.unsupported_parameter`
 - `retry.safety.get.local`
 - `retry.safety.post.requires_idempotency.local`
@@ -323,6 +324,11 @@ extensions still have to use `extraBody` / `extra_body`.
 Local browser API-key guard rows prove the shipped TypeScript artifact fails
 closed in browser-like runtimes unless `dangerouslyAllowBrowser: true` is set,
 and that the Python package exposes no browser-token helper surface.
+Local API-key redaction rows prove initial transport failures, response body
+read failures, status error bodies, and stream read failures do not echo the
+configured API key, while the request URL stays credential-free and the key is
+sent only as an `Authorization: Bearer` header. Python rows also assert
+traceback output and explicit exception chains do not retain unredacted causes.
 Webhook signature rows use installed package artifacts and deterministic local
 payloads because they are verification helpers, not live delivery endpoints.
 

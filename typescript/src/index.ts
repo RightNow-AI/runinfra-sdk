@@ -546,12 +546,14 @@ export class RunInfraAudioResponse {
   readonly requestId?: string;
   private readonly response: Response;
   private readonly readTimeoutMs?: number;
+  private readonly sensitiveValues: readonly string[];
 
-  constructor(response: Response, readTimeoutMs?: number) {
+  constructor(response: Response, readTimeoutMs?: number, sensitiveValues: readonly string[] = []) {
     this.response = response;
     this.contentType = response.headers.get("content-type") ?? "application/octet-stream";
     this.requestId = response.headers.get("x-request-id") ?? undefined;
     this.readTimeoutMs = readTimeoutMs;
+    this.sensitiveValues = sensitiveValues;
   }
 
   arrayBuffer(): Promise<ArrayBuffer> {
@@ -582,7 +584,7 @@ export class RunInfraAudioResponse {
       try {
         return await bodyRead;
       } catch (error) {
-        throw normalizeTransportError(error, this.requestId);
+        throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
       }
     }
 
@@ -598,7 +600,7 @@ export class RunInfraAudioResponse {
         }),
       ]);
     } catch (error) {
-      throw normalizeTransportError(error, this.requestId);
+      throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
     }
@@ -610,11 +612,13 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
   readonly response: Response;
   readonly requestId?: string;
   private readonly readTimeoutMs?: number;
+  private readonly sensitiveValues: readonly string[];
 
-  constructor(response: Response, readTimeoutMs?: number) {
+  constructor(response: Response, readTimeoutMs?: number, sensitiveValues: readonly string[] = []) {
     this.response = response;
     this.requestId = response.headers.get("x-request-id") ?? undefined;
     this.readTimeoutMs = readTimeoutMs;
+    this.sensitiveValues = sensitiveValues;
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<TEvent> {
@@ -694,8 +698,7 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
         if (parsed) yield parsed;
       }
     } catch (error) {
-      if (error instanceof RunInfraError) throw error;
-      throw normalizeTransportError(error, this.requestId);
+      throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
     } finally {
       if (!readerDone) {
         try {
@@ -1375,7 +1378,10 @@ async function raiseForStatus(response: Response): Promise<void> {
   throw new RunInfraError(message, { status: response.status, type, requestId });
 }
 
-async function parseJsonResponse<TResponse>(response: Response): Promise<TResponse> {
+async function parseJsonResponse<TResponse>(
+  response: Response,
+  sensitiveValues: readonly string[] = [],
+): Promise<TResponse> {
   const requestId = response.headers.get("x-request-id") ?? undefined;
   const idempotentReplay =
     response.headers.get("x-runinfra-idempotent-replay")?.trim().toLowerCase() === "true";
@@ -1383,7 +1389,7 @@ async function parseJsonResponse<TResponse>(response: Response): Promise<TRespon
   try {
     payload = await response.json();
   } catch (error) {
-    throw new ResponseBodyReadError(normalizeTransportError(error, requestId));
+    throw new ResponseBodyReadError(normalizeTransportError(error, requestId, sensitiveValues));
   }
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
     return {
@@ -1418,18 +1424,53 @@ class ResponseBodyReadError extends Error {
   }
 }
 
-function normalizeTransportError(error: unknown, requestId?: string): RunInfraError {
-  if (error instanceof RunInfraError) return error;
+function redactSensitiveValues(message: string, sensitiveValues: readonly string[] = []): string {
+  let redacted = message;
+  for (const value of sensitiveValues) {
+    if (value) redacted = redacted.split(value).join("[redacted]");
+  }
+  return redacted;
+}
+
+function redactRunInfraError(error: RunInfraError, sensitiveValues: readonly string[]): RunInfraError {
+  const message = redactSensitiveValues(error.message, sensitiveValues);
+  if (error instanceof AuthenticationError) return new AuthenticationError(message, error.status, error.requestId);
+  if (error instanceof PermissionDeniedError) return new PermissionDeniedError(message, error.status, error.requestId);
+  if (error instanceof RateLimitError) {
+    return new RateLimitError(message, error.status, error.requestId, error.retryAfterMs);
+  }
+  if (error instanceof InsufficientCreditsError) return new InsufficientCreditsError(message, error.status, error.requestId);
+  if (error instanceof DeploymentError) return new DeploymentError(message, error.status, error.requestId);
+  if (error instanceof ModelNotFoundError) return new ModelNotFoundError(message, error.status, error.requestId);
+  if (error instanceof RunInfraTimeoutError) return new RunInfraTimeoutError(message, error.requestId);
+  if (error instanceof RunInfraConnectionError) return new RunInfraConnectionError(message, error.requestId);
+  if (error instanceof RunInfraStreamParseError) return new RunInfraStreamParseError(message, error.requestId);
+  if (error instanceof UnsupportedOperationError) return new UnsupportedOperationError(message);
+  if (error instanceof WebhookVerificationError) return new WebhookVerificationError(message);
+  return new RunInfraError(message, {
+    status: error.status,
+    type: error.type,
+    requestId: error.requestId,
+    retryAfterMs: error.retryAfterMs,
+  });
+}
+
+function normalizeTransportError(
+  error: unknown,
+  requestId?: string,
+  sensitiveValues: readonly string[] = [],
+): RunInfraError {
+  if (error instanceof RunInfraError) return redactRunInfraError(error, sensitiveValues);
   if (
     error instanceof DOMException &&
     error.name === "AbortError"
   ) {
-    return new RunInfraTimeoutError(error.message, requestId);
+    return new RunInfraTimeoutError(redactSensitiveValues(error.message, sensitiveValues), requestId);
   }
   if (error instanceof Error && error.name === "AbortError") {
-    return new RunInfraTimeoutError(error.message, requestId);
+    return new RunInfraTimeoutError(redactSensitiveValues(error.message, sensitiveValues), requestId);
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactSensitiveValues(error instanceof Error ? error.message : String(error), sensitiveValues);
   return new RunInfraConnectionError(message, requestId);
 }
 
@@ -1596,7 +1637,7 @@ export class RunInfra {
             typedBodyKeys: SPEECH_REQUEST_KEYS,
             binary: true,
           }, requestOptions);
-          return new RunInfraAudioResponse(response, this.requestTimeoutMs(requestOptions));
+          return new RunInfraAudioResponse(response, this.requestTimeoutMs(requestOptions), [this.apiKey]);
         },
       },
       transcriptions: {
@@ -1691,7 +1732,7 @@ export class RunInfra {
   ): Promise<TResponse | RunInfraStream> {
     if (options.stream) {
       const response = await this.rawRequest(path, options, requestOptions);
-      return new RunInfraStream(response, this.requestTimeoutMs(requestOptions));
+      return new RunInfraStream(response, this.requestTimeoutMs(requestOptions), [this.apiKey]);
     }
     return this.sendWithRetry(path, options, requestOptions, parseJsonResponse<TResponse>);
   }
@@ -1716,7 +1757,7 @@ export class RunInfra {
     path: string,
     options: RequestOptions,
     requestOptions: RunInfraRequestOptions = {},
-    consumeResponse: (response: Response) => Promise<TResponse>,
+    consumeResponse: (response: Response, sensitiveValues: readonly string[]) => Promise<TResponse>,
   ): Promise<TResponse> {
     const validatedRequestOptions = validateRequestOptions(requestOptions);
     const clientRequestId = validateSdkIdentifierHeader(
@@ -1805,7 +1846,7 @@ export class RunInfra {
           continue;
         }
         await raiseForStatus(response);
-        return await consumeResponse(response);
+        return await consumeResponse(response, [this.apiKey]);
       } catch (error) {
         if (error instanceof ResponseBodyReadError) {
           if (canRetry && attempt < maxRetries) {
@@ -1813,10 +1854,10 @@ export class RunInfra {
             await sleep(retryDelayMs(attempt, retryBaseMs));
             continue;
           }
-          throw error.error;
+          throw normalizeTransportError(error.error, error.error.requestId, [this.apiKey]);
         }
-        if (error instanceof RunInfraError) throw error;
-        if (!canRetry || attempt >= maxRetries) throw normalizeTransportError(error);
+        if (error instanceof RunInfraError) throw normalizeTransportError(error, error.requestId, [this.apiKey]);
+        if (!canRetry || attempt >= maxRetries) throw normalizeTransportError(error, undefined, [this.apiKey]);
         attempt += 1;
         await sleep(retryDelayMs(attempt, retryBaseMs));
       } finally {

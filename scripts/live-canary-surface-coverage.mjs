@@ -124,6 +124,7 @@ export const publicSurfaceCoverage = [
     rows: ["request.extra_body.local", "request.unknown_fields.local", "error.body.unsupported_parameter"],
   },
   { surface: "browser API-key guard", rows: ["browser.api_key_guard.local"] },
+  { surface: "API-key redaction", rows: ["security.api_key_redaction.local"] },
   {
     surface: "error mapping",
     rows: [
@@ -132,6 +133,7 @@ export const publicSurfaceCoverage = [
       "error.request.invalid_options",
       "error.insufficient_credits.local",
       "error.rate_limit.local",
+      "security.api_key_redaction.local",
       "error.body.unsupported_parameter",
     ],
   },

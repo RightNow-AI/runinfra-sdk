@@ -53,6 +53,9 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 - Added a local strict canary row proving the shipped SDK fails closed in
   browser-like runtimes unless `dangerouslyAllowBrowser: true` is explicitly
   set.
+- Added a local strict canary row proving initial transport, response body read,
+  status error body, and stream read public errors redact the configured API
+  key while still sending it only as a bearer header.
 - Added a local strict canary row proving 429 rate-limit responses map to
   `RateLimitError` with retry-after and request-id metadata.
 - Added a local strict canary row proving 402 insufficient-credits responses

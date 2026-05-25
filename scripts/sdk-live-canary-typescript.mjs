@@ -962,6 +962,200 @@ function assertBrowserApiKeyGuard() {
   }
 }
 
+async function assertApiKeyRedaction() {
+  const secret = "sk-ri-redact-local";
+  const assertRedactedPublicError = (error, label) => {
+    const serialized = JSON.stringify({
+      name: error.name,
+      message: error.message,
+      status: error.status,
+      type: error.type,
+      requestId: error.requestId,
+    });
+    if (serialized.includes(secret)) {
+      throw new Error(`${label} leaked the API key in the public error`);
+    }
+    return { errorType: error.type, errorStatus: error.status };
+  };
+  const assertRedactedConnectionError = (error, label) => {
+    if (!(error instanceof RunInfraConnectionError) || error.type !== "connection_error") {
+      throw new Error(`${label} expected connection_error, got ${error?.type ?? error?.name ?? typeof error}`);
+    }
+    return assertRedactedPublicError(error, label);
+  };
+  const assertCredentialPlacement = (calls, label) => {
+    if (calls.length !== 1) {
+      throw new Error(`${label} expected one local request, got ${calls.length}`);
+    }
+    if (String(calls[0].url).includes(secret)) {
+      throw new Error(`${label} leaked the API key in the request URL`);
+    }
+    if (calls[0].headers?.Authorization !== `Bearer ${secret}`) {
+      throw new Error(`${label} did not send the API key only as a bearer header`);
+    }
+  };
+
+  const transportCalls = [];
+  const transportClient = client({
+    apiKey: secret,
+    baseURL: "http://localhost:1/v1",
+    maxRetries: 0,
+    retryBaseMs: 0,
+    fetch: async (url, init = {}) => {
+      transportCalls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
+      throw new Error(`lower transport exposed ${secret}`);
+    },
+  });
+  let transportFailed = false;
+  try {
+    await transportClient.models.list({ maxRetries: 0 });
+  } catch (error) {
+    transportFailed = true;
+    assertRedactedConnectionError(error, "security.api_key_redaction.local transport");
+    assertCredentialPlacement(transportCalls, "security.api_key_redaction.local transport");
+  }
+  if (!transportFailed) {
+    throw new Error("security.api_key_redaction.local transport unexpectedly succeeded");
+  }
+
+  const sdkErrorCalls = [];
+  const sdkErrorClient = client({
+    apiKey: secret,
+    baseURL: "http://localhost:1/v1",
+    maxRetries: 0,
+    retryBaseMs: 0,
+    fetch: async (url, init = {}) => {
+      sdkErrorCalls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
+      const error = new RunInfraConnectionError("safe public message", "req-local-api-key-sdk-cause-redaction");
+      Object.defineProperty(error, "cause", {
+        value: new Error(`sdk cause exposed ${secret}`),
+        configurable: true,
+      });
+      throw error;
+    },
+  });
+  let sdkErrorFailed = false;
+  try {
+    await sdkErrorClient.models.list({ maxRetries: 0 });
+  } catch (error) {
+    sdkErrorFailed = true;
+    assertRedactedConnectionError(error, "security.api_key_redaction.local sdk_error");
+    if (String(error?.cause ?? "").includes(secret)) {
+      throw new Error("security.api_key_redaction.local sdk_error leaked the API key in the error cause");
+    }
+    assertCredentialPlacement(sdkErrorCalls, "security.api_key_redaction.local sdk_error");
+  }
+  if (!sdkErrorFailed) {
+    throw new Error("security.api_key_redaction.local sdk_error unexpectedly succeeded");
+  }
+
+  const bodyCalls = [];
+  const bodyClient = client({
+    apiKey: secret,
+    baseURL: "http://localhost:1/v1",
+    maxRetries: 0,
+    retryBaseMs: 0,
+    fetch: async (url, init = {}) => {
+      bodyCalls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.error(new Error(`body reader exposed ${secret}`));
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json", "x-request-id": "req-local-api-key-body-redaction" },
+      });
+    },
+  });
+  let bodyFailed = false;
+  try {
+    await bodyClient.models.list({ maxRetries: 0 });
+  } catch (error) {
+    bodyFailed = true;
+    assertRedactedConnectionError(error, "security.api_key_redaction.local body");
+    assertCredentialPlacement(bodyCalls, "security.api_key_redaction.local body");
+  }
+  if (!bodyFailed) {
+    throw new Error("security.api_key_redaction.local body unexpectedly succeeded");
+  }
+
+  const statusCalls = [];
+  const statusClient = client({
+    apiKey: secret,
+    baseURL: "http://localhost:1/v1",
+    maxRetries: 0,
+    retryBaseMs: 0,
+    fetch: async (url, init = {}) => {
+      statusCalls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
+      return new Response(
+        JSON.stringify({ error: { message: `status body exposed ${secret}`, type: "auth_error" } }),
+        {
+          status: 401,
+          headers: { "content-type": "application/json", "x-request-id": "req-local-api-key-status-redaction" },
+        },
+      );
+    },
+  });
+  let statusFailed = false;
+  try {
+    await statusClient.models.list({ maxRetries: 0 });
+  } catch (error) {
+    statusFailed = true;
+    if (!(error instanceof AuthenticationError) || error.type !== "auth_error") {
+      throw new Error(
+        `security.api_key_redaction.local status expected auth_error, got ${error?.type ?? error?.name ?? typeof error}`,
+      );
+    }
+    assertRedactedPublicError(error, "security.api_key_redaction.local status");
+    assertCredentialPlacement(statusCalls, "security.api_key_redaction.local status");
+  }
+  if (!statusFailed) {
+    throw new Error("security.api_key_redaction.local status unexpectedly succeeded");
+  }
+
+  const streamCalls = [];
+  const streamClient = client({
+    apiKey: secret,
+    baseURL: "http://localhost:1/v1",
+    maxRetries: 0,
+    retryBaseMs: 0,
+    fetch: async (url, init = {}) => {
+      streamCalls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.error(new Error(`stream reader exposed ${secret}`));
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream", "x-request-id": "req-local-api-key-stream-redaction" },
+      });
+    },
+  });
+  const stream = await streamClient.chat.completions.create({
+    model: "runinfra-local-redaction-model",
+    messages: [{ role: "user", content: "local api key redaction canary" }],
+    stream: true,
+  }, { maxRetries: 0 });
+  try {
+    await stream[Symbol.asyncIterator]().next();
+  } catch (error) {
+    assertRedactedConnectionError(error, "security.api_key_redaction.local stream");
+    assertCredentialPlacement(streamCalls, "security.api_key_redaction.local stream");
+    return {
+      errorType: "connection_error",
+      errorStatus: 0,
+      authorization: "bearer",
+      urlRedacted: "present",
+      transportErrorRedacted: "present",
+      sdkErrorCauseRedacted: "present",
+      bodyReadErrorRedacted: "present",
+      statusErrorRedacted: "present",
+      streamReadErrorRedacted: "present",
+    };
+  }
+  throw new Error("security.api_key_redaction.local stream unexpectedly succeeded");
+}
+
 function assertRetryableError(error, label) {
   if (!(error instanceof RunInfraError) || error.status !== 503) {
     throw new Error(`${label} expected local 503 RunInfraError, got ${error?.status ?? error?.name ?? typeof error}`);
@@ -1946,6 +2140,8 @@ await record("request.unknown_fields.local", [], async () => {
 });
 
 await record("browser.api_key_guard.local", [], async () => assertBrowserApiKeyGuard());
+
+await record("security.api_key_redaction.local", [], async () => assertApiKeyRedaction());
 
 await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
   try {

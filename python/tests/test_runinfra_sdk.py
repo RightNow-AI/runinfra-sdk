@@ -10,6 +10,7 @@ import re
 import stat
 import tarfile
 import tempfile
+import traceback
 import unittest
 import warnings
 import zipfile
@@ -68,6 +69,17 @@ def json_response(payload, status=200, headers=None):
 
 
 class RunInfraPythonSdkTest(unittest.TestCase):
+    def assertSecretNotInExceptionChain(self, error, secret):
+        self.assertNotIn(secret, str(error))
+        self.assertNotIn(secret, "".join(traceback.format_exception(error)))
+        current = error
+        seen = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            self.assertNotIn(secret, str(current))
+            self.assertNotIn(secret, repr(current))
+            current = current.__cause__ or current.__context__
+
     def test_readme_documents_explicit_environment_guards(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
@@ -613,6 +625,21 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("browser_token_surface", python_canary)
         self.assertIn(row, live_canaries)
         self.assertIn("browser API-key guard", live_canaries)
+
+    def test_child_canaries_cover_local_api_key_redaction_row(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        row = "security.api_key_redaction.local"
+
+        self.assertIn(f'"{row}"', runner)
+        self.assertIn(f'record("{row}"', typescript_canary)
+        self.assertIn("assertApiKeyRedaction", typescript_canary)
+        self.assertIn(f'"{row}"', python_canary)
+        self.assertIn("assert_api_key_redaction", python_canary)
+        self.assertIn(row, live_canaries)
+        self.assertIn("API-key redaction", live_canaries)
 
     def test_runner_has_public_surface_coverage_gate(self):
         scripts_dir = Path(__file__).resolve().parents[2].joinpath("scripts")
@@ -2635,6 +2662,167 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         with self.assertRaises(RunInfraTimeoutError):
             client.models.list()
+
+    def test_redacts_api_keys_from_exhausted_transport_errors(self):
+        api_key = "sk-ri-redact-local"
+
+        def transport(_request):
+            raise OSError(f"lower transport exposed {api_key}")
+
+        client = RunInfra(
+            api_key=api_key,
+            transport=transport,
+            max_retries=0,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraConnectionError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.status, 0)
+        self.assertEqual(raised.exception.type, "connection_error")
+        self.assertSecretNotInExceptionChain(raised.exception, api_key)
+
+    def test_redacts_api_keys_from_sdk_error_causes(self):
+        api_key = "sk-ri-redact-local"
+
+        def transport(_request):
+            try:
+                raise OSError(f"sdk cause exposed {api_key}")
+            except OSError as exc:
+                raise RunInfraConnectionError(
+                    "safe public message",
+                    status=0,
+                    error_type="connection_error",
+                    request_id="req-sdk-cause-redact",
+                ) from exc
+
+        client = RunInfra(
+            api_key=api_key,
+            transport=transport,
+            max_retries=0,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraConnectionError) as raised:
+            client.models.list()
+
+        self.assertEqual(str(raised.exception), "safe public message")
+        self.assertEqual(raised.exception.request_id, "req-sdk-cause-redact")
+        self.assertSecretNotInExceptionChain(raised.exception, api_key)
+
+    def test_redacts_api_keys_from_default_transport_body_read_errors(self):
+        api_key = "sk-ri-redact-local"
+
+        class FailingBodyResponse:
+            status = 200
+            headers = {"content-type": "application/json", "x-request-id": "req-body-redact"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                raise OSError(f"body reader exposed {api_key}")
+
+        with patch("urllib.request.urlopen", return_value=FailingBodyResponse()):
+            client = RunInfra(
+                api_key=api_key,
+                transport=runinfra._default_transport(120),
+                max_retries=0,
+            )
+
+            with self.assertRaises(RunInfraConnectionError) as raised:
+                client.models.list()
+
+        self.assertEqual(raised.exception.request_id, "req-body-redact")
+        self.assertEqual(raised.exception.type, "connection_error")
+        self.assertSecretNotInExceptionChain(raised.exception, api_key)
+
+    def test_redacts_api_keys_from_status_error_bodies(self):
+        api_key = "sk-ri-redact-local"
+        client = RunInfra(
+            api_key=api_key,
+            transport=RecordingTransport(
+                json_response(
+                    {"error": {"message": f"auth body exposed {api_key}", "type": "auth_error"}},
+                    status=401,
+                    headers={"x-request-id": "req-status-redact"},
+                ),
+            ),
+            max_retries=0,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(AuthenticationError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.request_id, "req-status-redact")
+        self.assertEqual(raised.exception.type, "auth_error")
+        self.assertSecretNotInExceptionChain(raised.exception, api_key)
+
+    def test_redacts_api_keys_from_custom_transport_iterable_body_read_errors(self):
+        api_key = "sk-ri-redact-local"
+
+        def chunks():
+            raise OSError(f"custom body exposed {api_key}")
+            yield b""  # pragma: no cover
+
+        def transport(_request):
+            return RunInfraResponse(
+                200,
+                {"content-type": "application/json", "x-request-id": "req-custom-body-redact"},
+                chunks(),
+            )
+
+        client = RunInfra(
+            api_key=api_key,
+            transport=transport,
+            max_retries=0,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraConnectionError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.request_id, "req-custom-body-redact")
+        self.assertEqual(raised.exception.type, "connection_error")
+        self.assertSecretNotInExceptionChain(raised.exception, api_key)
+
+    def test_redacts_api_keys_from_stream_read_errors(self):
+        api_key = "sk-ri-redact-local"
+
+        def chunks():
+            raise OSError(f"stream reader exposed {api_key}")
+            yield b""  # pragma: no cover
+
+        def transport(_request):
+            return RunInfraResponse(
+                200,
+                {"content-type": "text/event-stream", "x-request-id": "req-stream-redact"},
+                chunks(),
+            )
+
+        client = RunInfra(
+            api_key=api_key,
+            transport=transport,
+            max_retries=0,
+            retry_base_seconds=0,
+        )
+
+        stream = client.chat.completions.create(
+            model="llama",
+            messages=[{"role": "user", "content": "hello"}],
+            stream=True,
+        )
+        with self.assertRaises(RunInfraConnectionError) as raised:
+            next(iter(stream))
+
+        self.assertEqual(raised.exception.request_id, "req-stream-redact")
+        self.assertEqual(raised.exception.type, "connection_error")
+        self.assertSecretNotInExceptionChain(raised.exception, api_key)
 
     def test_default_transport_maps_body_read_failures_with_request_ids(self):
         class FailingBodyResponse:
