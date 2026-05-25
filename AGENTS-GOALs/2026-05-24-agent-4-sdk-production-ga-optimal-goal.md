@@ -594,3 +594,21 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Missing-env patch generation from the refreshed redacted RunPipe env-backed readiness report wrote `18` placeholder/default assignments and did not include `RUNINFRA_API_KEY=` or `RUNINFRA_LLM_MODEL=`.
 - `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports still cannot promote as GA.
 - No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T02:26:55+03:00 - Agent 4
+- Re-read current SDK state after commit `3c12ffb`. The SDK repo is clean on `main` and remains ahead of `origin/main` by `139` local commits.
+- Reconfirmed the current no-env and RunPipe env-backed readiness blockers:
+  - No-env strict artifact readiness: `28` ready rows and `30` blocked rows.
+  - No-env artifact live canaries: TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+  - RunPipe env-backed strict preflight: `43` ready rows and `15` blocked rows.
+  - Source digest remains `98eb288d2d2daa937807fddfa2eccf9afc9dbbc0886ee6a9aa43dd370ceeefc8`, source file count `37`.
+- Rechecked canonical registry availability without publishing. `node scripts\verify-clean-installs.mjs --package both --mode registry --version 0.1.4 --registry-attempts 1 --registry-retry-delay-ms 1000` still fails at preflight because npm `@runinfra/sdk@0.1.4` and PyPI `runinfra==0.1.4` are not available from the canonical registries.
+- Rechecked GitHub code-scanning release gate through the authenticated GitHub CLI token without printing the token. `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` passed with no open high/critical alerts.
+- Refreshed model discovery against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local`. The redacted report completed against `https://api.runinfra.ai/v1`, catalog count `1`, classified count `1`, invalid count `0`. It found only an LLM candidate bucket and no embedding, image, TTS, or ASR candidates, so the current catalog cannot unblock multimodal strict readiness by itself.
+- Rechecked RunPod state read-only. There is still one existing serverless LLM canary endpoint and no pods. No existing endpoint was found for embedding, image, TTS, ASR, or voice pipeline canary coverage. Do not copy raw RunPod template output into commits because template env fields can include sensitive operational details.
+- Rechecked local GA gap candidates before editing code:
+  - Python async/sync production ergonomics are already closed for `0.1.4`: README and changelog document sync-only use, FastAPI/asyncio worker-thread/background-job patterns, and `AsyncRunInfra` absence; Python tests assert this.
+  - Unshipped webhook delivery create/list are already kept out of the public runtime surface; README/changelogs/canary rows and clean-install checks assert absence.
+  - TS/Python request parameter surfaces are already closed around explicit typed parameters plus explicit `extraBody` escape hatches; unknown-field and extra-body canary rows cover this.
+- Current GA blockers remain external or live-input based, not a known local SDK code gap: trusted-publishing release has not happened, canonical registry install/import proof cannot pass, strict live multimodal inputs and deployed canary backends are missing, and promotion reports still correctly reject the candidate.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
