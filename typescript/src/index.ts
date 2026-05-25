@@ -159,6 +159,7 @@ export interface ResponsesStreamEvent extends Record<string, unknown> {
 export interface ResponsesCreateResponse extends RunInfraRequestMetadata {
   id?: string;
   object?: string;
+  created_at?: number;
   status?: string;
   model?: string;
   output_text?: string;

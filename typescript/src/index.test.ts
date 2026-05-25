@@ -19,6 +19,7 @@ import {
   RunInfraTimeoutError,
   WebhookVerificationError,
   constructWebhookEvent,
+  type ResponsesCreateResponse,
   type RunInfraOptions,
   type RunInfraRequestOptions,
 } from "./index";
@@ -2154,7 +2155,22 @@ class RunInfra:
     }
 
     expect(readme).toContain("LLM pass-through options are typed for parity");
+    expect(readme).toContain(
+      "- Responses: `model`, `input`, `stream`, `instructions`, `temperature`,",
+    );
+    expect(readme).toContain(
+      "`top_p`, `tools`, `tool_choice`, `response_format`, and `max_output_tokens`.",
+    );
     expect(readme).toContain("not GA-verified until strict canary rows assert backend support");
+  });
+
+  it("types TypeScript Responses envelopes with OpenAI-compatible created_at", () => {
+    const response = {
+      id: "resp_created_at",
+      created_at: 1_741_476_542,
+    } satisfies ResponsesCreateResponse;
+
+    expect(response.created_at).toBe(1_741_476_542);
   });
 
   it("types TypeScript embeddings and audio auxiliary OpenAI-compatible parameters", () => {
@@ -3004,8 +3020,11 @@ class RunInfra:
       "C:\\Users\\someone\\project",
       "/Users/someone/project/.env.local",
       "/home/someone/project/.env.local",
-      ".npmrc",
-      "package/.npmrc",
+      "//registry.npmjs.org/:_authToken=TOKEN",
+      "[pypi]\nusername = __token__\npassword = TOKEN",
+      "machine upload.pypi.org login __token__ password TOKEN",
+      "[global]\nindex-url = https://user:pass@example.invalid/simple",
+      "[global]\nextra-index-url = https://user:pass@example.invalid/simple",
       ".env",
       ".env.local",
       "package/.env.local",
@@ -3016,6 +3035,7 @@ class RunInfra:
     for (const sample of samples) {
       expect(findForbiddenContent(sample), sample).not.toBeNull();
     }
+    expect(findForbiddenContent("Package scanners reject `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini` files.")).toBeNull();
   });
 
   it("rejects npm package tarballs with wrong package metadata", () => {
@@ -3601,6 +3621,82 @@ with open(report, "w", encoding="utf-8") as handle:
       };
       expect(report.parity?.errors).toContain(`typescript SDK version 0.0.0 != ${RUNINFRA_SDK_VERSION}`);
       expect(report.parity?.errors).toContain(`python SDK version 0.0.0 != ${RUNINFRA_SDK_VERSION}`);
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails strict parent live-canary parity when child reports contain failed or skipped rows", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-child-status-parity-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const rowsJson = JSON.stringify(expectedRows);
+    try {
+      mkdirSync(join(tmp, "scripts"), { recursive: true });
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-typescript.mjs"), `
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+const expectedRows = ${rowsJson};
+const report = process.argv[process.argv.indexOf("--report") + 1];
+const results = expectedRows.map((name, index) => ({
+  name,
+  status: index === 0 ? "failed" : index === 1 ? "skipped" : "passed",
+}));
+mkdirSync(dirname(report), { recursive: true });
+writeFileSync(report, JSON.stringify({
+  language: "typescript",
+  sdkVersion: "${RUNINFRA_SDK_VERSION}",
+  strict: true,
+  baseURL: "https://api.runinfra.ai/v1",
+  summary: { passed: expectedRows.length - 2, failed: 1, skipped: 1 },
+  results,
+}));
+`);
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-python.py"), `
+import json
+import os
+import sys
+expected_rows = ${JSON.stringify(expectedRows)}
+report = sys.argv[sys.argv.index("--report") + 1]
+os.makedirs(os.path.dirname(report), exist_ok=True)
+with open(report, "w", encoding="utf-8") as handle:
+    json.dump({
+        "language": "python",
+        "sdkVersion": "${RUNINFRA_SDK_VERSION}",
+        "strict": True,
+        "baseURL": "https://api.runinfra.ai/v1",
+        "summary": {"passed": len(expected_rows), "failed": 0, "skipped": 0},
+        "results": [{"name": name, "status": "passed"} for name in expected_rows],
+    }, handle)
+`);
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "source",
+        "--strict",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain(`typescript row ${expectedRows[0]} must be passed`);
+      expect(report.parity?.errors).toContain(`typescript row ${expectedRows[1]} must be passed`);
+      expect(report.parity?.errors).toContain(`typescript summary failed count must be 0`);
+      expect(report.parity?.errors).toContain(`typescript summary skipped count must be 0`);
       expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });

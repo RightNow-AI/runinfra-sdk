@@ -1156,20 +1156,64 @@ function reportRowErrors(report) {
   if (!report || typeof report !== "object" || !Array.isArray(report.results)) {
     return [`${report?.language ?? "unknown"} report missing results`];
   }
+  const language = String(report.language ?? "unknown");
   const errors = [];
   if (report.sdkVersion !== expectedSdkVersion) {
-    errors.push(`${report.language} SDK version ${String(report.sdkVersion ?? "missing")} != ${expectedSdkVersion}`);
+    errors.push(`${language} SDK version ${String(report.sdkVersion ?? "missing")} != ${expectedSdkVersion}`);
+  }
+  if (report.strict !== strict) {
+    errors.push(`${language} child report strict ${String(report.strict ?? "missing")} != ${strict}`);
+  }
+  const expectedBaseURL = reportBaseURL(env("RUNINFRA_BASE_URL") ?? productionBaseURL, Boolean(rawEnv("RUNINFRA_BASE_URL")));
+  if (report.baseURL !== expectedBaseURL) {
+    errors.push(`${language} child report baseURL ${String(report.baseURL ?? "missing")} != ${expectedBaseURL}`);
   }
   const names = report.results.map((result) => result.name);
   const unique = new Set(names);
   const missing = expectedRows.filter((row) => !unique.has(row));
   const unexpected = names.filter((row) => !expectedRows.includes(row));
   const duplicates = names.filter((row, index) => names.indexOf(row) !== index);
-  if (names.length !== unique.size) errors.push(`${report.language} duplicate rows: ${[...new Set(duplicates)].join(", ")}`);
-  if (missing.length) errors.push(`${report.language} missing rows: ${missing.join(", ")}`);
-  if (unexpected.length) errors.push(`${report.language} unexpected rows: ${unexpected.join(", ")}`);
-  if (names.length !== expectedRows.length) errors.push(`${report.language} row count ${names.length} != ${expectedRows.length}`);
+  if (names.length !== unique.size) errors.push(`${language} duplicate rows: ${[...new Set(duplicates)].join(", ")}`);
+  if (missing.length) errors.push(`${language} missing rows: ${missing.join(", ")}`);
+  if (unexpected.length) errors.push(`${language} unexpected rows: ${unexpected.join(", ")}`);
+  if (names.length !== expectedRows.length) errors.push(`${language} row count ${names.length} != ${expectedRows.length}`);
+  if (!sameStringArray(names, expectedRows)) {
+    errors.push(`${language} child report rows must exactly match expectedRows`);
+  }
+  const counts = { passed: 0, failed: 0, skipped: 0 };
+  for (const result of report.results) {
+    if (result?.status === "passed" || result?.status === "failed" || result?.status === "skipped") {
+      counts[result.status] += 1;
+    } else {
+      errors.push(`${language} row ${String(result?.name ?? "<unknown>")} has invalid status`);
+    }
+    if (result?.status === "failed" || (strict && result?.status !== "passed")) {
+      errors.push(`${language} row ${String(result?.name ?? "<unknown>")} must be passed`);
+    }
+  }
+  if (!report.summary || typeof report.summary !== "object") {
+    errors.push(`${language} summary must be present`);
+  } else {
+    if (report.summary.passed !== counts.passed) {
+      errors.push(`${language} summary passed count must match passed rows`);
+    }
+    if (report.summary.failed !== counts.failed) {
+      errors.push(`${language} summary failed count must match failed rows`);
+    }
+    if (report.summary.skipped !== counts.skipped) {
+      errors.push(`${language} summary skipped count must match skipped rows`);
+    }
+    if (strict && report.summary.passed !== expectedRows.length) {
+      errors.push(`${language} summary passed count must be ${expectedRows.length}`);
+    }
+    if (strict && report.summary.failed !== 0) errors.push(`${language} summary failed count must be 0`);
+    if (strict && report.summary.skipped !== 0) errors.push(`${language} summary skipped count must be 0`);
+  }
   return errors;
+}
+
+function sameStringArray(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function sensitiveEnvValues() {

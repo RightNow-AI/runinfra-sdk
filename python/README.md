@@ -191,7 +191,7 @@ Live-gated native SDK subset:
   `metadata`; streaming usage chunks are covered separately with
   `stream_options.include_usage`.
 - Responses: `model`, `input`, `stream`, `instructions`, `temperature`,
-  and `max_output_tokens`.
+  `top_p`, `tools`, `tool_choice`, `response_format`, and `max_output_tokens`.
 - Embeddings: `model`, `input`, `encoding_format="float"`, and `dimensions`
   when the deployed embedding backend advertises dimension control.
 - Images: `model`, `prompt`, `n`, plus optional `size` and `response_format`

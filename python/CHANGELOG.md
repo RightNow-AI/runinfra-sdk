@@ -25,6 +25,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Documented concrete asyncio and FastAPI background-task patterns for the
   sync-only Python client while keeping `AsyncRunInfra` out of the public
   surface until it has full parity coverage.
+- Updated Responses adapter docs to list the typed `top_p`, `tools`,
+  `tool_choice`, and `response_format` fields.
+- Hardened parent live-canary parity so strict reports fail when child reports
+  contain failed/skipped rows or inconsistent summary counts.
+- Extended package leakage scanners to reject PyPI/Twine and pip credential
+  config material such as `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini`.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but

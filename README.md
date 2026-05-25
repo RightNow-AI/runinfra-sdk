@@ -137,10 +137,12 @@ bypass the strict report gate. CI audio fixtures use
 the workflow decodes them to local fixture files and reports only redacted
 presence/path status.
 
-The artifact scanners enforce exact package allowlists before promotion. The
-Python wheel scan also validates the wheel `RECORD` manifest covers every file
-with SHA-256 hashes and byte sizes, so a stale or tampered wheel manifest fails
-before PyPI promotion. The Python sdist scan validates
+The artifact scanners enforce exact package allowlists before promotion and
+reject source-map/debug-source markers, local private paths, `.env`, `.npmrc`,
+`.pypirc`, `.netrc`, and pip credential config material. The Python wheel scan
+also validates the wheel `RECORD` manifest covers every file with SHA-256
+hashes and byte sizes, so a stale or tampered wheel manifest fails before PyPI
+promotion. The Python sdist scan validates
 `runinfra.egg-info/SOURCES.txt` against the expected source file set, so stale
 source manifests cannot hide from the archive gate.
 

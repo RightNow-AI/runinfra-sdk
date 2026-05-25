@@ -21,7 +21,16 @@ export const forbiddenContentPatterns = [
   { label: "source URL reference", regex: /sourceURL/u },
   { label: "inline source map content", regex: /sourcesContent/u },
   { label: "webpack source URL", regex: /webpack:\/\//u },
-  { label: "npm config file", regex: /\.npmrc/u },
+  { label: "npm credential config", regex: /(?:^|\n)\s*(?:\/\/[^\s=]+\/:_authToken|_authToken)\s*=/iu },
+  {
+    label: "PyPI credential config",
+    regex: /(?:^|\n)\s*\[(?:pypi|distutils|server-login)\][\s\S]{0,800}(?:^|\n)\s*(?:username|password)\s*=/iu,
+  },
+  { label: "netrc credential config", regex: /(?:^|\n)\s*machine\s+\S+[\s\S]{0,400}\b(?:login|password)\s+\S+/iu },
+  {
+    label: "pip credential config",
+    regex: /(?:^|\n)\s*(?:index-url|extra-index-url)\s*=\s*https?:\/\/[^/\s:@]+:[^@\s]+@/iu,
+  },
   { label: "environment file", regex: /(?:^|[\\/])\.env(?:\.[A-Za-z0-9_-]+)?(?:$|[\\/\s"'<>])/u },
 ];
 

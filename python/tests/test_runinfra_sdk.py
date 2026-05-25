@@ -235,6 +235,14 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("RUNINFRA_ASR_RESPONSE_FORMAT", live_canaries)
         self.assertIn("Optional for the base ASR row; required for the OpenAI ASR parameter row", live_canaries)
         self.assertIn("dimension control", readme)
+        self.assertIn(
+            "- Responses: `model`, `input`, `stream`, `instructions`, `temperature`,",
+            readme,
+        )
+        self.assertIn(
+            "`top_p`, `tools`, `tool_choice`, `response_format`, and `max_output_tokens`.",
+            readme,
+        )
         self.assertIn('`encoding_format` values other than `"float"`', readme)
         self.assertIn('`response_format` values other than `"json"` or `"verbose_json"`', readme)
         self.assertIn("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx", readme)
@@ -759,8 +767,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             r"C:\Users\someone\project",
             "/Users/someone/project/.env.local",
             "/home/someone/project/.env.local",
-            ".npmrc",
-            "package/.npmrc",
+            "//registry.npmjs.org/:_authToken=TOKEN",
+            "[pypi]\nusername = __token__\npassword = TOKEN",
+            "machine upload.pypi.org login __token__ password TOKEN",
+            "[global]\nindex-url = https://user:pass@example.invalid/simple",
+            "[global]\nextra-index-url = https://user:pass@example.invalid/simple",
             ".env",
             ".env.local",
             "package/.env.local",
@@ -771,6 +782,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         for sample in samples:
             with self.subTest(sample=sample[:12]):
                 self.assertTrue(verifier.has_forbidden_content(sample.encode("utf-8")))
+        self.assertFalse(
+            verifier.has_forbidden_content(
+                b"Package scanners reject `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini` files."
+            )
+        )
 
     def test_python_package_verifier_rejects_duplicate_archive_entries(self):
         verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")

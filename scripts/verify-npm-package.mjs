@@ -21,6 +21,9 @@ const forbiddenPatterns = [
   /^package\/node_modules\//u,
   /^package\/\.github\//u,
   /^package\/\.npmrc$/u,
+  /^package\/\.pypirc$/u,
+  /^package\/\.netrc$/u,
+  /^package\/pip\.(?:conf|ini)$/u,
   /^package\/AGENT-NOTES\.md$/u,
 ];
 

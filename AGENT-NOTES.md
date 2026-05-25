@@ -63,7 +63,8 @@ pip install runinfra
 - `pyproject.toml`
 
 The CI workflow asserts exact allowlists and forbids `.map`, `.env`, tests,
-source folders, caches, `.npmrc`, and bytecode via
+source folders, caches, `.npmrc`, `.pypirc`, `.netrc`, pip credential configs,
+and bytecode via
 `scripts/verify-npm-package.mjs` and `scripts/verify-python-package.py`. Don't
 widen `files[]` or `MANIFEST.in` without understanding what would ship.
 The Python verifier also checks wheel `RECORD` rows, SHA-256 hashes, and byte
