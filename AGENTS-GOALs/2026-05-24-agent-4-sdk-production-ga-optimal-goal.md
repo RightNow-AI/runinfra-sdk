@@ -213,3 +213,7 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Focused gateway checks passed: `pnpm test -- app/api/v1/[...path]/route.test.ts -t "rejects reserved runinfra-prefixed responses parameters before proxying"`; `pnpm test -- app/api/v1/workspace-flat.test.ts -t "rejects reserved runinfra-prefixed body parameters before proxying"`; `pnpm test -- lib/api/responses-compat.test.ts` with 16 tests; and `pnpm typecheck`.
 - This is local evidence only. The branch has still not been pushed or deployed by Agent 4, so production can still return `unexpected_success` for the SDK unsupported-parameter canary until an approved deploy lands.
 - No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:10:24+03:00 - Agent 4
+- Rechecked the GitHub security gate using the authenticated `gh` CLI token without printing or storing the token. `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` passed: no open high/critical code-scanning alerts for `RightNow-AI/runinfra-sdk`.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
