@@ -62,6 +62,63 @@ async function currentPromotionSourceIdentity(): Promise<{ sourceDigestSha256: s
   };
 }
 
+async function canonicalReadinessFixture(
+  missing: string[],
+  blockedRows: Record<string, string[]>,
+  extraFields: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+  const blockedNames = new Set(Object.keys(blockedRows));
+  return {
+    schemaVersion: 1,
+    generatedAt: "2026-05-26T00:00:00.000Z",
+    strict: true,
+    packageSource: "artifact",
+    candidate: {
+      sdkVersion: RUNINFRA_SDK_VERSION,
+      packageSource: "artifact",
+      sourceDigestSha256: "0".repeat(64),
+      sourceFileCount: 37,
+      artifactDigestsChecked: false,
+      artifacts: [],
+    },
+    expectedRows,
+    ...extraFields,
+    readiness: {
+      status: blockedNames.size ? "blocked" : "ready",
+      env: {},
+      aliases: {},
+      missing,
+      rowCoverageErrors: [],
+      summary: {
+        ready: expectedRows.length - blockedNames.size,
+        blocked: blockedNames.size,
+      },
+      rows: expectedRows.map((name) => ({
+        name,
+        status: blockedNames.has(name) ? "blocked" : "ready",
+        missing: blockedRows[name] ?? [],
+      })),
+    },
+    surfaceCoverage: {
+      status: "passed",
+      errors: [],
+      declaredSurfaceCount: 0,
+      declaredSurfaces: [],
+      uncoveredSurfaces: [],
+      uncoveredRows: [],
+      surfaceCount: 0,
+      rowCount: expectedRows.length,
+      surfaces: [],
+    },
+    parity: {
+      status: "not_run",
+      errors: [],
+    },
+    reports: [],
+  };
+}
+
 interface TarEntry {
   name: string;
   content?: string;
@@ -4618,28 +4675,27 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
-  it("writes a redacted missing-env patch from a blocked readiness report", () => {
+  it("writes a redacted missing-env patch from a blocked readiness report", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-"));
     const readinessPath = join(tmp, "readiness.json");
     const templatePath = join(tmp, "missing.env");
     try {
-      writeFileSync(readinessPath, `${JSON.stringify({
-        schemaVersion: 1,
-        readiness: {
-          status: "blocked",
-          missing: [
-            "RUNINFRA_EMBEDDING_MODEL",
-            "RUNINFRA_IMAGE_RESPONSE_FORMAT url or b64_json",
+      writeFileSync(readinessPath, `${JSON.stringify(await canonicalReadinessFixture(
+        [
+          "RUNINFRA_EMBEDDING_MODEL",
+          "RUNINFRA_IMAGE_RESPONSE_FORMAT url or b64_json",
+          "RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT",
+          "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1",
+        ],
+        {
+          "models.retrieve.embedding": ["RUNINFRA_EMBEDDING_MODEL"],
+          "openai.params.images": ["RUNINFRA_IMAGE_RESPONSE_FORMAT url or b64_json"],
+          "openai.params.audio.speech": [
             "RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT",
-            "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1",
           ],
-          summary: { ready: 43, blocked: 15 },
-          rows: [
-            { name: "models.retrieve.embedding", status: "blocked", missing: ["RUNINFRA_EMBEDDING_MODEL"] },
-            { name: "openai.params.images", status: "blocked", missing: ["RUNINFRA_IMAGE_RESPONSE_FORMAT url or b64_json"] },
-          ],
+          "idempotency.replay.responses": ["RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1"],
         },
-      }, null, 2)}\n`);
+      ), null, 2)}\n`);
 
       const result = spawnSync(process.execPath, [
         "../scripts/run-sdk-live-canaries.mjs",
@@ -4679,20 +4735,15 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
-  it("refuses to overwrite a missing-env patch unless forced", () => {
+  it("refuses to overwrite a missing-env patch unless forced", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-overwrite-"));
     const readinessPath = join(tmp, "readiness.json");
     const templatePath = join(tmp, "missing.env");
     try {
-      writeFileSync(readinessPath, `${JSON.stringify({
-        schemaVersion: 1,
-        readiness: {
-          status: "blocked",
-          missing: ["RUNINFRA_IMAGE_MODEL"],
-          summary: { ready: 57, blocked: 1 },
-          rows: [],
-        },
-      }, null, 2)}\n`);
+      writeFileSync(readinessPath, `${JSON.stringify(await canonicalReadinessFixture(
+        ["RUNINFRA_IMAGE_MODEL"],
+        { "models.retrieve.image": ["RUNINFRA_IMAGE_MODEL"] },
+      ), null, 2)}\n`);
       writeFileSync(templatePath, "do-not-overwrite\n");
 
       const refused = spawnSync(process.execPath, [
@@ -4730,22 +4781,17 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
-  it("rejects missing-env patch reports that contain sensitive env values", () => {
+  it("rejects missing-env patch reports that contain sensitive env values", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-leak-"));
     const readinessPath = join(tmp, "readiness.json");
     const templatePath = join(tmp, "missing.env");
     const leakedToken = "missing-patch-sensitive-token";
     try {
-      writeFileSync(readinessPath, `${JSON.stringify({
-        schemaVersion: 1,
-        candidate: { leakedToken },
-        readiness: {
-          status: "blocked",
-          missing: ["RUNINFRA_IMAGE_MODEL"],
-          summary: { ready: 57, blocked: 1 },
-          rows: [],
-        },
-      }, null, 2)}\n`);
+      writeFileSync(readinessPath, `${JSON.stringify(await canonicalReadinessFixture(
+        ["RUNINFRA_IMAGE_MODEL"],
+        { "models.retrieve.image": ["RUNINFRA_IMAGE_MODEL"] },
+        { candidate: { leakedToken } },
+      ), null, 2)}\n`);
 
       const result = spawnSync(process.execPath, [
         "../scripts/run-sdk-live-canaries.mjs",
@@ -4765,6 +4811,148 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(result.status).toBe(2);
       expect(result.stderr).toContain("live canary report contains a sensitive environment value");
       expect(result.stderr).not.toContain(leakedToken);
+      expect(result.stderr).not.toContain(readinessPath);
+      expect(existsSync(templatePath)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects missing-env patch reports without canonical readiness rows", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-shape-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const templatePath = join(tmp, "missing.env");
+    try {
+      const report = await canonicalReadinessFixture(
+        ["RUNINFRA_IMAGE_MODEL"],
+        { "models.retrieve.image": ["RUNINFRA_IMAGE_MODEL"] },
+      );
+      delete report.expectedRows;
+      writeFileSync(readinessPath, `${JSON.stringify(report, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--readiness-report",
+        readinessPath,
+        "--write-missing-env-template",
+        templatePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("readiness report expected rows must match the canonical strict matrix");
+      expect(result.stderr).not.toContain(readinessPath);
+      expect(existsSync(templatePath)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects missing-env patch reports without the strict preflight envelope", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-envelope-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const templatePath = join(tmp, "missing.env");
+    try {
+      const report = await canonicalReadinessFixture(
+        ["RUNINFRA_IMAGE_MODEL"],
+        { "models.retrieve.image": ["RUNINFRA_IMAGE_MODEL"] },
+      );
+      delete report.generatedAt;
+      delete report.strict;
+      delete report.packageSource;
+      delete report.candidate;
+      delete report.surfaceCoverage;
+      delete report.parity;
+      delete report.reports;
+      writeFileSync(readinessPath, `${JSON.stringify(report, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--readiness-report",
+        readinessPath,
+        "--write-missing-env-template",
+        templatePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("readiness report must be a strict preflight report");
+      expect(result.stderr).not.toContain(readinessPath);
+      expect(existsSync(templatePath)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects missing-env patch reports whose readiness row names drift from expected rows", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-row-drift-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const templatePath = join(tmp, "missing.env");
+    try {
+      const report = await canonicalReadinessFixture(
+        ["RUNINFRA_IMAGE_MODEL"],
+        { "models.retrieve.image": ["RUNINFRA_IMAGE_MODEL"] },
+      );
+      const readiness = report.readiness as { rows: Array<{ name: string }> };
+      readiness.rows[0].name = "noncanonical.row";
+      writeFileSync(readinessPath, `${JSON.stringify(report, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--readiness-report",
+        readinessPath,
+        "--write-missing-env-template",
+        templatePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("readiness report row names must match expected rows");
+      expect(result.stderr).not.toContain(readinessPath);
+      expect(existsSync(templatePath)).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects missing-env patch reports whose readiness summary disagrees with missing rows", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-missing-drift-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const templatePath = join(tmp, "missing.env");
+    try {
+      const report = await canonicalReadinessFixture(
+        ["RUNINFRA_IMAGE_MODEL"],
+        { "models.retrieve.image": ["RUNINFRA_IMAGE_MODEL"] },
+      );
+      const readiness = report.readiness as {
+        status: string;
+        summary: { ready: number; blocked: number };
+        rows: Array<{ status: string; missing: string[] }>;
+      };
+      readiness.status = "ready";
+      readiness.summary = { ready: readiness.rows.length, blocked: 0 };
+      readiness.rows = readiness.rows.map((row) => ({ ...row, status: "ready", missing: [] }));
+      writeFileSync(readinessPath, `${JSON.stringify(report, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--readiness-report",
+        readinessPath,
+        "--write-missing-env-template",
+        templatePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("readiness report missing inputs must match readiness rows");
       expect(result.stderr).not.toContain(readinessPath);
       expect(existsSync(templatePath)).toBe(false);
     } finally {

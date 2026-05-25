@@ -538,3 +538,31 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows.
 - `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports still cannot promote as GA.
 - No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T01:01:28+03:00 - Agent 4
+- Tightened the redacted missing-env patch mode so it only accepts strict preflight readiness reports from the live-canary runner. Reports must have schema version `1`, `strict: true`, valid generated timestamp, package source, current SDK candidate identity shape, canonical `expectedRows`, readiness rows in the exact canonical order, empty row-coverage errors, matching row/status/missing/summary counts, passed surface coverage, preflight parity `not_run`, and no child reports.
+- Followed focused TDD cycles. The new negative tests first failed because the runner accepted a report with no `expectedRows`, then because it accepted a synthetic report that copied canonical rows but omitted the strict preflight envelope, then because it accepted top-level `readiness.missing` that disagreed with ready rows. Separate row-drift and missing-drift regressions now prove `readiness.rows` names and top-level missing/status state must match the canonical rows.
+- Updated the missing-env patch test fixtures to build full strict preflight-like readiness reports from `scripts/live-canary-matrix.mjs`, keeping overwrite and leak-rejection coverage realistic instead of relying on partial synthetic reports.
+- Second-opinion review from Herschel found warnings before this final shape: synthetic canonical-row reports still passed, the negative tests did not isolate row-name drift, and top-level missing/status data could disagree with row state. All were fixed before final verification.
+- Verification passed:
+  - Focused missing-env/env-template/log-hygiene/review-fix group: `11` passed.
+  - `pnpm --dir typescript install --frozen-lockfile`.
+  - `node --check scripts\run-sdk-live-canaries.mjs`.
+  - TypeScript no-emit typecheck.
+  - Full TypeScript suite: `242` tests.
+  - Full Python suite: `151` tests and `142` subtests.
+  - Surface coverage: `58` rows, `28` coverage surfaces, no uncovered public surfaces or rows.
+  - Secret-scan policy, version sync, workflow policy, dry-run publish dispatch, and Python compileall.
+  - Rebuilt artifacts with `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist`.
+  - npm package scanner, Python wheel/sdist scanner, `twine check`, and clean artifact install/import for npm, Python wheel, and Python sdist.
+  - Missing-env patch generated from the redacted RunPipe env-backed readiness report wrote `18` placeholder/default assignments and did not include `RUNINFRA_API_KEY=` or `RUNINFRA_LLM_MODEL=`.
+- Refreshed no-env strict artifact readiness and live reports after the canonical-readiness hardening:
+  - Source digest: `59ae1a1fbd7c290a7bf7a2486ca0504b1d8b8e1f2a3cf02a673b3d8c80d4862e`
+  - Source file count: `37`
+  - NPM artifact SHA-256: `b28a489fff1aa80f5804d2ed38f0935af5b53cfec676e7c853be8cb865eaa9ec`
+  - Python wheel SHA-256: `d196fb96c14265d217c55183bf156f383a4441a5b0c3af73ff53248bcd2f173f`
+  - Python sdist SHA-256: `64a5575a3a7817a6fe81fffbf7b2998df16888a14e1fbcd4f6ca3d0c54abcd00`
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+- Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports still cannot promote as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.

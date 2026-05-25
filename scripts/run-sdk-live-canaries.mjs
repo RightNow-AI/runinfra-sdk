@@ -524,13 +524,63 @@ const missingEnvPatchEntries = [
   },
 ];
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStringArray(value) {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function isSha256Hex(value) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function assertStrictPreflightReportEnvelope(report) {
+  const candidate = report.candidate;
+  const surfaceCoverage = report.surfaceCoverage;
+  const parity = report.parity;
+  if (
+    report.strict !== true ||
+    !["artifact", "source"].includes(report.packageSource) ||
+    typeof report.generatedAt !== "string" ||
+    Number.isNaN(Date.parse(report.generatedAt)) ||
+    !isPlainObject(candidate) ||
+    candidate.sdkVersion !== expectedSdkVersion ||
+    candidate.packageSource !== report.packageSource ||
+    !isSha256Hex(candidate.sourceDigestSha256) ||
+    !Number.isSafeInteger(candidate.sourceFileCount) ||
+    candidate.sourceFileCount <= 0 ||
+    typeof candidate.artifactDigestsChecked !== "boolean" ||
+    !Array.isArray(candidate.artifacts) ||
+    !isPlainObject(surfaceCoverage) ||
+    surfaceCoverage.status !== "passed" ||
+    !isStringArray(surfaceCoverage.errors) ||
+    surfaceCoverage.errors.length !== 0 ||
+    !Array.isArray(surfaceCoverage.uncoveredRows) ||
+    surfaceCoverage.uncoveredRows.length !== 0 ||
+    !isPlainObject(parity) ||
+    parity.status !== "not_run" ||
+    !isStringArray(parity.errors) ||
+    parity.errors.length !== 0 ||
+    !Array.isArray(report.reports) ||
+    report.reports.length !== 0
+  ) {
+    throw new Error("readiness report must be a strict preflight report.");
+  }
+}
+
 function assertReadinessReportShape(report) {
   if (!report || typeof report !== "object" || report.schemaVersion !== 1) {
     throw new Error("readiness report must use schemaVersion 1.");
   }
+  assertStrictPreflightReportEnvelope(report);
   const readiness = report.readiness;
   if (!readiness || typeof readiness !== "object") {
     throw new Error("readiness report must contain readiness data.");
+  }
+  if (!isPlainObject(readiness.env) || !isPlainObject(readiness.aliases)) {
+    throw new Error("readiness report must contain redacted env and alias data.");
   }
   if (!Array.isArray(readiness.missing) || !readiness.missing.every((value) => typeof value === "string")) {
     throw new Error("readiness report missing inputs must be a string array.");
@@ -538,10 +588,7 @@ function assertReadinessReportShape(report) {
   if (!Array.isArray(readiness.rows)) {
     throw new Error("readiness report rows must be an array.");
   }
-  if (
-    Array.isArray(readiness.rowCoverageErrors) &&
-    readiness.rowCoverageErrors.some((value) => typeof value === "string" && value)
-  ) {
+  if (!isStringArray(readiness.rowCoverageErrors) || readiness.rowCoverageErrors.some((value) => value)) {
     throw new Error("readiness report row coverage errors must be empty.");
   }
   for (const row of readiness.rows) {
@@ -555,13 +602,28 @@ function assertReadinessReportShape(report) {
       throw new Error("readiness report row missing inputs must be string arrays.");
     }
   }
-  if (Array.isArray(report.expectedRows)) {
-    if (!sameStringArray(report.expectedRows, expectedRows)) {
-      throw new Error("readiness report expected rows must match the canonical strict matrix.");
-    }
-    if (!sameStringArray(readiness.rows.map((row) => row.name), report.expectedRows)) {
-      throw new Error("readiness report row names must match expected rows.");
-    }
+  if (!Array.isArray(report.expectedRows) || !sameStringArray(report.expectedRows, expectedRows)) {
+    throw new Error("readiness report expected rows must match the canonical strict matrix.");
+  }
+  if (!sameStringArray(readiness.rows.map((row) => row.name), report.expectedRows)) {
+    throw new Error("readiness report row names must match expected rows.");
+  }
+  const summary = readiness.summary;
+  if (!summary || typeof summary !== "object") {
+    throw new Error("readiness report summary must match readiness rows.");
+  }
+  const derivedMissing = sortedUnique([...readiness.rowCoverageErrors, ...readiness.rows.flatMap((row) => row.missing)]);
+  if (
+    readiness.rows.some((row) => (row.missing.length ? row.status !== "blocked" : row.status !== "ready")) ||
+    !sameStringArray(sortedUnique(readiness.missing), derivedMissing) ||
+    readiness.status !== (derivedMissing.length ? "blocked" : "ready")
+  ) {
+    throw new Error("readiness report missing inputs must match readiness rows.");
+  }
+  const readyRows = readiness.rows.filter((row) => row.status === "ready").length;
+  const blockedRows = readiness.rows.filter((row) => row.status === "blocked").length;
+  if (summary.ready !== readyRows || summary.blocked !== blockedRows) {
+    throw new Error("readiness report summary must match readiness rows.");
   }
   return readiness;
 }
