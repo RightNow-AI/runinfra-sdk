@@ -71,15 +71,37 @@ function errorSummary(error) {
   return {
     name: error?.name ?? "Error",
     type: safeDiagnosticToken(error?.type),
+    diagnostic: canaryDiagnostic(error),
     status: error?.status,
     requestId: error?.requestId,
     message: "redacted",
   };
 }
 
+function canaryDiagnostic(error) {
+  const message = typeof error?.message === "string" ? error.message : "";
+  if (message.includes("unexpectedly succeeded")) return "unexpected_success";
+  if (message.includes("expected a clear 400/422 validation error")) return "invalid_error_shape";
+  if (message.includes("did not expose x-request-id")) return "missing_request_id";
+  if (message.includes("did not emit a terminal event")) return "missing_terminal_event";
+  if (message.includes("timed out")) return "timeout";
+  if (message.includes("must be a JSON object") || message.includes("must be a non-empty array")) {
+    return "invalid_response_shape";
+  }
+  return null;
+}
+
 function safeDiagnosticToken(value) {
   if (typeof value !== "string") return undefined;
   return /^[a-zA-Z0-9_.:-]{1,80}$/u.test(value) ? value : "redacted";
+}
+
+if (args.includes("--self-test-error-summary")) {
+  console.log(JSON.stringify({
+    known: errorSummary(new Error("unsupported body parameter unexpectedly succeeded")),
+    unknown: errorSummary(new Error("local path RUNINFRA_LOCAL_PATH_SENTINEL")),
+  }));
+  process.exit(0);
 }
 
 function assertObject(value, label) {

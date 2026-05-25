@@ -710,6 +710,25 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                 "custom_set_redacted",
             )
 
+    def test_python_child_canary_error_summary_adds_safe_diagnostics_without_messages(self):
+        root = Path(__file__).resolve().parents[2]
+        canary_path = root.joinpath("scripts", "sdk-live-canary-python.py")
+        spec = importlib.util.spec_from_file_location("sdk_live_canary_python", canary_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        canary = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(canary)
+
+        summary = canary.error_summary(AssertionError("unsupported body parameter unexpectedly succeeded"))
+        unknown = canary.error_summary(AssertionError("local path RUNINFRA_LOCAL_PATH_SENTINEL"))
+
+        self.assertEqual(summary["diagnostic"], "unexpected_success")
+        self.assertEqual(summary["message"], "redacted")
+        self.assertNotIn("unsupported body parameter", json.dumps(summary))
+        self.assertIsNone(unknown["diagnostic"])
+        self.assertEqual(unknown["message"], "redacted")
+        self.assertNotIn("RUNINFRA_LOCAL_PATH_SENTINEL", json.dumps(unknown))
+
     def test_python_package_verifier_blocks_broader_secret_and_path_families(self):
         verifier_path = Path(__file__).resolve().parents[2].joinpath("scripts", "verify-python-package.py")
         spec = importlib.util.spec_from_file_location("verify_python_package", verifier_path)

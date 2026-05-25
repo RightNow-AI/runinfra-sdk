@@ -59,6 +59,13 @@ sdist-built wheel; successful pip output is suppressed so promotion logs do not
 expose local paths. Use `--package-source source` only for local SDK development
 diagnostics.
 
+Failed child rows keep raw exception messages redacted, but include a safe
+`error.diagnostic` enum when the failure class is known. Current diagnostics
+include `unexpected_success`, `invalid_error_shape`, `missing_request_id`,
+`missing_terminal_event`, `timeout`, and `invalid_response_shape`. These
+diagnostics are for triage only; a failed row is still a failed row and cannot
+satisfy strict promotion.
+
 In the trusted-publish workflow, `build-artifacts` creates the npm tarball,
 Python wheel, and Python sdist once and uploads them as
 `runinfra-sdk-promoted-artifacts`. `promotion-gate`, `publish-npm`, and

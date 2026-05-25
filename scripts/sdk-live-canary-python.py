@@ -310,10 +310,28 @@ def error_summary(error: BaseException) -> Dict[str, Any]:
     return {
         "name": error.__class__.__name__,
         "type": safe_diagnostic_token(getattr(error, "type", None)),
+        "diagnostic": canary_diagnostic(error),
         "status": getattr(error, "status", None),
         "requestId": getattr(error, "request_id", None),
         "message": "redacted",
     }
+
+
+def canary_diagnostic(error: BaseException) -> Optional[str]:
+    message = str(error)
+    if "unexpectedly succeeded" in message:
+        return "unexpected_success"
+    if "expected a clear 400/422 validation error" in message:
+        return "invalid_error_shape"
+    if "did not expose x-request-id" in message:
+        return "missing_request_id"
+    if "did not emit a terminal event" in message:
+        return "missing_terminal_event"
+    if "timed out" in message:
+        return "timeout"
+    if "must be a JSON object" in message or "must be a non-empty list" in message:
+        return "invalid_response_shape"
+    return None
 
 
 def safe_diagnostic_token(value: Any) -> Optional[str]:

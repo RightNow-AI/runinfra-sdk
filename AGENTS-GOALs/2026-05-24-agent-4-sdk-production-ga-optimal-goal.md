@@ -49,3 +49,18 @@ Work in small commits. For each GA gap:
 
 ## Anti-Actions
 Do not publish, push, deploy, rotate secrets, provision paid infra, or change production settings without explicit current approval. Do not hide failing surfaces behind marketing copy. Do not remove tests to pass CI. Do not merge unrelated work. Do not use pasted registry tokens in committed files or logs.
+
+## Session Log
+
+### 2026-05-25T04:48:50+03:00 - Agent 4
+- Ran `pnpm --dir typescript build`: passed.
+- Ran `python -m pytest python\tests -q`: 130 passed, 127 subtests passed.
+- Ran production source live canary with the scoped local SDK live env file and `--package-source source`: TypeScript 33 passed / 1 failed / 15 skipped; Python 33 passed / 1 failed / 15 skipped.
+- The shared failed row is `error.body.unsupported_parameter`. The failure is `unexpected_success`, meaning production accepted the reserved `runinfra_unsupported_parameter_probe` Responses body extension instead of returning a clear 400/422 `unsupported_parameter` error.
+- Added redacted child-canary diagnostics so failed rows keep raw messages hidden but expose safe enum diagnostics such as `unexpected_success`.
+- Post-review cleanup removed local path details from this goal note, added an executable TypeScript canary self-test for `errorSummary()`, and normalized unknown diagnostics to `null` for TS/Python report parity.
+- Verified focused regressions: TypeScript `child live-canary failure diagnostics` passed; Python `error_summary_adds_safe_diagnostics` passed.
+- Verified full local suites: `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed; `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` passed 200 tests; `python -m pytest python\tests -q` passed 131 tests and 127 subtests.
+- Verified policy/security gates: `node scripts\verify-workflow-policy.mjs`, `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`, `node scripts\secret-scan-policy.mjs`, and `git diff --check` passed.
+- Current source live-canary candidate digest after this change: `ab6fd0dc6525f5701385722d7c39736ca1829c3b5f86b3fa55c62607a6efa5ed`, source file count 15.
+- GA remains blocked. Do not publish npm/PyPI until the production gateway rejects the reserved Responses parameter, strict multimodal canary inputs are complete, artifact canaries pass, and registry install/import proof passes.

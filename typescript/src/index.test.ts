@@ -1999,6 +1999,43 @@ class RunInfra:
     expect(typescriptCanary).toContain("runinfra_unsupported_parameter_probe");
   });
 
+  it("keeps child live-canary failure diagnostics actionable without raw error messages", () => {
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const result = spawnSync(process.execPath, [
+      "../scripts/sdk-live-canary-typescript.mjs",
+      "--self-test-error-summary",
+    ], {
+      cwd: new URL("..", import.meta.url),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RUNINFRA_API_KEY: "",
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const summary = JSON.parse(result.stdout) as {
+      known?: { diagnostic?: string | null; message?: string };
+      unknown?: { diagnostic?: string | null; message?: string };
+    };
+
+    expect(typescriptCanary).toContain("function canaryDiagnostic(error)");
+    expect(typescriptCanary).toContain("diagnostic: canaryDiagnostic(error)");
+    expect(typescriptCanary).toContain('return "unexpected_success";');
+    expect(typescriptCanary).toContain('message: "redacted"');
+    expect(summary.known?.diagnostic).toBe("unexpected_success");
+    expect(summary.known?.message).toBe("redacted");
+    expect(summary.unknown?.diagnostic).toBeNull();
+    expect(summary.unknown?.message).toBe("redacted");
+    expect(result.stdout).not.toContain("unsupported body parameter");
+    expect(result.stdout).not.toContain("RUNINFRA_LOCAL_PATH_SENTINEL");
+    expect(pythonCanary).toContain("def canary_diagnostic(error: BaseException) -> Optional[str]:");
+    expect(pythonCanary).toContain('"diagnostic": canary_diagnostic(error)');
+    expect(pythonCanary).toContain('return "unexpected_success"');
+    expect(pythonCanary).toContain('"message": "redacted"');
+  });
+
   it("documents local request payload validation before network sends", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
