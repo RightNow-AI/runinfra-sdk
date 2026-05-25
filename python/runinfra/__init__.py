@@ -14,7 +14,7 @@ import urllib.request
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from collections.abc import Mapping as MappingABC
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, TypedDict, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Mapping, Optional, Sequence, TypedDict, Union, overload
 
 
 JsonDict = Dict[str, Any]
@@ -1148,6 +1148,87 @@ class _ChatCompletions:
     def __init__(self, requester: _Requester) -> None:
         self._requester = requester
 
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Mapping[str, object]],
+        stream: Literal[True],
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        stop: Optional[Union[str, Sequence[str]]] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        user: Optional[str] = None,
+        metadata: Optional[Mapping[str, object]] = None,
+        stream_options: Optional[Mapping[str, object]] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        seed: Optional[int] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> RunInfraStream: ...
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Mapping[str, object]],
+        stream: Literal[False] = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        stop: Optional[Union[str, Sequence[str]]] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        user: Optional[str] = None,
+        metadata: Optional[Mapping[str, object]] = None,
+        stream_options: Optional[Mapping[str, object]] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        seed: Optional[int] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> ChatCompletionResponse: ...
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Mapping[str, object]],
+        stream: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        stop: Optional[Union[str, Sequence[str]]] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        user: Optional[str] = None,
+        metadata: Optional[Mapping[str, object]] = None,
+        stream_options: Optional[Mapping[str, object]] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        seed: Optional[int] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> Union[ChatCompletionResponse, RunInfraStream]: ...
+
     def create(
         self,
         *,
@@ -1221,6 +1302,60 @@ class _Chat:
 class _Responses:
     def __init__(self, requester: _Requester) -> None:
         self._requester = requester
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        input: Union[str, Sequence[Mapping[str, object]]],
+        instructions: Optional[str] = None,
+        stream: Literal[True],
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> RunInfraStream: ...
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        input: Union[str, Sequence[Mapping[str, object]]],
+        instructions: Optional[str] = None,
+        stream: Literal[False] = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> ResponsesCreateResponse: ...
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        input: Union[str, Sequence[Mapping[str, object]]],
+        instructions: Optional[str] = None,
+        stream: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> Union[ResponsesCreateResponse, RunInfraStream]: ...
 
     def create(
         self,

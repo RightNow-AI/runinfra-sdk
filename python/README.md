@@ -108,7 +108,10 @@ finally:
 ```
 
 Streaming transport-level backend cancellation is best effort, and streaming
-calls are not automatically retried.
+calls are not automatically retried. The Python type surface overloads
+`stream=True` calls for `client.chat.completions.create()` and
+`client.responses.create()` to return `RunInfraStream`; non-stream calls keep
+their typed response envelopes.
 
 RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gateway converts supported `input` and `instructions` values into chat messages, forwards the supported request through the chat-completions serving path, and rewraps the result into a Responses-style envelope. It does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics.
 

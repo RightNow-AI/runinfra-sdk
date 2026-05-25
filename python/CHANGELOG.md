@@ -27,6 +27,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   surface until it has full parity coverage.
 - Updated Responses adapter docs to list the typed `top_p`, `tools`,
   `tool_choice`, and `response_format` fields.
+- Added Python overloads so `stream=True` calls on chat completions and
+  Responses statically narrow to `RunInfraStream` while non-stream calls keep
+  their typed response envelopes.
 - Hardened parent live-canary parity so strict reports fail when child reports
   contain failed/skipped rows or inconsistent summary counts.
 - Hardened promotion readiness verification so forged or stale readiness

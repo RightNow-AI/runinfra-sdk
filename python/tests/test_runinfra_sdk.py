@@ -16,7 +16,7 @@ import zipfile
 from collections import UserDict
 from email.utils import formatdate
 from pathlib import Path
-from typing import Union, get_type_hints
+from typing import Literal, Union, get_overloads, get_type_hints
 from unittest.mock import patch
 
 import runinfra
@@ -1139,6 +1139,30 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIs(get_type_hints(client.images.generate)["return"], ImageGenerationResponse)
         self.assertIs(get_type_hints(client.models.list)["return"], ModelListResponse)
         self.assertIs(get_type_hints(client.models.retrieve)["return"], ModelObject)
+
+    def test_streaming_methods_expose_literal_true_overloads(self):
+        client = RunInfra(api_key="sk-ri-test", transport=RecordingTransport())
+
+        for method, non_stream_response in (
+            (client.chat.completions.create, ChatCompletionResponse),
+            (client.responses.create, ResponsesCreateResponse),
+        ):
+            with self.subTest(method=method.__qualname__):
+                overload_hints = [
+                    get_type_hints(overload)
+                    for overload in get_overloads(method)
+                ]
+                stream_returns = {
+                    hints.get("stream"): hints.get("return")
+                    for hints in overload_hints
+                }
+
+                self.assertIs(stream_returns[Literal[True]], RunInfraStream)
+                self.assertIs(stream_returns[Literal[False]], non_stream_response)
+                self.assertEqual(
+                    stream_returns[bool],
+                    Union[non_stream_response, RunInfraStream],
+                )
 
     def test_public_request_methods_do_not_accept_arbitrary_kwargs(self):
         client = RunInfra(api_key="sk-ri-test", transport=RecordingTransport())
