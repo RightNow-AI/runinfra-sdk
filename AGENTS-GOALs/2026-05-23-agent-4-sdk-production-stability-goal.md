@@ -2980,3 +2980,36 @@ Remaining blockers are unchanged:
 - The production RunPipe gateway still needs deployment before LLM production canaries can be considered closed.
 
 Checkpoint timestamp: 2026-05-25 02:13 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: Gateway P1 Refresh And Current Blockers
+
+Refreshed the cross-repo SDK production-readiness state after the RunPipe gateway P1 follow-up.
+
+RunPipe gateway state:
+
+- Worktree: `C:\Users\jaber\RightNow-Full\RunPipe-sdk-gateway-main-20260525`
+- Branch: `fix/sdk-gateway-contracts-main-20260525`
+- Head: `6a54648c fix: close sdk gateway contract p1s`
+- Local state: clean, ahead of `origin/main` by 8 commits.
+- Production state: not pushed, not merged, not deployed.
+- Fresh post-final-patch gates: `pnpm build` passed; `pnpm lint` passed with 0 errors and 144 existing warnings.
+- Earlier same-commit gates remain valid: focused gateway tests passed 5 files / 247 tests, release-gate tests passed 6 files / 114 tests, `pnpm typecheck` passed, `pnpm verify:sdk-secret-hygiene` passed, and `git diff --check origin/main...HEAD` passed.
+
+Current SDK readiness evidence:
+
+- `node scripts\run-sdk-live-canaries.mjs --runinfra-env-file C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local --preflight --strict --report artifacts\sdk\live-canary-readiness-after-gateway-p1-refresh.json` failed closed as expected.
+- Readiness summary: 34 ready rows, 15 blocked rows.
+- Blocked rows: `models.retrieve.embedding`, `models.retrieve.image`, `models.retrieve.tts`, `models.retrieve.asr`, `embeddings.create`, `openai.params.embeddings`, `images.generate`, `openai.params.images`, `audio.speech.create`, `openai.params.audio.speech`, `audio.speech.binary_interfaces`, `audio.transcriptions.create`, `openai.params.audio.transcriptions`, `voice.pipeline.create`, and `idempotency.replay.responses`.
+- Missing inputs are scoped live canary data only: embedding model/dimensions, image model/size/response format, TTS model plus voice or reference-audio inputs and response format, ASR model/fixture/expected text/language/response format, voice-pipeline audio/expected text, and explicit idempotency replay opt-in.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `npm view @runinfra/sdk versions --json --registry https://registry.npmjs.org/` returned only `0.1.0` through `0.1.3`.
+- `python -m pip index versions runinfra` returned latest `0.1.3`.
+
+Current production blockers:
+
+1. RunPipe gateway fixes are local only. They must be pushed, reviewed/merged, and deployed before production SDK canaries can close the gateway rows.
+2. Strict live canary matrix is still blocked by the 15 missing multimodal/idempotency inputs above.
+3. SDK `0.1.4` is still not published to npm or PyPI, so clean registry install/import proof for `0.1.4` is impossible.
+4. No push, deploy, publish, or paid canary provisioning should happen without explicit current authorization.
+
+Checkpoint timestamp: 2026-05-25 03:06 +03:00.
