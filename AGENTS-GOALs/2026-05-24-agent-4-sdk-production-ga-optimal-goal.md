@@ -207,3 +207,9 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Refreshed current-shell strict artifact preflight and current no-env artifact live report. Both use source digest `322672a372a3d88688507169065e3bb22e31c4b6384d8e7a23454870c413a93b`, source file count 33. Preflight remains blocked at 19 ready / 30 blocked because no live `RUNINFRA_*` canary env is loaded. The no-env artifact live report is TypeScript 19 passed / 0 failed / 30 skipped and Python 19 passed / 0 failed / 30 skipped.
 - Ran `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json`; it failed as expected on blocked readiness rows and skipped live rows, without stale digest/count errors.
 - No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:09:47+03:00 - Agent 4
+- Reverified the isolated RunPipe gateway fix candidate for the production `error.body.unsupported_parameter` blocker. The worktree `RunPipe-sdk-gateway-main-20260525` is clean on `fix/sdk-gateway-contracts-main-20260525` and remains ahead of `origin/main` by 12 commits.
+- Focused gateway checks passed: `pnpm test -- app/api/v1/[...path]/route.test.ts -t "rejects reserved runinfra-prefixed responses parameters before proxying"`; `pnpm test -- app/api/v1/workspace-flat.test.ts -t "rejects reserved runinfra-prefixed body parameters before proxying"`; `pnpm test -- lib/api/responses-compat.test.ts` with 16 tests; and `pnpm typecheck`.
+- This is local evidence only. The branch has still not been pushed or deployed by Agent 4, so production can still return `unexpected_success` for the SDK unsupported-parameter canary until an approved deploy lands.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
