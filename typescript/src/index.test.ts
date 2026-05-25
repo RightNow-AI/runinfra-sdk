@@ -393,6 +393,32 @@ describe("RunInfra TypeScript SDK", () => {
     expect(pythonCanary).toContain("runinfra-sdk-canary-missing-model");
   });
 
+  it("keeps child canaries in parity for local rate-limit error mapping", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { publicSurfaceCoverage } =
+      await import("../../scripts/live-canary-surface-coverage.mjs") as {
+        publicSurfaceCoverage: Array<{ surface: string; rows: string[] }>;
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const row = "error.rate_limit.local";
+
+    expect(expectedRows).toContain(row);
+    expect(runner).toContain(`["${row}", () => []]`);
+    expect(typescriptCanary).toContain(`record("${row}"`);
+    expect(typescriptCanary).toContain("RateLimitError");
+    expect(typescriptCanary).toContain("retryAfterMs");
+    expect(pythonCanary).toContain(`"${row}"`);
+    expect(pythonCanary).toContain("RateLimitError");
+    expect(pythonCanary).toContain("retry_after_seconds");
+    expect(liveCanaries).toContain(row);
+    expect(liveCanaries).toContain("rate-limit");
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "error mapping")?.rows)
+      .toContain(row);
+  });
+
   it("fails models.list live canaries when configured model ids are absent from the catalog", () => {
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
     const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");

@@ -119,5 +119,14 @@ export const publicSurfaceCoverage = [
     ],
   },
   { surface: "unsupported body parameter handling", rows: ["request.extra_body.local", "error.body.unsupported_parameter"] },
-  { surface: "authentication error mapping", rows: ["error.auth.invalid_key"] },
+  {
+    surface: "error mapping",
+    rows: [
+      "error.auth.invalid_key",
+      "error.model.not_found",
+      "error.request.invalid_options",
+      "error.rate_limit.local",
+      "error.body.unsupported_parameter",
+    ],
+  },
 ];

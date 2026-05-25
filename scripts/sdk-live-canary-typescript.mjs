@@ -562,6 +562,7 @@ const {
   AuthenticationError,
   ModelNotFoundError,
   PermissionDeniedError,
+  RateLimitError,
   RUNINFRA_SDK_VERSION,
   RunInfra,
   RunInfraConnectionError,
@@ -715,12 +716,13 @@ async function expectStreamError(stream, errorClass, errorType, label, options =
   }
 }
 
-function localRetryJsonResponse(payload, status, requestId) {
+function localRetryJsonResponse(payload, status, requestId, headers = {}) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: {
       "Content-Type": "application/json",
       "x-request-id": requestId,
+      ...headers,
     },
   });
 }
@@ -881,6 +883,25 @@ function assertRetryableError(error, label) {
   }
   assertRequestId(error.requestId, label);
   return { errorStatus: error.status, errorType: error.type, requestId: error.requestId };
+}
+
+function assertRateLimitError(error, label, expectedRetryAfterMs) {
+  if (!(error instanceof RateLimitError)) {
+    throw new Error(`${label} expected RateLimitError, got ${error?.name ?? typeof error}`);
+  }
+  if (error.status !== 429 || error.type !== "rate_limit_error") {
+    throw new Error(`${label} rate-limit error mapped unexpectedly: ${error.status} ${error.type}`);
+  }
+  if (error.retryAfterMs !== expectedRetryAfterMs) {
+    throw new Error(`${label} expected retryAfterMs ${expectedRetryAfterMs}, got ${error.retryAfterMs ?? "missing"}`);
+  }
+  assertRequestId(error.requestId, label);
+  return {
+    errorType: error.type,
+    errorStatus: error.status,
+    requestId: error.requestId,
+    retryAfterMs: error.retryAfterMs,
+  };
 }
 
 function speechVoicePayload() {
@@ -1560,6 +1581,29 @@ await record("error.request.invalid_options", [], async () => {
     return assertInvalidRequestOptionError(error, "error.request.invalid_options");
   }
   throw new Error("invalid request option unexpectedly succeeded");
+});
+
+await record("error.rate_limit.local", [], async () => {
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse(
+      { error: { message: "local rate limit probe", type: "rate_limit_error" } },
+      429,
+      "req-local-rate-limit",
+      { "Retry-After": "2" },
+    ),
+  ]);
+  try {
+    await local.responses.create(
+      { model: "runinfra-local-error-model", input: "local rate-limit canary" },
+      { maxRetries: 0 },
+    );
+  } catch (error) {
+    return {
+      ...assertRateLimitError(error, "error.rate_limit.local", 2000),
+      ...assertRetryCallCount(calls, 1, "error.rate_limit.local"),
+    };
+  }
+  throw new Error("local rate-limit error unexpectedly succeeded");
 });
 
 await record("request.client_request_id.local", [], async () => {

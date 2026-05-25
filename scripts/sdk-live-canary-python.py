@@ -24,6 +24,7 @@ from runinfra import (  # noqa: E402
     AuthenticationError,
     ModelNotFoundError,
     PermissionDeniedError,
+    RateLimitError,
     RunInfra,
     RunInfraConnectionError,
     RunInfraError,
@@ -519,10 +520,18 @@ def responses_stalled_chunks() -> Iterable[bytes]:
     raise TimeoutError("stream read timed out")
 
 
-def local_retry_response(payload: Dict[str, Any], status: int, request_id: str) -> RunInfraResponse:
+def local_retry_response(
+    payload: Dict[str, Any],
+    status: int,
+    request_id: str,
+    headers: Optional[Dict[str, str]] = None,
+) -> RunInfraResponse:
+    response_headers = {"content-type": "application/json", "x-request-id": request_id}
+    if headers:
+        response_headers.update(headers)
     return RunInfraResponse(
         status,
-        {"content-type": "application/json", "x-request-id": request_id},
+        response_headers,
         json.dumps(payload).encode("utf-8"),
     )
 
@@ -663,6 +672,27 @@ def assert_retryable_error(error: BaseException, label: str) -> Dict[str, Any]:
         "errorStatus": getattr(error, "status", None),
         "errorType": getattr(error, "type", None),
         "requestId": request_id,
+    }
+
+
+def assert_rate_limit_error(error: BaseException, label: str, expected_retry_after_seconds: float) -> Dict[str, Any]:
+    if not isinstance(error, RateLimitError):
+        raise AssertionError(f"{label} expected RateLimitError, got {error.__class__.__name__}")
+    if getattr(error, "status", None) != 429 or getattr(error, "type", None) != "rate_limit_error":
+        raise AssertionError(
+            f"{label} rate-limit error mapped unexpectedly: {getattr(error, 'status', None)} {getattr(error, 'type', None)}"
+        )
+    if getattr(error, "retry_after_seconds", None) != expected_retry_after_seconds:
+        raise AssertionError(
+            f"{label} expected retry_after_seconds {expected_retry_after_seconds}, got {getattr(error, 'retry_after_seconds', None)}"
+        )
+    request_id = getattr(error, "request_id", None)
+    assert_request_id(request_id, label)
+    return {
+        "errorType": getattr(error, "type", None),
+        "errorStatus": getattr(error, "status", None),
+        "requestId": request_id,
+        "retryAfterSeconds": getattr(error, "retry_after_seconds", None),
     }
 
 
@@ -929,6 +959,7 @@ def main() -> int:
     record("error.auth.invalid_key", [], lambda: _auth_error(base_url))
     record("error.model.not_found", ["RUNINFRA_API_KEY"], lambda: _model_not_found(client()))
     record("error.request.invalid_options", [], _invalid_request_options)
+    record("error.rate_limit.local", [], _rate_limit_error_local)
     record("request.client_request_id.local", [], _request_client_request_id_local)
     record("request.custom_headers.local", [], _request_custom_headers_local)
     record("request.timeout.local", [], _request_timeout_local)
@@ -1527,6 +1558,29 @@ def _invalid_request_options() -> Dict[str, Any]:
     except BaseException as error:  # noqa: BLE001
         return assert_invalid_request_option_error(error, "error.request.invalid_options")
     raise AssertionError("invalid request option unexpectedly succeeded")
+
+
+def _rate_limit_error_local() -> Dict[str, Any]:
+    local = local_retry_client([
+        local_retry_response(
+            {"error": {"message": "local rate limit probe", "type": "rate_limit_error"}},
+            429,
+            "req-local-rate-limit",
+            {"Retry-After": "2"},
+        ),
+    ])
+    try:
+        local["client"].responses.create(
+            model="runinfra-local-error-model",
+            input="local rate-limit canary",
+            request_options={"max_retries": 0},
+        )
+    except BaseException as error:  # noqa: BLE001
+        return {
+            **assert_rate_limit_error(error, "error.rate_limit.local", 2.0),
+            **assert_retry_call_count(local["calls"], 1, "error.rate_limit.local"),
+        }
+    raise AssertionError("local rate-limit error unexpectedly succeeded")
 
 
 def _unsupported_body_parameter(client: RunInfra, model: str) -> Dict[str, Any]:

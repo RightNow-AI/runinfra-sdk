@@ -47,6 +47,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 - Added a local strict canary row proving explicit JSON `extraBody` extensions
   are serialized deliberately, do not serialize SDK option names, reject typed
   field overrides, and fail closed on multipart paths.
+- Added a local strict canary row proving 429 rate-limit responses map to
+  `RateLimitError` with retry-after and request-id metadata.
 - Extended package leakage scanners to reject PyPI/Twine and pip credential
   config material such as `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini`.
 

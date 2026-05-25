@@ -323,6 +323,23 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn('record("error.model.not_found"', python_canary)
         self.assertIn("runinfra-sdk-canary-missing-model", python_canary)
 
+    def test_child_canaries_cover_local_rate_limit_error_mapping(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        row = "error.rate_limit.local"
+
+        self.assertIn(f'"{row}"', runner)
+        self.assertIn(f'record("{row}"', typescript_canary)
+        self.assertIn("RateLimitError", typescript_canary)
+        self.assertIn("retryAfterMs", typescript_canary)
+        self.assertIn(f'"{row}"', python_canary)
+        self.assertIn("RateLimitError", python_canary)
+        self.assertIn("retry_after_seconds", python_canary)
+        self.assertIn(row, live_canaries)
+        self.assertIn("rate-limit", live_canaries)
+
     def test_models_list_canary_fails_when_configured_model_is_absent_from_catalog(self):
         typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
         python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
