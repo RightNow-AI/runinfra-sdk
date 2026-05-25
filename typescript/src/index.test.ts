@@ -2312,6 +2312,63 @@ class RunInfra:
     expect(manifest.sourceDigestFileLabels).toContain("scripts/verify-github-security-status.mjs");
   });
 
+  it("includes live model discovery in source digests", async () => {
+    const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
+
+    expect(manifest.sourceDigestFileLabels).toContain("scripts/live-canary-model-discovery.mjs");
+  });
+
+  it("builds redacted live model-discovery candidate reports from catalog metadata", async () => {
+    const discovery = await import("../../scripts/live-canary-model-discovery.mjs") as {
+      buildModelDiscoveryReport: (input: {
+        baseURL: string;
+        requestId?: string;
+        models: unknown[];
+        generatedAt?: string;
+      }) => {
+        status: string;
+        baseURL: string;
+        catalog: { count: number; requestId?: string; unclassifiedCount: number };
+        candidatesByEnv: Record<string, { candidateIds: string[]; evidence: string[] }>;
+      };
+    };
+
+    const report = discovery.buildModelDiscoveryReport({
+      baseURL: "https://api.runinfra.ai/v1",
+      requestId: "req_models_123",
+      generatedAt: "2026-05-25T00:00:00.000Z",
+      models: [
+        {
+          id: "llama-3.1-chat",
+          object: "model",
+          capabilities: ["chat.completions", "responses"],
+          internal_only_note: "do-not-serialize",
+        },
+        { id: "text-embedding-3-small", task: "embeddings" },
+        { id: "flux-image", metadata: { modality: "image_generation" } },
+        { id: "sonic-tts", tags: ["text-to-speech"] },
+        { id: "whisper-asr", capabilities: { transcription: true } },
+        { id: "catalog-only-unknown", description: "generic serving target" },
+      ],
+    });
+
+    expect(report.status).toBe("completed");
+    expect(report.baseURL).toBe("https://api.runinfra.ai/v1");
+    expect(report.catalog).toMatchObject({
+      count: 6,
+      requestId: "req_models_123",
+      unclassifiedCount: 1,
+    });
+    expect(report.candidatesByEnv.RUNINFRA_LLM_MODEL.candidateIds).toEqual(["llama-3.1-chat"]);
+    expect(report.candidatesByEnv.RUNINFRA_EMBEDDING_MODEL.candidateIds).toEqual(["text-embedding-3-small"]);
+    expect(report.candidatesByEnv.RUNINFRA_IMAGE_MODEL.candidateIds).toEqual(["flux-image"]);
+    expect(report.candidatesByEnv.RUNINFRA_TTS_MODEL.candidateIds).toEqual(["sonic-tts"]);
+    expect(report.candidatesByEnv.RUNINFRA_ASR_MODEL.candidateIds).toEqual(["whisper-asr"]);
+    expect(report.candidatesByEnv.RUNINFRA_LLM_MODEL.evidence).toEqual(["capabilities"]);
+    expect(JSON.stringify(report)).not.toContain("do-not-serialize");
+    expect(JSON.stringify(report)).not.toContain("catalog-only-unknown");
+  });
+
   it("documents the safe live-canary env-file flag instead of Node's flag", () => {
     const docs = [
       readFileSync(new URL("../../README.md", import.meta.url), "utf8"),
@@ -2325,6 +2382,14 @@ class RunInfra:
       expect(doc).toContain("`--runinfra-env-file <path-to-env-file>`");
       expect(doc).toContain("Do not use Node's `--env-file` option in promotion commands");
     }
+  });
+
+  it("documents model discovery as informational and separate from strict preflight", () => {
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+
+    expect(liveCanaries).toContain("node scripts/run-sdk-live-canaries.mjs --discover-models");
+    expect(liveCanaries).toContain("Model discovery is informational");
+    expect(liveCanaries).toContain("does not make strict preflight ready");
   });
 
   it("fails workflow policy when either publish job loses OIDC permission", async () => {
@@ -4229,6 +4294,186 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(report.reports).toEqual([]);
       expect(JSON.stringify(report)).not.toContain("601");
       expect(`${result.stdout}${result.stderr}`).not.toContain("601");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails model discovery closed without an API key and does not run child canaries", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-model-discovery-"));
+    const reportPath = join(tmp, "models.json");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--discover-models",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+          RUNINFRA_BASE_URL: "http://localhost:1/v1",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        discovery?: {
+          status?: string;
+          env?: Record<string, string>;
+          missing?: string[];
+          candidatesByEnv?: Record<string, { candidateIds?: string[] }>;
+        };
+        reports?: unknown[];
+      };
+      expect(report.discovery?.status).toBe("blocked");
+      expect(report.discovery?.env?.RUNINFRA_API_KEY).toBe("missing");
+      expect(report.discovery?.env?.RUNINFRA_BASE_URL).toBe("set_redacted");
+      expect(report.discovery?.missing).toEqual(["RUNINFRA_API_KEY"]);
+      expect(report.discovery?.candidatesByEnv?.RUNINFRA_LLM_MODEL?.candidateIds).toEqual([]);
+      expect(report.reports).toEqual([]);
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
+      expect(`${result.stdout}${result.stderr}`).not.toContain("http://localhost:1/v1");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds stalled model discovery requests with the canary timeout", async () => {
+    const { createServer } = await import("node:http");
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-model-discovery-timeout-"));
+    const reportPath = join(tmp, "models.json");
+    const server = createServer(() => undefined);
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test server did not bind to a port");
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--discover-models",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        timeout: 5000,
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "model-discovery-api-key-placeholder",
+          RUNINFRA_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+          RUNINFRA_CANARY_TIMEOUT_SECONDS: "0.05",
+        },
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        discovery?: { status?: string; error?: string };
+        reports?: unknown[];
+      };
+      expect(report.discovery?.status).toBe("failed");
+      expect(report.discovery?.error).toBe("models.list timed out");
+      expect(report.reports).toEqual([]);
+      expect(JSON.stringify(report)).not.toContain("model-discovery-api-key-placeholder");
+      expect(JSON.stringify(report)).not.toContain(`127.0.0.1:${address.port}`);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds stalled model discovery JSON bodies with the canary timeout", async () => {
+    const { createServer } = await import("node:http");
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-model-discovery-body-timeout-"));
+    const reportPath = join(tmp, "models.json");
+    const server = createServer((_request, response) => {
+      response.writeHead(200, {
+        "Content-Type": "application/json",
+        "x-request-id": "req_stalled_body",
+      });
+      response.write('{"object":"list","data":');
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test server did not bind to a port");
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--discover-models",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        timeout: 5000,
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "model-discovery-api-key-placeholder",
+          RUNINFRA_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+          RUNINFRA_CANARY_TIMEOUT_SECONDS: "0.05",
+        },
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        discovery?: { status?: string; error?: string };
+        reports?: unknown[];
+      };
+      expect(report.discovery?.status).toBe("failed");
+      expect(report.discovery?.error).toBe("models.list timed out");
+      expect(report.reports).toEqual([]);
+      expect(JSON.stringify(report)).not.toContain("model-discovery-api-key-placeholder");
+      expect(JSON.stringify(report)).not.toContain(`127.0.0.1:${address.port}`);
+      expect(JSON.stringify(report)).not.toContain("req_stalled_body");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects conflicting live-canary runner modes before discovery can bypass preflight", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-model-discovery-mode-conflict-"));
+    const reportPath = join(tmp, "models.json");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--discover-models",
+        "--preflight",
+        "--strict",
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "model-discovery-api-key-placeholder",
+          RUNINFRA_BASE_URL: "http://127.0.0.1:1/v1",
+        },
+      });
+
+      expect(result.status).toBe(2);
+      expect(existsSync(reportPath)).toBe(false);
+      expect(result.stderr).toContain("--discover-models cannot be combined with --preflight or --verify-surface-coverage");
+      expect(`${result.stdout}${result.stderr}`).not.toContain("model-discovery-api-key-placeholder");
+      expect(`${result.stdout}${result.stderr}`).not.toContain("127.0.0.1");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

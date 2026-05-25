@@ -4,7 +4,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { productionBaseURL, reportBaseURL } from "./canary-report-base-url.mjs";
 import { expectedRows } from "./live-canary-matrix.mjs";
+import {
+  buildBlockedModelDiscoveryReport,
+  buildFailedModelDiscoveryReport,
+  buildModelDiscoveryReport,
+} from "./live-canary-model-discovery.mjs";
 import { sourceDigestFileLabels } from "./live-canary-source-files.mjs";
 import { publicSurfaceCoverage } from "./live-canary-surface-coverage.mjs";
 import { readinessRowCoverageErrors } from "./live-canary-readiness-policy.mjs";
@@ -14,6 +20,7 @@ const args = process.argv.slice(2);
 const strict = args.includes("--strict");
 const preflight = args.includes("--preflight");
 const verifySurfaceCoverage = args.includes("--verify-surface-coverage");
+const discoverModels = args.includes("--discover-models");
 const reportPath = optionValue("--report");
 const packageSource = optionValue("--package-source") ?? "artifact";
 const scriptEnvFilePath = optionValue("--runinfra-env-file") ?? optionValue("--env-file");
@@ -42,6 +49,11 @@ function optionValue(name) {
 
 if (!["artifact", "source"].includes(packageSource)) {
   console.error(`Unsupported package source "${packageSource}". Use --package-source artifact or --package-source source.`);
+  process.exit(2);
+}
+
+if ([discoverModels, preflight, verifySurfaceCoverage].filter(Boolean).length > 1) {
+  console.error("--discover-models cannot be combined with --preflight or --verify-surface-coverage.");
   process.exit(2);
 }
 
@@ -735,6 +747,139 @@ function surfaceCoverageFailureReport(errors, fields = {}) {
     process.exit(1);
   }
   return combined;
+}
+
+function discoveryEnvReport() {
+  return redactedEnv(["RUNINFRA_API_KEY", "RUNINFRA_BASE_URL"]);
+}
+
+function discoveryBaseURL() {
+  return env("RUNINFRA_BASE_URL") ?? productionBaseURL;
+}
+
+function redactedDiscoveryBaseURL() {
+  const baseURL = discoveryBaseURL();
+  return reportBaseURL(baseURL, Boolean(env("RUNINFRA_BASE_URL")));
+}
+
+function canaryTimeoutMs() {
+  return Math.ceil(Number(env("RUNINFRA_CANARY_TIMEOUT_SECONDS") ?? "120") * 1000);
+}
+
+function modelDiscoveryReport(discovery) {
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    strict,
+    packageSource,
+    candidate: baseCandidateIdentity(),
+    discovery,
+    reports: [],
+  };
+}
+
+async function fetchModelCatalogForDiscovery(baseURL) {
+  const url = new URL(`${baseURL.replace(/\/+$/u, "")}/models`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), canaryTimeoutMs());
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${env("RUNINFRA_API_KEY")}`,
+        Accept: "application/json",
+        "X-RunInfra-SDK": "live-canary-model-discovery",
+        "X-RunInfra-SDK-Version": expectedSdkVersion,
+      },
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        requestId: response.headers.get("x-request-id") ?? undefined,
+        error: `models.list status ${response.status}`,
+      };
+    }
+    let body;
+    try {
+      body = await response.json();
+    } catch (error) {
+      return {
+        ok: false,
+        requestId: response.headers.get("x-request-id") ?? undefined,
+        error: error instanceof Error && error.name === "AbortError"
+          ? "models.list timed out"
+          : "models.list returned non-json body",
+      };
+    }
+    if (!body || typeof body !== "object" || !Array.isArray(body.data)) {
+      return {
+        ok: false,
+        requestId: response.headers.get("x-request-id") ?? undefined,
+        error: "models.list response missing data array",
+      };
+    }
+    return {
+      ok: true,
+      requestId: response.headers.get("x-request-id") ?? undefined,
+      models: body.data,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error && error.name === "AbortError"
+        ? "models.list timed out"
+        : "models.list request failed",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runModelDiscovery() {
+  const missing = [
+    ...missingEnv(["RUNINFRA_API_KEY"]),
+    ...optionalCanaryTimeoutRequirement(),
+    ...optionalBaseURLRequirement(),
+  ];
+  let discovery;
+  if (missing.length) {
+    discovery = buildBlockedModelDiscoveryReport({
+      baseURL: redactedDiscoveryBaseURL(),
+      env: discoveryEnvReport(),
+      missing,
+    });
+  } else {
+    const catalog = await fetchModelCatalogForDiscovery(discoveryBaseURL());
+    discovery = catalog.ok
+      ? buildModelDiscoveryReport({
+        baseURL: redactedDiscoveryBaseURL(),
+        models: catalog.models,
+        requestId: catalog.requestId,
+      })
+      : buildFailedModelDiscoveryReport({
+        baseURL: redactedDiscoveryBaseURL(),
+        env: discoveryEnvReport(),
+        error: catalog.error,
+      });
+  }
+  const combined = modelDiscoveryReport(discovery);
+  try {
+    assertReportDoesNotLeak(combined);
+    writeReport(combined);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+  console.log(JSON.stringify({
+    discovery: discovery.status,
+    catalog: discovery.catalog,
+  }, null, 2));
+  process.exit(discovery.status === "completed" ? 0 : 1);
+}
+
+if (discoverModels) {
+  await runModelDiscovery();
 }
 
 if (verifySurfaceCoverage) {

@@ -44,6 +44,20 @@ If canary inputs live in a local env file, load it through
 node scripts/run-sdk-live-canaries.mjs --runinfra-env-file <path-to-env-file> --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 ```
 
+To inspect the live catalog before filling model env vars, run:
+
+```bash
+node scripts/run-sdk-live-canaries.mjs --discover-models --runinfra-env-file <path-to-env-file> --report artifacts/sdk/live-model-discovery.json
+```
+
+Model discovery is informational. It calls only `GET /models`, groups catalog
+candidate IDs by `RUNINFRA_*_MODEL` env name using catalog metadata hints, and
+does not call inference routes. It does not make strict preflight ready, does
+not prove model callability, and must not replace `models.retrieve.*` plus the
+strict multimodal canary rows. Discovery reports keep API keys and custom base
+URLs redacted, do not serialize raw catalog objects, and still pass the shared
+report leak scanner before writing.
+
 Do not use Node's `--env-file` option in promotion commands.
 `--runinfra-env-file <path-to-env-file>` keeps env-file parsing, explicit
 shell-env precedence, and report redaction inside the canary runner.
