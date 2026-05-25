@@ -3141,3 +3141,55 @@ Current blockers:
    checkpoint.
 
 Checkpoint timestamp: 2026-05-25 04:01 +03:00.
+
+## Checkpoint: 2026-05-25 04:15 Asia/Amman
+
+Current state: still not GA, not deployed, and not published. The RunPipe
+gateway fix that should close the remaining strict source canary failure is now
+merged into the dedicated local RunPipe `main` worktree, including the latest
+`origin/main`, but production has not been updated.
+
+Fresh RunPipe local-main state:
+
+- Worktree: `C:\Users\jaber\RightNow-Full\RunPipe-main-agent1-20260521`
+- Local merge commit: `8b4fd3c7 merge: incorporate latest origin main`
+- Latest incorporated `origin/main`: `cbbddea1 feat(chat): wire GPU lifecycle SSE receivers to live-cost store (Phase B scaffold)`
+- Local RunPipe `main` state after the merge: ahead of `origin/main` by 19
+  commits.
+- The SDK gateway unsupported-parameter guard and route tests are still present
+  after the merge.
+
+Fresh RunPipe verification after the latest origin merge:
+
+- `git diff --check HEAD~1..HEAD` passed.
+- `pnpm test -- --reporter dot -t "reserved runinfra|unsupported parameter"`
+  passed: 2 selected tests.
+- `pnpm test -- --reporter dot "app/api/v1/[...path]/route.test.ts" "app/api/v1/workspace-flat.test.ts" "lib/api/responses-compat.test.ts"`
+  passed: 3 files, 190 tests.
+- `pnpm typecheck` passed.
+
+Fresh SDK strict source live canary:
+
+- Command:
+  `node scripts\run-sdk-live-canaries.mjs --runinfra-env-file C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local --package-source source --strict --report artifacts\sdk\live-canary-after-runpipe-merge.json`
+- Result against `https://api.runinfra.ai/v1`: TypeScript 33 passed, 1
+  failed, 15 skipped; Python 33 passed, 1 failed, 15 skipped.
+- The only failed row in both languages is still
+  `error.body.unsupported_parameter`.
+- Skipped rows are still the missing multimodal/idempotency inputs: embedding
+  model/dimensions, image model/size/response format, TTS model plus
+  voice/reference inputs/response format, ASR model/fixture/expected
+  text/language/response format, voice-pipeline audio/expected text, and
+  `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1`.
+
+Current blockers:
+
+1. Production `api.runinfra.ai` has not picked up the locally merged RunPipe
+   gateway unsupported-parameter rejection.
+2. Multimodal/idempotency strict rows still need scoped live canary
+   models/fixtures/env inputs.
+3. npm/PyPI `0.1.4` publish remains blocked until trusted-publishing gates,
+   strict artifact live canaries, artifact scans, clean registry installs,
+   CodeQL/security checks, and independent review are green.
+4. No push, deploy, publish, or paid canary provisioning was performed in this
+   checkpoint.
