@@ -87,3 +87,8 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Artifact digests recorded in the live report: npm `c719ba363c25917b0af325c4b4cf4e4e2dd3eea648569acdace541e52300ff7d`, Python wheel `d48aab15bedf7c9ba6e49d30a0355e9475f179e6d3af9d8c51760cb2a19f72b4`, Python sdist `f61e040597dd492edd8d4870dc1b7196dc5c9f3eb5b1b5b6ff7a897459ef1bfe`.
 - `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-artifact.json --live artifacts\sdk\live-canary-current-artifact.json` failed as expected, proving the promotion gate rejects blocked readiness, skipped multimodal/idempotency rows, and the unsupported-parameter live failure.
 - No source change, push, deploy, publish, registry change, secret rotation, or paid provisioning was performed in this checkpoint.
+
+### 2026-05-25T13:29:00+03:00 - Agent 4
+- Verified current public registry availability for SDK `0.1.4` without publishing: `node scripts\verify-clean-installs.mjs --package both --mode registry --version 0.1.4 --registry-attempts 1 --registry-retry-delay-ms 1000` failed at registry preflight.
+- Canonical npm does not currently have `@runinfra/sdk@0.1.4`, and canonical PyPI does not currently have `runinfra==0.1.4`. The script stopped before creating consumer install workspaces.
+- Registry install/import proof for `0.1.4` remains blocked until a trusted-publishing release is actually performed after strict readiness/live/artifact promotion gates pass.
