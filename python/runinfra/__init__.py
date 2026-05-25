@@ -351,31 +351,92 @@ def _default_transport(timeout: float) -> Transport:
             headers=request.headers,
             method=request.method,
         )
+
+        def _extract_status(obj: Any) -> int:
+            # Accept common shapes: .status, .getcode(), or .code
+            if hasattr(obj, "status"):
+                try:
+                    return int(getattr(obj, "status"))
+                except Exception:
+                    pass
+            getcode = getattr(obj, "getcode", None)
+            if callable(getcode):
+                try:
+                    return int(getcode())
+                except Exception:
+                    pass
+            code = getattr(obj, "code", None)
+            if isinstance(code, int):
+                return code
+            try:
+                if code is not None:
+                    return int(code)
+            except Exception:
+                pass
+            return 0
+
+        def _extract_headers(obj: Any) -> Dict[str, str]:
+            # Try common header accessors: .headers (mapping-like) or .getheaders()
+            items: List[tuple] = []
+            headers_obj = getattr(obj, "headers", None)
+            getheaders = getattr(obj, "getheaders", None)
+            if headers_obj is not None:
+                try:
+                    items = list(headers_obj.items())
+                except Exception:
+                    # Fallback: some header-like objects are iterable of pairs
+                    try:
+                        items = list(headers_obj)
+                    except Exception:
+                        items = []
+            elif callable(getheaders):
+                try:
+                    items = list(getheaders())
+                except Exception:
+                    items = []
+
+            normalized: Dict[str, str] = {}
+            for pair in items:
+                try:
+                    name, value = pair
+                    if isinstance(name, str) and value is not None:
+                        normalized[name.lower()] = str(value)
+                except Exception:
+                    continue
+            return normalized
+
         try:
             response = urllib.request.urlopen(
                 req,
                 timeout=request.timeout_seconds or timeout,
             )
-            response_headers = dict(response.headers.items())
+            response_headers = _extract_headers(response)
+            status = _extract_status(response)
+
             if request.stream:
                 def iter_response() -> Iterator[bytes]:
                     try:
                         while True:
-                            chunk = response.readline()
+                            chunk = getattr(response, "readline", lambda: b"")()
                             if not chunk:
                                 break
                             yield chunk
                     finally:
-                        response.close()
+                        close = getattr(response, "close", None)
+                        if callable(close):
+                            try:
+                                close()
+                            except Exception:
+                                pass
 
                 return RunInfraResponse(
-                    response.status,
+                    status,
                     response_headers,
                     iter_response(),
                 )
+
             try:
-                with response:
-                    body = response.read()
+                body = response.read()
             except Exception as exc:
                 raise _TransportBodyReadError(
                     _transport_error(
@@ -383,13 +444,21 @@ def _default_transport(timeout: float) -> Transport:
                         _request_id_from_headers(response_headers),
                     )
                 ) from exc
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
+
             return RunInfraResponse(
-                response.status,
+                status,
                 response_headers,
                 body,
             )
         except urllib.error.HTTPError as exc:
-            response_headers = dict(exc.headers.items())
+            response_headers = _extract_headers(exc)
             try:
                 body = exc.read()
             except Exception as read_exc:
@@ -399,7 +468,12 @@ def _default_transport(timeout: float) -> Transport:
                         _request_id_from_headers(response_headers),
                     )
                 ) from read_exc
-            return RunInfraResponse(exc.code, response_headers, body)
+            status = _extract_status(exc) or getattr(exc, "code", 0)
+            try:
+                status = int(status)
+            except Exception:
+                status = 0
+            return RunInfraResponse(status, response_headers, body)
 
     return send
 
