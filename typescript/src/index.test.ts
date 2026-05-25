@@ -2933,6 +2933,9 @@ class RunInfra:
     for (const doc of docs) {
       expect(doc).toContain("`--runinfra-env-file <path-to-env-file>`");
       expect(doc).toContain("--write-env-template");
+      expect(doc).toContain("--write-missing-env-template");
+      expect(doc).toContain("--readiness-report");
+      expect(doc).toContain("missing strict live-canary env patch");
       expect(doc).toContain(".env.sdk-live.local");
       expect(doc).toContain("Do not use Node's `--env-file` option in promotion commands");
     }
@@ -3844,6 +3847,18 @@ class RunInfra:
     }
   });
 
+  it("suppresses successful artifact setup command output before child canaries run", () => {
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const runCheckedBlock = runner.match(/function runChecked[\s\S]*?\n\}\n/u)?.[0] ?? "";
+
+    expect(runCheckedBlock).toContain('stdio: "pipe"');
+    expect(runCheckedBlock).toContain("maxBuffer:");
+    expect(runner).toContain("safeSetupOutputSummary(result)");
+    expect(runner).toContain("redactSetupOutputTail");
+    expect(runner).toContain("[redacted-path]");
+    expect(runCheckedBlock).not.toContain('stdio: "inherit"');
+  });
+
   it("removes parent live-canary temporary child reports when artifact failure report writing fails", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-artifact-report-write-failure-"));
     const reportParent = join(tmp, "not-a-directory");
@@ -4598,6 +4613,160 @@ with open(report, "w", encoding="utf-8") as handle:
 
       expect(forced.status, forced.stderr).toBe(0);
       expect(readFileSync(templatePath, "utf8")).toContain("RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("writes a redacted missing-env patch from a blocked readiness report", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const templatePath = join(tmp, "missing.env");
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify({
+        schemaVersion: 1,
+        readiness: {
+          status: "blocked",
+          missing: [
+            "RUNINFRA_EMBEDDING_MODEL",
+            "RUNINFRA_IMAGE_RESPONSE_FORMAT url or b64_json",
+            "RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT",
+            "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1",
+          ],
+          summary: { ready: 43, blocked: 15 },
+          rows: [
+            { name: "models.retrieve.embedding", status: "blocked", missing: ["RUNINFRA_EMBEDDING_MODEL"] },
+            { name: "openai.params.images", status: "blocked", missing: ["RUNINFRA_IMAGE_RESPONSE_FORMAT url or b64_json"] },
+          ],
+        },
+      }, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--readiness-report",
+        readinessPath,
+        "--write-missing-env-template",
+        templatePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "missing-patch-secret-api-key",
+          RUNINFRA_LLM_MODEL: "missing-patch-secret-model",
+          NPM_TOKEN: "missing-patch-secret-npm-token",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Wrote missing strict live-canary env patch.");
+      const template = readFileSync(templatePath, "utf8");
+      expect(template).toContain("RUNINFRA_EMBEDDING_MODEL=");
+      expect(template).toContain("RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json");
+      expect(template).toContain("RUNINFRA_TTS_VOICE=");
+      expect(template).toContain("RUNINFRA_TTS_REF_AUDIO=");
+      expect(template).toContain("RUNINFRA_TTS_REF_TEXT=");
+      expect(template).toContain("RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1");
+      expect(template).not.toContain("RUNINFRA_API_KEY=");
+      expect(template).not.toContain("RUNINFRA_LLM_MODEL=");
+      expect(template).not.toContain("missing-patch-secret-api-key");
+      expect(template).not.toContain("missing-patch-secret-model");
+      expect(template).not.toContain("missing-patch-secret-npm-token");
+      expect(template).not.toContain(readinessPath);
+      expect(result.stderr).not.toContain(readinessPath);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to overwrite a missing-env patch unless forced", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-overwrite-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const templatePath = join(tmp, "missing.env");
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify({
+        schemaVersion: 1,
+        readiness: {
+          status: "blocked",
+          missing: ["RUNINFRA_IMAGE_MODEL"],
+          summary: { ready: 57, blocked: 1 },
+          rows: [],
+        },
+      }, null, 2)}\n`);
+      writeFileSync(templatePath, "do-not-overwrite\n");
+
+      const refused = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--readiness-report",
+        readinessPath,
+        "--write-missing-env-template",
+        templatePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(refused.status).toBe(2);
+      expect(refused.stderr).toContain("missing strict live-canary env patch already exists");
+      expect(refused.stderr).not.toContain(templatePath);
+      expect(readFileSync(templatePath, "utf8")).toBe("do-not-overwrite\n");
+
+      const forced = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--readiness-report",
+        readinessPath,
+        "--write-missing-env-template",
+        templatePath,
+        "--force-env-template",
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(forced.status, forced.stderr).toBe(0);
+      expect(readFileSync(templatePath, "utf8")).toContain("RUNINFRA_IMAGE_MODEL=");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects missing-env patch reports that contain sensitive env values", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-missing-env-template-leak-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const templatePath = join(tmp, "missing.env");
+    const leakedToken = "missing-patch-sensitive-token";
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify({
+        schemaVersion: 1,
+        candidate: { leakedToken },
+        readiness: {
+          status: "blocked",
+          missing: ["RUNINFRA_IMAGE_MODEL"],
+          summary: { ready: 57, blocked: 1 },
+          rows: [],
+        },
+      }, null, 2)}\n`);
+
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--readiness-report",
+        readinessPath,
+        "--write-missing-env-template",
+        templatePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NPM_TOKEN: leakedToken,
+        },
+      });
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("live canary report contains a sensitive environment value");
+      expect(result.stderr).not.toContain(leakedToken);
+      expect(result.stderr).not.toContain(readinessPath);
+      expect(existsSync(templatePath)).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

@@ -506,3 +506,35 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Second-opinion review from Ptolemy found and drove fixes for Python custom iterable JSON body leaks, Python non-2xx status error body leaks, false-green TypeScript custom-body evidence, Python traceback/exception-chain leaks, and safe-message SDK errors preserving unsafe causes in both SDKs. Final Ptolemy re-review passed with no remaining findings.
 - `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports cannot be promoted as GA.
 - No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T00:25:02+03:00 - Agent 4
+- Added a redacted missing-env patch mode for strict live-canary setup. `scripts\run-sdk-live-canaries.mjs --readiness-report <report.json> --write-missing-env-template <path>` now exits before env-file loading, report writing, artifact install, or child live canaries.
+- The missing patch mode reads only a redacted readiness report, validates schema/version/rows/row-coverage state, rejects unsupported missing requirements, emits only whitelisted canonical `RUNINFRA_*` placeholders or safe defaults, refuses overwrite unless `--force-env-template` is passed, and runs the existing forbidden-content/current-sensitive-env scanner before writing.
+- It intentionally does not diff or read an existing env file, so existing API keys, model IDs, fixture paths, transcripts, and registry tokens cannot appear as diff context. Focused tests prove already-set `RUNINFRA_API_KEY` and `RUNINFRA_LLM_MODEL` are not emitted when the redacted readiness report marks them satisfied.
+- Updated root/package docs, `LIVE-CANARIES.md`, and `AGENT-NOTES.md` to document the missing strict live-canary env patch and to state clearly that it is not promotion evidence.
+- Closed a local-path log hygiene gap in artifact-mode canary setup. The parent live-canary setup helper now pipes successful npm/pip setup output instead of inheriting it, so successful package installation does not print local wheel paths before child canaries run.
+- Second-opinion review found one important follow-up on that log-hygiene change: piping output without a bounded buffer and safe failure summary could make artifact setup failures opaque. Fixed before commit by setting an explicit `maxBuffer`, preserving a redacted stderr/stdout tail on setup failure, and keeping successful setup output quiet.
+- Exercised the new missing patch mode against the current redacted RunPipe env-backed readiness report using a disposable output path. It wrote `18` placeholder/default assignments and did not include `RUNINFRA_API_KEY=` or `RUNINFRA_LLM_MODEL=`.
+- Verification passed:
+  - RED missing-env patch tests first failed because the runner ignored the new flags and attempted artifact canaries.
+  - RED docs regression first failed because docs did not mention `--write-missing-env-template` and `--readiness-report`.
+  - RED log-hygiene regression first failed because `runChecked()` used `stdio: "inherit"`.
+  - GREEN focused tests passed for missing-env patch, static env template, docs, and artifact setup output.
+  - `node --check scripts\run-sdk-live-canaries.mjs` passed.
+  - TypeScript no-emit typecheck passed.
+  - Full TypeScript suite passed `238` tests.
+  - Full Python suite passed `151` tests and `142` subtests.
+  - Surface coverage passed with `58` rows, `28` coverage surfaces, and no uncovered public surfaces or rows.
+  - Secret-scan policy, version sync, workflow policy, dry-run publish dispatch, and Python compileall passed.
+  - Rebuilt artifacts with `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist`.
+  - Artifact scanners passed: npm package scanner, Python wheel/sdist scanner, `twine check`, and clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed no-env strict artifact readiness and live reports after the final runner change:
+  - Source digest: `345b1a9aa3778be93decbc12e8c9483d5faef898116b01268d59da8c9fe26730`
+  - Source file count: `37`
+  - NPM artifact SHA-256: `b28a489fff1aa80f5804d2ed38f0935af5b53cfec676e7c853be8cb865eaa9ec`
+  - Python wheel SHA-256: `77324ed9476f1e2ee8bab1255adc9f8ed1190eac550160df25d324dfeda3f267`
+  - Python sdist SHA-256: `a4299bd0afd9e93aba23683dbb1a26f7b84bc91e6a1d062a66e3d0e8042dbc5e`
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+- Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports still cannot promote as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.

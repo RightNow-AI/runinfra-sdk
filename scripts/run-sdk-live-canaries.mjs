@@ -22,10 +22,15 @@ const preflight = args.includes("--preflight");
 const verifySurfaceCoverage = args.includes("--verify-surface-coverage");
 const discoverModels = args.includes("--discover-models");
 const writeEnvTemplate = args.some((arg) => arg === "--write-env-template" || arg.startsWith("--write-env-template="));
+const writeMissingEnvTemplate = args.some((arg) =>
+  arg === "--write-missing-env-template" || arg.startsWith("--write-missing-env-template=")
+);
 const forceEnvTemplate = args.includes("--force-env-template");
 const reportPath = optionValue("--report");
 const packageSource = optionValue("--package-source") ?? "artifact";
 const envTemplatePath = optionValue("--write-env-template");
+const missingEnvTemplatePath = optionValue("--write-missing-env-template");
+const readinessReportPath = optionValue("--readiness-report");
 const scriptEnvFilePath = optionValue("--runinfra-env-file") ?? optionValue("--env-file");
 const nodeEnvFilePath = optionValueFrom(process.execArgv, "--env-file");
 const envFilePath = scriptEnvFilePath ?? nodeEnvFilePath;
@@ -60,8 +65,8 @@ if ([discoverModels, preflight, verifySurfaceCoverage].filter(Boolean).length > 
   process.exit(2);
 }
 
-if (forceEnvTemplate && !writeEnvTemplate) {
-  console.error("--force-env-template requires --write-env-template.");
+if (forceEnvTemplate && !writeEnvTemplate && !writeMissingEnvTemplate) {
+  console.error("--force-env-template requires --write-env-template or --write-missing-env-template.");
   process.exit(2);
 }
 
@@ -82,6 +87,38 @@ if (writeEnvTemplate) {
     console.error("--write-env-template cannot be combined with --runinfra-env-file or Node --env-file.");
     process.exit(2);
   }
+}
+
+if (writeMissingEnvTemplate) {
+  if (!missingEnvTemplatePath || missingEnvTemplatePath.startsWith("--")) {
+    console.error("--write-missing-env-template requires an output path.");
+    process.exit(2);
+  }
+  if (!readinessReportPath || readinessReportPath.startsWith("--")) {
+    console.error("--write-missing-env-template requires --readiness-report.");
+    process.exit(2);
+  }
+  if ([discoverModels, preflight, verifySurfaceCoverage].some(Boolean)) {
+    console.error("--write-missing-env-template cannot be combined with --discover-models, --preflight, or --verify-surface-coverage.");
+    process.exit(2);
+  }
+  if (writeEnvTemplate) {
+    console.error("--write-missing-env-template cannot be combined with --write-env-template.");
+    process.exit(2);
+  }
+  if (reportPath) {
+    console.error("--write-missing-env-template cannot be combined with --report.");
+    process.exit(2);
+  }
+  if (envFilePath) {
+    console.error("--write-missing-env-template cannot be combined with --runinfra-env-file or Node --env-file.");
+    process.exit(2);
+  }
+}
+
+if (readinessReportPath && !writeMissingEnvTemplate) {
+  console.error("--readiness-report requires --write-missing-env-template.");
+  process.exit(2);
 }
 
 function parseEnvFileContent(content) {
@@ -329,6 +366,286 @@ function writeStrictLiveCanaryEnvTemplate(outputPath) {
   }
 }
 
+const missingEnvPatchEntries = [
+  {
+    section: "Gateway and execution controls.",
+    triggers: ["RUNINFRA_BASE_URL safe http(s) URL without credentials, query strings, or fragments"],
+    assignments: [{ key: "RUNINFRA_BASE_URL", value: productionBaseURL }],
+  },
+  {
+    section: "Gateway and execution controls.",
+    triggers: ["RUNINFRA_API_KEY"],
+    assignments: [{ key: "RUNINFRA_API_KEY" }],
+  },
+  {
+    section: "Gateway and execution controls.",
+    triggers: ["RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number <= 600"],
+    assignments: [{ key: "RUNINFRA_CANARY_TIMEOUT_SECONDS", value: "120" }],
+  },
+  {
+    section: "Gateway and execution controls.",
+    triggers: ["RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000"],
+    assignments: [{ key: "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS", value: "25" }],
+  },
+  {
+    section: "Text, chat, responses, streaming, embeddings, and images.",
+    triggers: ["RUNINFRA_LLM_MODEL"],
+    assignments: [{ key: "RUNINFRA_LLM_MODEL" }],
+  },
+  {
+    section: "Text, chat, responses, streaming, embeddings, and images.",
+    triggers: ["RUNINFRA_EMBEDDING_MODEL"],
+    assignments: [{ key: "RUNINFRA_EMBEDDING_MODEL" }],
+  },
+  {
+    section: "Text, chat, responses, streaming, embeddings, and images.",
+    triggers: ["RUNINFRA_EMBEDDING_DIMENSIONS", "RUNINFRA_EMBEDDING_DIMENSIONS positive integer"],
+    assignments: [{ key: "RUNINFRA_EMBEDDING_DIMENSIONS" }],
+  },
+  {
+    section: "Text, chat, responses, streaming, embeddings, and images.",
+    triggers: ["RUNINFRA_IMAGE_MODEL"],
+    assignments: [{ key: "RUNINFRA_IMAGE_MODEL" }],
+  },
+  {
+    section: "Text, chat, responses, streaming, embeddings, and images.",
+    triggers: ["RUNINFRA_IMAGE_SIZE"],
+    assignments: [{ key: "RUNINFRA_IMAGE_SIZE" }],
+  },
+  {
+    section: "Text, chat, responses, streaming, embeddings, and images.",
+    triggers: ["RUNINFRA_IMAGE_RESPONSE_FORMAT", "RUNINFRA_IMAGE_RESPONSE_FORMAT url or b64_json"],
+    assignments: [{ key: "RUNINFRA_IMAGE_RESPONSE_FORMAT", value: "b64_json" }],
+  },
+  {
+    section: "Text to speech.",
+    triggers: ["RUNINFRA_TTS_MODEL"],
+    assignments: [{ key: "RUNINFRA_TTS_MODEL" }],
+  },
+  {
+    section: "Text to speech.",
+    triggers: ["RUNINFRA_TTS_VOICE or RUNINFRA_TTS_REF_AUDIO plus RUNINFRA_TTS_REF_TEXT"],
+    comments: ["Provide either RUNINFRA_TTS_VOICE or the reference-audio pair."],
+    assignments: [
+      { key: "RUNINFRA_TTS_VOICE" },
+      { key: "RUNINFRA_TTS_REF_AUDIO" },
+      { key: "RUNINFRA_TTS_REF_TEXT" },
+    ],
+  },
+  {
+    section: "Text to speech.",
+    triggers: ["RUNINFRA_TTS_TASK_TYPE"],
+    assignments: [{ key: "RUNINFRA_TTS_TASK_TYPE", value: "Base" }],
+  },
+  {
+    section: "Text to speech.",
+    triggers: ["RUNINFRA_TTS_RESPONSE_FORMAT", "RUNINFRA_TTS_RESPONSE_FORMAT mp3, opus, aac, flac, wav, or pcm"],
+    assignments: [{ key: "RUNINFRA_TTS_RESPONSE_FORMAT", value: "mp3" }],
+  },
+  {
+    section: "Speech to text.",
+    triggers: ["RUNINFRA_ASR_MODEL"],
+    assignments: [{ key: "RUNINFRA_ASR_MODEL" }],
+  },
+  {
+    section: "Speech to text.",
+    triggers: ["RUNINFRA_ASR_LANGUAGE"],
+    assignments: [{ key: "RUNINFRA_ASR_LANGUAGE", value: "en" }],
+  },
+  {
+    section: "Speech to text.",
+    triggers: ["RUNINFRA_ASR_RESPONSE_FORMAT", "RUNINFRA_ASR_RESPONSE_FORMAT json or verbose_json"],
+    assignments: [{ key: "RUNINFRA_ASR_RESPONSE_FORMAT", value: "json" }],
+  },
+  {
+    section: "Speech to text.",
+    triggers: ["RUNINFRA_ASR_FIXTURE_PATH", "RUNINFRA_ASR_FIXTURE_PATH readable non-empty file"],
+    assignments: [{ key: "RUNINFRA_ASR_FIXTURE_PATH" }],
+  },
+  {
+    section: "Speech to text.",
+    triggers: ["RUNINFRA_ASR_FIXTURE_CONTENT_TYPE"],
+    assignments: [{ key: "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE", value: "audio/wav" }],
+  },
+  {
+    section: "Speech to text.",
+    triggers: ["RUNINFRA_ASR_EXPECTED_TEXT"],
+    assignments: [{ key: "RUNINFRA_ASR_EXPECTED_TEXT" }],
+  },
+  {
+    section: "Voice pipeline.",
+    triggers: ["RUNINFRA_VOICE_PIPELINE_API_KEY or RUNINFRA_PIPELINE_API_KEY or RUNINFRA_API_KEY"],
+    comments: ["Provide a pipeline-scoped key, or rely on RUNINFRA_API_KEY only if the gateway allows it."],
+    assignments: [
+      { key: "RUNINFRA_PIPELINE_API_KEY" },
+      { key: "RUNINFRA_VOICE_PIPELINE_API_KEY" },
+    ],
+  },
+  {
+    section: "Voice pipeline.",
+    triggers: ["RUNINFRA_VOICE_PIPELINE_ID or TEST_PIPELINE_ID"],
+    assignments: [{ key: "RUNINFRA_VOICE_PIPELINE_ID" }],
+  },
+  {
+    section: "Voice pipeline.",
+    triggers: [
+      "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH or RUNINFRA_ASR_FIXTURE_PATH",
+      "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH or RUNINFRA_ASR_FIXTURE_PATH readable non-empty file",
+    ],
+    comments: ["The voice-pipeline audio fixture can fall back to RUNINFRA_ASR_FIXTURE_PATH."],
+    assignments: [
+      { key: "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH" },
+      { key: "RUNINFRA_ASR_FIXTURE_PATH" },
+    ],
+  },
+  {
+    section: "Voice pipeline.",
+    triggers: ["RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE"],
+    assignments: [{ key: "RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE", value: "audio/wav" }],
+  },
+  {
+    section: "Voice pipeline.",
+    triggers: ["RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT or RUNINFRA_ASR_EXPECTED_TEXT"],
+    comments: ["The voice-pipeline expected text can fall back to RUNINFRA_ASR_EXPECTED_TEXT."],
+    assignments: [
+      { key: "RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT" },
+      { key: "RUNINFRA_ASR_EXPECTED_TEXT" },
+    ],
+  },
+  {
+    section: "Idempotency replay.",
+    triggers: ["RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1"],
+    assignments: [{ key: "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY", value: "1" }],
+  },
+  {
+    section: "Idempotency replay.",
+    triggers: ["RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths"],
+    assignments: [{ key: "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD" }],
+  },
+];
+
+function assertReadinessReportShape(report) {
+  if (!report || typeof report !== "object" || report.schemaVersion !== 1) {
+    throw new Error("readiness report must use schemaVersion 1.");
+  }
+  const readiness = report.readiness;
+  if (!readiness || typeof readiness !== "object") {
+    throw new Error("readiness report must contain readiness data.");
+  }
+  if (!Array.isArray(readiness.missing) || !readiness.missing.every((value) => typeof value === "string")) {
+    throw new Error("readiness report missing inputs must be a string array.");
+  }
+  if (!Array.isArray(readiness.rows)) {
+    throw new Error("readiness report rows must be an array.");
+  }
+  if (
+    Array.isArray(readiness.rowCoverageErrors) &&
+    readiness.rowCoverageErrors.some((value) => typeof value === "string" && value)
+  ) {
+    throw new Error("readiness report row coverage errors must be empty.");
+  }
+  for (const row of readiness.rows) {
+    if (!row || typeof row !== "object" || typeof row.name !== "string") {
+      throw new Error("readiness report rows must have names.");
+    }
+    if (row.status !== "ready" && row.status !== "blocked") {
+      throw new Error("readiness report rows must be ready or blocked.");
+    }
+    if (!Array.isArray(row.missing) || !row.missing.every((value) => typeof value === "string")) {
+      throw new Error("readiness report row missing inputs must be string arrays.");
+    }
+  }
+  if (Array.isArray(report.expectedRows)) {
+    if (!sameStringArray(report.expectedRows, expectedRows)) {
+      throw new Error("readiness report expected rows must match the canonical strict matrix.");
+    }
+    if (!sameStringArray(readiness.rows.map((row) => row.name), report.expectedRows)) {
+      throw new Error("readiness report row names must match expected rows.");
+    }
+  }
+  return readiness;
+}
+
+function buildMissingStrictLiveCanaryEnvTemplate(report) {
+  assertReportDoesNotLeak(report);
+  const readiness = assertReadinessReportShape(report);
+  const missing = sortedUnique(readiness.missing);
+  if (!missing.length) {
+    throw new Error("readiness report has no missing env inputs.");
+  }
+  const supported = new Set(missingEnvPatchEntries.flatMap((entry) => entry.triggers));
+  if (missing.some((name) => !supported.has(name))) {
+    throw new Error("readiness report contains unsupported missing inputs.");
+  }
+  const triggeredEntries = missingEnvPatchEntries.filter((entry) =>
+    entry.triggers.some((trigger) => missing.includes(trigger))
+  );
+  const blockedRows = readiness.rows
+    .filter((row) => row.status === "blocked")
+    .map((row) => row.name);
+  const validKeys = new Set(relevantEnv);
+  const emittedKeys = new Set();
+  const lines = [
+    "# RunInfra SDK missing strict live-canary env patch.",
+    "# Generated from a redacted readiness report. Fill values in a private file.",
+    "# This patch is not promotion evidence and intentionally omits already-satisfied variables.",
+  ];
+  if (readiness.summary && typeof readiness.summary === "object") {
+    const ready = Number.isInteger(readiness.summary.ready) ? readiness.summary.ready : "unknown";
+    const blocked = Number.isInteger(readiness.summary.blocked) ? readiness.summary.blocked : "unknown";
+    lines.push(`# Readiness summary: ${ready} ready, ${blocked} blocked.`);
+  }
+  if (blockedRows.length) {
+    lines.push("# Blocked rows:");
+    for (const row of blockedRows) lines.push(`# - ${row}`);
+  }
+  let currentSection = "";
+  for (const entry of triggeredEntries) {
+    const assignments = entry.assignments.filter((assignment) => !emittedKeys.has(assignment.key));
+    if (!assignments.length) continue;
+    for (const assignment of assignments) {
+      if (!validKeys.has(assignment.key)) {
+        throw new Error("missing env patch would emit an unsupported env key.");
+      }
+    }
+    if (entry.section !== currentSection) {
+      lines.push("", `# ${entry.section}`);
+      currentSection = entry.section;
+    }
+    for (const comment of entry.comments ?? []) lines.push(`# ${comment}`);
+    for (const assignment of assignments) {
+      lines.push(`${assignment.key}=${assignment.value ?? ""}`);
+      emittedKeys.add(assignment.key);
+    }
+  }
+  lines.push("");
+  const template = lines.join("\n");
+  assertEnvTemplateDoesNotLeak(template);
+  return template;
+}
+
+function readReadinessReport(filePath) {
+  try {
+    return JSON.parse(readFileSync(resolve(filePath), "utf8"));
+  } catch {
+    throw new Error("readiness report is missing or unreadable.");
+  }
+}
+
+function writeMissingStrictLiveCanaryEnvTemplate(outputPath, inputPath) {
+  const absolute = resolve(outputPath);
+  if (existsSync(absolute) && !forceEnvTemplate) {
+    throw new Error("missing strict live-canary env patch already exists; pass --force-env-template to replace it.");
+  }
+  const template = buildMissingStrictLiveCanaryEnvTemplate(readReadinessReport(inputPath));
+  try {
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, template);
+  } catch {
+    throw new Error("failed to write missing strict live-canary env patch.");
+  }
+}
+
 if (writeEnvTemplate) {
   try {
     writeStrictLiveCanaryEnvTemplate(envTemplatePath);
@@ -337,6 +654,17 @@ if (writeEnvTemplate) {
     process.exit(2);
   }
   console.log("Wrote strict live-canary env template.");
+  process.exit(0);
+}
+
+if (writeMissingEnvTemplate) {
+  try {
+    writeMissingStrictLiveCanaryEnvTemplate(missingEnvTemplatePath, readinessReportPath);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
+  console.log("Wrote missing strict live-canary env patch.");
   process.exit(0);
 }
 
@@ -1145,13 +1473,38 @@ function pythonExecutable(venvDir) {
 function runChecked(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd: options.cwd,
-    stdio: "inherit",
+    stdio: "pipe",
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 8,
     env: options.env ?? process.env,
     shell: false,
   });
   if (result.error || result.status !== 0) {
-    throw new Error("setup command failed");
+    throw new Error(`setup command failed${safeSetupOutputSummary(result)}`);
   }
+}
+
+function safeSetupOutputSummary(result) {
+  const summary = [result.stderr, result.stdout]
+    .filter((value) => typeof value === "string" && value.trim())
+    .map((value) => redactSetupOutputTail(value))
+    .filter(Boolean)
+    .join("\n");
+  return summary ? `: ${summary}` : "";
+}
+
+function redactSetupOutputTail(value) {
+  return value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-5)
+    .map((line) => line
+      .replace(/[A-Z]:\\[^\s"'<>]+/giu, "[redacted-path]")
+      .replace(/\/(?:Users|home)\/[^\s"'<>]+/giu, "[redacted-path]")
+      .replace(/RightNow-Full/giu, "[redacted-path]")
+    )
+    .join(" | ");
 }
 
 function installArtifactCanaryPackages() {

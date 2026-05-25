@@ -130,6 +130,14 @@ node scripts/run-sdk-live-canaries.mjs --write-env-template .env.sdk-live.local
 The template writer is static, never copies current env values, and refuses to
 overwrite an existing file unless `--force-env-template` is supplied.
 
+After a blocked preflight, create a redacted missing strict live-canary env patch:
+```bash
+node scripts/run-sdk-live-canaries.mjs --readiness-report artifacts/sdk/live-canary-readiness.json --write-missing-env-template .env.sdk-live.missing.local
+```
+The missing patch writer reads only the redacted readiness report, emits
+placeholders or safe defaults for missing inputs, never includes existing env
+values, and is not promotion evidence.
+
 Run the strict artifact live canary against the exact package artifacts:
 ```bash
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
@@ -182,6 +190,9 @@ node scripts/run-sdk-live-canaries.mjs --runinfra-env-file <path-to-env-file> --
 Use `--write-env-template <path-to-env-file>` to create a private starting
 point for that file. The generated template contains only canonical names,
 safe defaults, blank placeholders, and commented GitHub fixture-secret names.
+Use `--readiness-report <path-to-readiness-json> --write-missing-env-template <path-to-env-file>`
+to create a redacted missing strict live-canary env patch from a blocked
+readiness report without copying existing secrets or local paths.
 
 Do not use Node's `--env-file` option in promotion commands. `--runinfra-env-file <path-to-env-file>` keeps env-file parsing, explicit shell-env precedence, and report redaction inside the canary runner.
 

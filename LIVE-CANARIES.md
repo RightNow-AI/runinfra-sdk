@@ -50,6 +50,19 @@ includes local fixture path fields plus commented GitHub Actions base64 fixture
 secret names, but only the strict preflight and live reports are promotion
 evidence.
 
+After a blocked preflight writes `artifacts/sdk/live-canary-readiness.json`, you
+can generate a redacted missing strict live-canary env patch:
+
+```bash
+node scripts/run-sdk-live-canaries.mjs --readiness-report artifacts/sdk/live-canary-readiness.json --write-missing-env-template .env.sdk-live.missing.local
+```
+
+The missing patch writer reads only the redacted readiness report, emits only
+whitelisted `RUNINFRA_*` placeholders or safe defaults for missing inputs, and
+refuses to overwrite an existing file unless `--force-env-template` is supplied.
+It never diffs an existing env file, never copies current env values, and is not
+promotion evidence.
+
 If canary inputs live in a local env file, load it through
 `--runinfra-env-file <path-to-env-file>`:
 
