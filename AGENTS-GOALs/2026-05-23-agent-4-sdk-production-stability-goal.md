@@ -3349,6 +3349,71 @@ Current blockers:
 4. No push, deploy, publish, or paid canary provisioning was performed in this
    checkpoint.
 
+## Checkpoint: 2026-05-25 04:37 Asia/Amman
+
+Current state: still not GA, not deployed, and not published. Tightened
+candidate source evidence after adding the GitHub code-scanning release gate.
+
+Change made:
+
+- Added `scripts/verify-github-security-status.mjs` to
+  `scripts/live-canary-source-files.mjs`, so readiness/live promotion reports
+  change their `candidate.sourceDigestSha256` and `candidate.sourceFileCount`
+  if the code-scanning release-gate verifier changes.
+- Added a TypeScript regression test requiring that manifest entry.
+
+TDD evidence:
+
+- Red phase:
+  `pnpm --dir typescript test -- --reporter dot --testNamePattern
+  "GitHub code-scanning release gate in source digests"` failed because the
+  verifier was absent from `sourceDigestFileLabels`.
+- Green phase:
+  `pnpm --dir typescript test -- --reporter dot --testNamePattern
+  "GitHub code-scanning release gate in source digests|source file counts|source manifest|promotion reports use the same candidate digest"`
+  passed 4 selected tests.
+
+Fresh verification:
+
+- Redacted scoped-env strict preflight:
+  `node scripts\run-sdk-live-canaries.mjs --runinfra-env-file
+  C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local --preflight
+  --strict --report artifacts\sdk\live-canary-readiness-current-env.json`
+  failed closed with 34 ready rows and 15 blocked rows.
+- The new preflight candidate `sourceFileCount` is 15.
+- Remaining blocked rows: `models.retrieve.embedding`,
+  `models.retrieve.image`, `models.retrieve.tts`, `models.retrieve.asr`,
+  `embeddings.create`, `openai.params.embeddings`, `images.generate`,
+  `openai.params.images`, `audio.speech.create`,
+  `openai.params.audio.speech`, `audio.speech.binary_interfaces`,
+  `audio.transcriptions.create`, `openai.params.audio.transcriptions`,
+  `voice.pipeline.create`, and `idempotency.replay.responses`.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` passed:
+  199 tests.
+- `python -m pytest python\tests -q` passed: 130 tests and 127 subtests.
+- `node --check scripts\live-canary-source-files.mjs`,
+  `node --check scripts\run-sdk-live-canaries.mjs`,
+  `node scripts\verify-workflow-policy.mjs`, and
+  `node scripts\verify-version-sync.mjs` passed.
+- `git diff --check` passed with expected Windows CRLF working-copy warnings.
+
+Current blockers remain:
+
+1. Production `api.runinfra.ai` still needs the RunPipe gateway
+   unsupported-parameter fix deployed before the prior strict source canary
+   failure can close.
+2. Strict multimodal/idempotency canaries still need scoped production
+   embedding/image/TTS/ASR model IDs, dimensions, response formats,
+   fixture/transcript inputs, voice-pipeline audio/transcript inputs, and
+   `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1`.
+3. npm/PyPI `0.1.4` is still not published and must stay blocked until strict
+   production source/artifact live canaries and registry install/import proof
+   pass.
+4. No push, deploy, publish, or paid canary provisioning was performed in this
+   checkpoint.
+
 ## Checkpoint: 2026-05-25 04:15 Asia/Amman
 
 Current state: still not GA, not deployed, and not published. The RunPipe

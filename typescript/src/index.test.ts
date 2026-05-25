@@ -2269,6 +2269,12 @@ class RunInfra:
     expect(manifest.sourceDigestFileLabels).toContain("scripts/secret-scan-policy.mjs");
   });
 
+  it("includes the GitHub code-scanning release gate in source digests", async () => {
+    const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
+
+    expect(manifest.sourceDigestFileLabels).toContain("scripts/verify-github-security-status.mjs");
+  });
+
   it("documents the safe live-canary env-file flag instead of Node's flag", () => {
     const docs = [
       readFileSync(new URL("../../README.md", import.meta.url), "utf8"),
