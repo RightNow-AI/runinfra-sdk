@@ -108,3 +108,10 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Ran the SDK GitHub security gate. The first `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` attempt failed with `401 Unauthorized` because the process did not have a GitHub token.
 - Confirmed `gh auth status` had an authenticated CLI session, then reran the verifier with the CLI token supplied through `GITHUB_TOKEN` without printing it.
 - Verified `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk`: passed, with no open high/critical code-scanning alerts reported for `RightNow-AI/runinfra-sdk`.
+
+### 2026-05-25T13:26:14+03:00 - Agent 4
+- Queried RunPod state read-only through MCP. Do not copy raw MCP output into commits because worker environment fields can include platform-injected secrets.
+- Existing RunPod endpoint inventory contains one SDK canary endpoint for LLM coverage: `runinfra-sdk-canary-llm-mpiw58hc`, configured as a serverless L4/vLLM canary for `RUNINFRA_MODALITY=llm`, with min workers `0` and max workers `1`.
+- Existing template inventory includes the LLM canary template plus stock SGLang, TEI embedding, and vLLM templates. No pods are currently listed.
+- No existing RunPod endpoint was found for embeddings, images, TTS, ASR, or voice pipeline canary coverage in this read-only check.
+- Strict multimodal canaries therefore still need either approved provisioning of scoped canary targets or already-deployed RunPipe workspace models that expose those modalities before GA can be claimed.
