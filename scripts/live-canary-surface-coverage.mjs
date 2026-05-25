@@ -115,8 +115,9 @@ export const publicSurfaceCoverage = [
       "request.client_request_id.local",
       "request.custom_headers.local",
       "request.timeout.local",
+      "request.extra_body.local",
     ],
   },
-  { surface: "unsupported body parameter handling", rows: ["error.body.unsupported_parameter"] },
+  { surface: "unsupported body parameter handling", rows: ["request.extra_body.local", "error.body.unsupported_parameter"] },
   { surface: "authentication error mapping", rows: ["error.auth.invalid_key"] },
 ];

@@ -215,6 +215,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `request.client_request_id.local`
 - `request.custom_headers.local`
 - `request.timeout.local`
+- `request.extra_body.local`
 - `error.body.unsupported_parameter`
 - `retry.safety.get.local`
 - `retry.safety.post.requires_idempotency.local`
@@ -303,7 +304,10 @@ user-supplied client request IDs and custom request headers are sent as headers,
 are not serialized into JSON request bodies, and cannot override
 SDK-controlled credential or tracing headers. Local per-request timeout rows
 also prove timeout options are applied without serializing timeout option names
-into JSON request bodies.
+into JSON request bodies. Local explicit JSON extra-body rows prove the
+deliberate body-extension escape hatch injects only requested JSON fields,
+does not serialize SDK option names, rejects typed-field overrides, and stays
+out of multipart upload paths.
 Webhook signature rows use installed package artifacts and deterministic local
 payloads because they are verification helpers, not live delivery endpoints.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac
+import inspect
 import json
 import math
 import os
@@ -620,6 +621,29 @@ def assert_request_body_does_not_contain(call: Any, forbidden: Iterable[str], la
             raise AssertionError(f"{label} leaked {value} into request body")
 
 
+def request_body_json(call: Any, label: str) -> Dict[str, Any]:
+    body = getattr(call, "body", b"") or b""
+    if isinstance(body, bytes):
+        text = body.decode("utf-8", errors="replace")
+    else:
+        text = str(body)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise AssertionError(f"{label} expected JSON request body") from error
+    if not isinstance(parsed, dict):
+        raise AssertionError(f"{label} expected JSON object request body")
+    return parsed
+
+
+def assert_extra_body_json_field(call: Any, key: str, expected: Any, label: str) -> None:
+    parsed = request_body_json(call, label)
+    if parsed.get(key) != expected:
+        raise AssertionError(f"{label} expected extra body field {key}")
+    if "extraBody" in parsed or "extra_body" in parsed:
+        raise AssertionError(f"{label} serialized SDK extra body option name")
+
+
 def assert_invalid_request_option_error(error: BaseException, label: str) -> Dict[str, Any]:
     if getattr(error, "status", None) != 0 or getattr(error, "type", None) != "invalid_request_options":
         raise AssertionError(
@@ -908,6 +932,7 @@ def main() -> int:
     record("request.client_request_id.local", [], _request_client_request_id_local)
     record("request.custom_headers.local", [], _request_custom_headers_local)
     record("request.timeout.local", [], _request_timeout_local)
+    record("request.extra_body.local", [], _request_extra_body_local)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
     record("retry.safety.get.local", [], _retry_safety_get_local)
     record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
@@ -1620,6 +1645,59 @@ def _request_timeout_local() -> Dict[str, Any]:
             "timeoutSeconds": call.timeout_seconds,
         }
     raise AssertionError("request timeout unexpectedly succeeded")
+
+
+def _request_extra_body_local() -> Dict[str, Any]:
+    local = local_retry_client([
+        local_retry_response(
+            {"id": "resp-local-extra-body", "status": "completed", "output": []},
+            200,
+            "req-local-extra-body-server",
+        ),
+    ])
+    response = local["client"].responses.create(
+        model="runinfra-local-request-options-model",
+        input="local extra body canary",
+        extra_body={"runinfra_local_probe": "present"},
+        request_options={"max_retries": 0},
+    )
+    assert_extra_body_json_field(
+        local["calls"][0],
+        "runinfra_local_probe",
+        "present",
+        "request.extra_body.local",
+    )
+    assert_request_body_does_not_contain(
+        local["calls"][0],
+        ["extraBody", "extra_body"],
+        "request.extra_body.local",
+    )
+    calls_before_rejected_override = len(local["calls"])
+    try:
+        local["client"].responses.create(
+            model="runinfra-local-request-options-model",
+            input="local extra body override canary",
+            extra_body={"model": "runinfra-local-invalid-override"},
+            request_options={"max_retries": 0},
+        )
+    except BaseException as error:  # noqa: BLE001
+        evidence = assert_invalid_request_option_error(error, "request.extra_body.local")
+        if len(local["calls"]) != calls_before_rejected_override:
+            raise AssertionError("request.extra_body.local sent a request after rejecting typed field override")
+        signature = inspect.signature(local["client"].audio.transcriptions.create)
+        if "extra_body" in signature.parameters:
+            raise AssertionError("request.extra_body.local found multipart extra_body keyword in public signature")
+        if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+            raise AssertionError("request.extra_body.local found multipart **kwargs in public signature")
+        assert_request_id(response.get("_request_id"), "request.extra_body.local")
+        return {
+            **evidence,
+            "requestId": response.get("_request_id"),
+            "extraBodyField": "present",
+            "rejectedOverride": "model",
+            "multipartExtraBody": "absent",
+        }
+    raise AssertionError("extra_body typed field override unexpectedly succeeded")
 
 
 def _retry_safety_get_local() -> Dict[str, Any]:

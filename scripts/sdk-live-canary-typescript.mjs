@@ -847,6 +847,27 @@ function assertRequestBodyDoesNotContain(call, forbidden, label) {
   }
 }
 
+function requestBodyJson(call, label) {
+  const body = call?.body === undefined ? "" : String(call.body);
+  try {
+    const parsed = JSON.parse(body);
+    assertObject(parsed, `${label} request body`);
+    return parsed;
+  } catch (error) {
+    throw new Error(`${label} expected JSON request body, got ${error?.message ?? typeof error}`);
+  }
+}
+
+function assertExtraBodyJsonField(call, key, expected, label) {
+  const parsed = requestBodyJson(call, label);
+  if (parsed[key] !== expected) {
+    throw new Error(`${label} expected extra body field ${key}`);
+  }
+  if ("extraBody" in parsed || "extra_body" in parsed) {
+    throw new Error(`${label} serialized SDK extra body option name`);
+  }
+}
+
 function assertInvalidRequestOptionError(error, label) {
   if (error?.status !== 0 || error?.type !== "invalid_request_options") {
     throw new Error(`${label} invalid request option mapped unexpectedly: ${error?.status} ${error?.type}`);
@@ -1626,6 +1647,71 @@ await record("request.timeout.local", [], async () => {
     return { errorType: error.type, errorName: error.name, attempts: calls.length, timeoutMs: 5, signalObserved: true };
   }
   throw new Error("request timeout unexpectedly succeeded");
+});
+
+await record("request.extra_body.local", [], async () => {
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse(
+      { id: "resp-local-extra-body", status: "completed", output: [] },
+      200,
+      "req-local-extra-body-server",
+    ),
+  ]);
+  const response = await local.responses.create(
+    { model: "runinfra-local-request-options-model", input: "local extra body canary" },
+    {
+      extraBody: { runinfra_local_probe: "present" },
+      maxRetries: 0,
+    },
+  );
+  assertExtraBodyJsonField(
+    calls[0],
+    "runinfra_local_probe",
+    "present",
+    "request.extra_body.local",
+  );
+  assertRequestBodyDoesNotContain(
+    calls[0],
+    ["extraBody", "extra_body"],
+    "request.extra_body.local",
+  );
+  const callsBeforeRejectedOverride = calls.length;
+  try {
+    await local.responses.create(
+      { model: "runinfra-local-request-options-model", input: "local extra body override canary" },
+      { extraBody: { model: "runinfra-local-invalid-override" }, maxRetries: 0 },
+    );
+  } catch (error) {
+    const evidence = assertInvalidRequestOptionError(error, "request.extra_body.local");
+    if (calls.length !== callsBeforeRejectedOverride) {
+      throw new Error("request.extra_body.local sent a request after rejecting typed field override");
+    }
+    try {
+      await local.audio.transcriptions.create(
+        {
+          model: "runinfra-local-asr-model",
+          file: new Blob([new Uint8Array([82, 73, 70, 70])], { type: "audio/wav" }),
+          filename: "local-extra-body.wav",
+        },
+        { extraBody: { runinfra_local_probe: "not-allowed" }, maxRetries: 0 },
+      );
+    } catch (multipartError) {
+      const multipartEvidence = assertInvalidRequestOptionError(multipartError, "request.extra_body.local");
+      if (calls.length !== callsBeforeRejectedOverride) {
+        throw new Error("request.extra_body.local sent a request after rejecting multipart extraBody");
+      }
+      assertRequestId(response._request_id, "request.extra_body.local");
+      return {
+        ...evidence,
+        requestId: response._request_id,
+        extraBodyField: "present",
+        rejectedOverride: "model",
+        rejectedMultipart: multipartEvidence.errorType,
+      };
+    }
+    throw new Error("multipart extraBody unexpectedly succeeded");
+  }
+  throw new Error("extraBody typed field override unexpectedly succeeded");
 });
 
 await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
