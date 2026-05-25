@@ -47,7 +47,9 @@ function jsonReadFailureResponse(message: string, init: ResponseInit = {}): Resp
   );
 }
 
-async function currentPromotionSourceIdentity(): Promise<{ sourceDigestSha256: string; sourceFileCount: number }> {
+type SourceIdentity = { sourceDigestSha256: string; sourceFileCount: number };
+
+async function currentPromotionSourceIdentity(): Promise<SourceIdentity> {
   const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
   const digest = createHash("sha256");
   for (const label of manifest.sourceDigestFileLabels) {
@@ -69,6 +71,7 @@ async function canonicalReadinessFixture(
 ): Promise<Record<string, unknown>> {
   const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
   const blockedNames = new Set(Object.keys(blockedRows));
+  const sourceIdentity = await currentPromotionSourceIdentity();
   return {
     schemaVersion: 1,
     generatedAt: "2026-05-26T00:00:00.000Z",
@@ -77,8 +80,8 @@ async function canonicalReadinessFixture(
     candidate: {
       sdkVersion: RUNINFRA_SDK_VERSION,
       packageSource: "artifact",
-      sourceDigestSha256: "0".repeat(64),
-      sourceFileCount: 37,
+      sourceDigestSha256: sourceIdentity.sourceDigestSha256,
+      sourceFileCount: sourceIdentity.sourceFileCount,
       artifactDigestsChecked: false,
       artifacts: [],
     },
@@ -117,6 +120,41 @@ async function canonicalReadinessFixture(
     },
     reports: [],
   };
+}
+
+async function expectMissingEnvPatchRejectsCandidateSourceIdentityMutation(
+  tmpSlug: string,
+  mutateCandidate: (candidate: SourceIdentity) => void,
+): Promise<void> {
+  const tmp = mkdtempSync(join(tmpdir(), `runinfra-missing-env-template-${tmpSlug}-`));
+  const readinessPath = join(tmp, "readiness.json");
+  const templatePath = join(tmp, "missing.env");
+  try {
+    const report = await canonicalReadinessFixture(
+      ["RUNINFRA_IMAGE_MODEL"],
+      { "models.retrieve.image": ["RUNINFRA_IMAGE_MODEL"] },
+    );
+    mutateCandidate(report.candidate as SourceIdentity);
+    writeFileSync(readinessPath, `${JSON.stringify(report, null, 2)}\n`);
+
+    const result = spawnSync(process.execPath, [
+      "../scripts/run-sdk-live-canaries.mjs",
+      "--readiness-report",
+      readinessPath,
+      "--write-missing-env-template",
+      templatePath,
+    ], {
+      cwd: new URL("..", import.meta.url),
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("readiness report candidate source identity must match current sources");
+    expect(result.stderr).not.toContain(readinessPath);
+    expect(existsSync(templatePath)).toBe(false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 interface TarEntry {
@@ -4958,6 +4996,18 @@ with open(report, "w", encoding="utf-8") as handle:
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("rejects missing-env patch reports with a stale candidate source digest", async () => {
+    await expectMissingEnvPatchRejectsCandidateSourceIdentityMutation("stale-source-digest", (candidate) => {
+      candidate.sourceDigestSha256 = "f".repeat(64);
+    });
+  });
+
+  it("rejects missing-env patch reports with a stale candidate source file count", async () => {
+    await expectMissingEnvPatchRejectsCandidateSourceIdentityMutation("stale-source-count", (candidate) => {
+      candidate.sourceFileCount += 1;
+    });
   });
 
   it("does not report stale TEST aliases when canonical live-canary env wins", () => {

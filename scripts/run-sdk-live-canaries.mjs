@@ -568,6 +568,12 @@ function assertStrictPreflightReportEnvelope(report) {
   ) {
     throw new Error("readiness report must be a strict preflight report.");
   }
+  if (
+    candidate.sourceDigestSha256 !== sourceDigestSha256() ||
+    candidate.sourceFileCount !== sourceDigestFiles.length
+  ) {
+    throw new Error("readiness report candidate source identity must match current sources.");
+  }
 }
 
 function assertReadinessReportShape(report) {

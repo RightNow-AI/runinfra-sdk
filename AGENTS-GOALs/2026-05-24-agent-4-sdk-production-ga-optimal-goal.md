@@ -566,3 +566,31 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows.
 - `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports still cannot promote as GA.
 - No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T02:18:15+03:00 - Agent 4
+- Closed the remaining stale-report risk in redacted missing-env patch mode. `scripts\run-sdk-live-canaries.mjs --readiness-report <report> --write-missing-env-template <path>` now rejects otherwise strict readiness reports when `candidate.sourceDigestSha256` or `candidate.sourceFileCount` do not match the current checkout source manifest.
+- Followed a focused TDD cycle. The stale-candidate regression first failed because a report with an edited digest/count still wrote a missing-env template, then passed after the runner compared the report identity against the current `sourceDigestSha256()` and `sourceDigestFiles.length`.
+- Updated strict readiness fixtures in `typescript/src/index.test.ts` to use the current source identity instead of hardcoded placeholder values, so positive tests remain tied to the actual checkout.
+- Second-opinion review from Erdos found a low test-isolation gap: the stale-source test mutated digest and file count together, so either comparison could be removed without the test necessarily catching it. Fixed before commit by splitting into digest-only and source-file-count-only regressions backed by a shared helper.
+- Verification passed for this source state:
+  - Focused stale/missing-env/env-template/log-hygiene group: `14` TypeScript tests passed.
+  - `pnpm --dir typescript install --frozen-lockfile`.
+  - `node --check scripts\run-sdk-live-canaries.mjs`.
+  - TypeScript no-emit typecheck.
+  - Full TypeScript suite: `244` tests.
+  - Full Python suite: `151` tests and `142` subtests.
+  - Surface coverage: `58` rows, `28` coverage surfaces, no uncovered public surfaces or rows.
+  - Secret-scan policy, version sync, workflow policy, dry-run publish dispatch, and Python compileall.
+  - Rebuilt artifacts with `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist`.
+  - npm package scanner, Python wheel/sdist scanner, `twine check`, and clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed no-env strict artifact readiness and live reports after the stale-source hardening:
+  - Source digest: `98eb288d2d2daa937807fddfa2eccf9afc9dbbc0886ee6a9aa43dd370ceeefc8`
+  - Source file count: `37`
+  - NPM artifact SHA-256: `b28a489fff1aa80f5804d2ed38f0935af5b53cfec676e7c853be8cb865eaa9ec`
+  - Python wheel SHA-256: `8b11d7b9e9ff34ad7f4919248b7723e20bbc01ae84fd30da43456af97e308068`
+  - Python sdist SHA-256: `0e341c3fbde00f3dbbe19c3dc856ad9b3032e2de9abe5a2a55db46c2bcd804f7`
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+- Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows.
+- Missing-env patch generation from the refreshed redacted RunPipe env-backed readiness report wrote `18` placeholder/default assignments and did not include `RUNINFRA_API_KEY=` or `RUNINFRA_LLM_MODEL=`.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports still cannot promote as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
