@@ -367,7 +367,7 @@ node scripts/verify-clean-installs.mjs --package both --mode artifact
 node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
-node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json
+node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .
 ```
 
 If canary inputs live in a local env file, load it through the runner:

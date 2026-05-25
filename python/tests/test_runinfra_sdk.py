@@ -635,7 +635,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             readme,
         )
         self.assertIn(
-            "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json",
+            "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .",
             readme,
         )
         surface_coverage_index = readme.index("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage")
@@ -646,7 +646,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json"
         )
         promotion_report_index = readme.index(
-            "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json"
+            "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root ."
         )
         self.assertLess(surface_coverage_index, preflight_index)
         self.assertLess(preflight_index, live_canary_index)

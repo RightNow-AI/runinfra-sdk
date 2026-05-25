@@ -233,7 +233,7 @@ jobs:
 
       - name: Verify strict promotion reports
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        run: node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json
+        run: node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .
 
   publish-npm:
     name: Publish TypeScript SDK

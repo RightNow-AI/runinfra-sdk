@@ -13,7 +13,7 @@ python -m build python
 node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
-node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json
+node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .
 ```
 
 `--verify-surface-coverage` is a no-network check that maps every public SDK
@@ -156,7 +156,8 @@ leave that list empty.
 `verify-promotion-reports.mjs` is the release gate that compares the readiness
 and live reports, requires the same candidate source digest, requires the live
 artifact report to include npm, Python wheel, and Python sdist hashes, and
-fails if either language has skipped or failed rows. It also requires readiness
+requires `--artifacts-root`, and recomputes those hashes from the staged
+artifact files before allowing promotion. It fails if either language has skipped or failed rows. It also requires readiness
 `rowCoverageErrors` to be empty and `expectedRows` to match the canonical live canary matrix exactly,
 so a shortened self-consistent report cannot satisfy the gate. The report's
 candidate source file count must also match the canonical live-canary source

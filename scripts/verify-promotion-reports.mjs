@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { productionBaseURL } from "./canary-report-base-url.mjs";
 import { expectedRows as canonicalExpectedRows } from "./live-canary-matrix.mjs";
 import { sourceDigestFileLabels as canonicalSourceDigestFileLabels } from "./live-canary-source-files.mjs";
@@ -9,6 +10,8 @@ import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const readinessPath = optionValue("--readiness") ?? "artifacts/sdk/live-canary-readiness.json";
 const livePath = optionValue("--live") ?? "artifacts/sdk/live-canary.json";
+const artifactsRoot = optionValue("--artifacts-root");
+const hasArtifactsRoot = typeof artifactsRoot === "string" && artifactsRoot.trim() !== "" && !artifactsRoot.startsWith("--");
 const expectedSdkVersion = readExpectedSdkVersion();
 const canonicalSurfaceCoverageSurfaces = canonicalPublicSurfaceCoverage.map((entry) => entry.surface);
 const canonicalSourceFileCount = canonicalSourceDigestFileLabels.length;
@@ -18,6 +21,7 @@ const errors = [];
 const readiness = readReport(readinessPath, "readiness report");
 const live = readReport(livePath, "live canary report");
 
+if (!hasArtifactsRoot) errors.push("artifacts-root is required to verify staged package artifacts");
 errors.push(...forbiddenReportErrors("readiness report", readiness));
 errors.push(...forbiddenReportErrors("live canary report", live));
 errors.push(...baseReportErrors("readiness report", readiness));
@@ -194,6 +198,11 @@ function artifactCandidateErrors(label, candidate) {
     ["pythonWheel", `runinfra-${expectedSdkVersion}-py3-none-any.whl`],
     ["pythonSdist", `runinfra-${expectedSdkVersion}.tar.gz`],
   ]);
+  const expectedArtifactPaths = new Map([
+    ["npm", ["typescript", `runinfra-sdk-${expectedSdkVersion}.tgz`]],
+    ["pythonWheel", ["python", "dist", `runinfra-${expectedSdkVersion}-py3-none-any.whl`]],
+    ["pythonSdist", ["python", "dist", `runinfra-${expectedSdkVersion}.tar.gz`]],
+  ]);
   if (candidate.artifactDigestsChecked !== true) {
     reportErrors.push(`${label} artifactDigestsChecked must be true`);
   }
@@ -222,9 +231,29 @@ function artifactCandidateErrors(label, candidate) {
     }
     if (!isSha256(artifact?.sha256)) {
       reportErrors.push(`${label} candidate artifact ${artifact.fileName} sha256 must be a SHA-256 hex digest`);
+    } else if (hasArtifactsRoot) {
+      const expectedPath = expectedArtifactPaths.get(artifact?.name);
+      if (expectedPath) {
+        const stagedSha256 = stagedArtifactSha256(expectedPath);
+        if (!stagedSha256) {
+          reportErrors.push(`${label} candidate artifact ${artifact.name} staged file is missing or unreadable`);
+        } else if (artifact.sha256 !== stagedSha256) {
+          reportErrors.push(`${label} candidate artifact ${artifact.name} sha256 must match staged artifact file`);
+        }
+      }
     }
   }
   return reportErrors;
+}
+
+function stagedArtifactSha256(pathSegments) {
+  try {
+    return createHash("sha256")
+      .update(readFileSync(resolve(artifactsRoot, ...pathSegments)))
+      .digest("hex");
+  } catch {
+    return null;
+  }
 }
 
 function sameCandidateErrors(readinessReport, liveReport) {

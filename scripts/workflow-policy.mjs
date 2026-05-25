@@ -100,7 +100,7 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
   const workflows = `${publish}\n${ci}`;
   const actions = actionUses(workflows);
   const promotionReportCommand =
-    "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json";
+    "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .";
   const strictReadinessCommand =
     "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json";
   const strictArtifactCommand =

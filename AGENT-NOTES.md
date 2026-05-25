@@ -208,7 +208,8 @@ identical proprietary source-available terms. Customers see them via:
 
 The publish workflow builds the npm tarball, Python wheel, and Python sdist
 once, uploads them as `runinfra-sdk-promoted-artifacts`, runs the strict
-readiness/live promotion reports against those downloaded artifacts, and the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files. `dry_run=false` cannot bypass `promotion-gate`. Dry runs still build
+readiness/live promotion reports against those downloaded artifacts, recomputes
+their hashes through `--artifacts-root .`, and the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files. `dry_run=false` cannot bypass `promotion-gate`. Dry runs still build
 and scan the artifacts, but they do not run live canaries or publish.
 Clean artifact install/import now exercises the npm tarball, Python wheel, and
 Python sdist. The sdist path builds and imports in a separate disposable
@@ -223,7 +224,7 @@ pnpm --dir typescript build
 node scripts/verify-clean-installs.mjs --package both --mode artifact
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
-node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json
+node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .
 ```
 
 If canary inputs live in a local env file, load it with:

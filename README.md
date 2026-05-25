@@ -152,12 +152,13 @@ and successful pip output is suppressed so CI logs do not expose local paths.
 After the strict artifact live canary passes, verify that the readiness and
 live reports prove the same candidate source digest, that the live report
 records exact versioned npm tarball, Python wheel, and Python sdist file names
-plus digests, and that both language reports passed every row. The promotion
-verifier requires strict child canary reports from `https://api.runinfra.ai/v1`;
+plus digests, that those digests match the staged artifact files under
+`--artifacts-root`, and that both language reports passed every row. The
+promotion verifier requires strict child canary reports from `https://api.runinfra.ai/v1`;
 reports generated with custom
 non-production `RUNINFRA_BASE_URL` values are staging smoke evidence, not publish evidence:
 ```bash
-node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json
+node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .
 ```
 
 If canary inputs live in a local env file, load it through the runner:

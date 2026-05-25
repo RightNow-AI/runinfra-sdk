@@ -167,7 +167,7 @@ describe("RunInfra TypeScript SDK", () => {
 
     const readinessIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
     const liveCanaryIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
-    const promotionReportIndex = readme.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json");
+    const promotionReportIndex = readme.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .");
     expect(readinessIndex).toBeGreaterThan(-1);
     expect(liveCanaryIndex).toBeGreaterThan(readinessIndex);
     expect(promotionReportIndex).toBeGreaterThan(liveCanaryIndex);
@@ -885,6 +885,16 @@ describe("RunInfra TypeScript SDK", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-reports-"));
     const readinessPath = join(tmp, "readiness.json");
     const livePath = join(tmp, "live.json");
+    const artifactRoot = join(tmp, "artifact-root");
+    const npmPath = join(artifactRoot, "typescript", `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`);
+    const wheelPath = join(artifactRoot, "python", "dist", `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`);
+    const sdistPath = join(artifactRoot, "python", "dist", `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`);
+    mkdirSync(join(artifactRoot, "typescript"), { recursive: true });
+    mkdirSync(join(artifactRoot, "python", "dist"), { recursive: true });
+    writeFileSync(npmPath, "current npm artifact\n");
+    writeFileSync(wheelPath, "current Python wheel\n");
+    writeFileSync(sdistPath, "current Python sdist\n");
+    const sha256File = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex");
     const identity = await currentPromotionSourceIdentity();
     const digest = identity.sourceDigestSha256;
     const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
@@ -895,9 +905,9 @@ describe("RunInfra TypeScript SDK", () => {
     const surfaces = coverageManifest.publicSurfaceCoverage.map((entry) => entry.surface);
     const sourceFileCount = identity.sourceFileCount;
     const liveArtifacts = [
-      { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
-      { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
-      { name: "pythonSdist", fileName: `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`, sha256: "d".repeat(64) },
+      { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: sha256File(npmPath) },
+      { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: sha256File(wheelPath) },
+      { name: "pythonSdist", fileName: `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`, sha256: sha256File(sdistPath) },
     ];
     const surfaceCoverage = {
       status: "passed",
@@ -954,17 +964,37 @@ describe("RunInfra TypeScript SDK", () => {
         results: expectedRows.map((name) => ({ name, status: "passed" })),
       })),
     };
+    const promotionArgs = [
+      "../scripts/verify-promotion-reports.mjs",
+      "--readiness",
+      readinessPath,
+      "--live",
+      livePath,
+      "--artifacts-root",
+      artifactRoot,
+    ];
 
     try {
       writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
       writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
 
-      const success = spawnSync(process.execPath, [
+      const missingArtifactsRoot = spawnSync(process.execPath, [
         "../scripts/verify-promotion-reports.mjs",
         "--readiness",
         readinessPath,
         "--live",
         livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+      expect(missingArtifactsRoot.status).toBe(1);
+      expect(`${missingArtifactsRoot.stdout}${missingArtifactsRoot.stderr}`).toContain(
+        "artifacts-root is required",
+      );
+
+      const success = spawnSync(process.execPath, [
+        ...promotionArgs,
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
@@ -980,11 +1010,7 @@ describe("RunInfra TypeScript SDK", () => {
         },
       }, null, 2)}\n`);
       const staleReadinessCoverage = spawnSync(process.execPath, [
-        "../scripts/verify-promotion-reports.mjs",
-        "--readiness",
-        readinessPath,
-        "--live",
-        livePath,
+        ...promotionArgs,
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
@@ -1011,11 +1037,7 @@ describe("RunInfra TypeScript SDK", () => {
         },
       }, null, 2)}\n`);
       const staleSdistFileName = spawnSync(process.execPath, [
-        "../scripts/verify-promotion-reports.mjs",
-        "--readiness",
-        readinessPath,
-        "--live",
-        livePath,
+        ...promotionArgs,
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
@@ -1046,11 +1068,7 @@ describe("RunInfra TypeScript SDK", () => {
           diagnostic,
         }, null, 2)}\n`);
         const leakedPath = spawnSync(process.execPath, [
-          "../scripts/verify-promotion-reports.mjs",
-          "--readiness",
-          readinessPath,
-          "--live",
-          livePath,
+          ...promotionArgs,
         ], {
           cwd: new URL("..", import.meta.url),
           encoding: "utf8",
@@ -1065,11 +1083,7 @@ describe("RunInfra TypeScript SDK", () => {
         candidate: { ...live.candidate, sourceDigestSha256: "d".repeat(64) },
       }, null, 2)}\n`);
       const mismatch = spawnSync(process.execPath, [
-        "../scripts/verify-promotion-reports.mjs",
-        "--readiness",
-        readinessPath,
-        "--live",
-        livePath,
+        ...promotionArgs,
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
@@ -1087,11 +1101,7 @@ describe("RunInfra TypeScript SDK", () => {
         ),
       }, null, 2)}\n`);
       const customBaseUrl = spawnSync(process.execPath, [
-        "../scripts/verify-promotion-reports.mjs",
-        "--readiness",
-        readinessPath,
-        "--live",
-        livePath,
+        ...promotionArgs,
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
@@ -1109,11 +1119,7 @@ describe("RunInfra TypeScript SDK", () => {
         ),
       }, null, 2)}\n`);
       const nonStrictChild = spawnSync(process.execPath, [
-        "../scripts/verify-promotion-reports.mjs",
-        "--readiness",
-        readinessPath,
-        "--live",
-        livePath,
+        ...promotionArgs,
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
@@ -1132,11 +1138,7 @@ describe("RunInfra TypeScript SDK", () => {
         candidate: { ...live.candidate, sourceDigestSha256: staleSameCountDigest },
       }, null, 2)}\n`);
       const staleSameCount = spawnSync(process.execPath, [
-        "../scripts/verify-promotion-reports.mjs",
-        "--readiness",
-        readinessPath,
-        "--live",
-        livePath,
+        ...promotionArgs,
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
@@ -1146,6 +1148,125 @@ describe("RunInfra TypeScript SDK", () => {
       expect(`${staleSameCount.stdout}${staleSameCount.stderr}`).toContain(
         "candidate source digest must match the current canonical promotion source digest",
       );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects promotion reports whose artifact digests do not match staged artifacts", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-artifact-digest-"));
+    const readinessPath = join(tmp, "readiness.json");
+    const livePath = join(tmp, "live.json");
+    const artifactRoot = join(tmp, "artifact-root");
+    const wheelPath = join(artifactRoot, "python", "dist", `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`);
+    const sdistPath = join(artifactRoot, "python", "dist", `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`);
+    mkdirSync(join(artifactRoot, "typescript"), { recursive: true });
+    mkdirSync(join(artifactRoot, "python", "dist"), { recursive: true });
+    const npmPath = join(artifactRoot, "typescript", `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`);
+    writeFileSync(npmPath, "current npm artifact\n");
+    writeFileSync(wheelPath, "current Python wheel\n");
+    writeFileSync(sdistPath, "current Python sdist\n");
+    const sha256File = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex");
+    const identity = await currentPromotionSourceIdentity();
+    const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const coverageManifest = await import("../../scripts/live-canary-surface-coverage.mjs") as {
+      publicSurfaceCoverage: Array<{ surface: string }>;
+    };
+    const expectedRows = matrix.expectedRows;
+    const surfaces = coverageManifest.publicSurfaceCoverage.map((entry) => entry.surface);
+    const surfaceCoverage = {
+      status: "passed",
+      errors: [],
+      uncoveredSurfaces: [],
+      uncoveredRows: [],
+      surfaces,
+      surfaceCount: surfaces.length,
+      rowCount: expectedRows.length,
+    };
+    const readiness = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: identity.sourceDigestSha256,
+        sourceFileCount: identity.sourceFileCount,
+        artifactDigestsChecked: false,
+        artifacts: [],
+      },
+      expectedRows,
+      readiness: {
+        status: "ready",
+        missing: [],
+        rowCoverageErrors: [],
+        rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
+      },
+      surfaceCoverage,
+      parity: { status: "not_run", errors: [] },
+      reports: [],
+    };
+    const live = {
+      schemaVersion: 1,
+      strict: true,
+      packageSource: "artifact",
+      candidate: {
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        packageSource: "artifact",
+        sourceDigestSha256: identity.sourceDigestSha256,
+        sourceFileCount: identity.sourceFileCount,
+        artifactDigestsChecked: true,
+        artifacts: [],
+      },
+      expectedRows,
+      surfaceCoverage,
+      parity: { status: "passed", errors: [] },
+      reports: ["typescript", "python"].map((language) => ({
+        language,
+        sdkVersion: RUNINFRA_SDK_VERSION,
+        strict: true,
+        baseURL: "https://api.runinfra.ai/v1",
+        results: expectedRows.map((name) => ({ name, status: "passed" })),
+      })),
+    };
+
+    try {
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
+      const validArtifacts = [
+        { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: sha256File(npmPath) },
+        { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: sha256File(wheelPath) },
+        { name: "pythonSdist", fileName: `runinfra-${RUNINFRA_SDK_VERSION}.tar.gz`, sha256: sha256File(sdistPath) },
+      ];
+
+      for (const artifactName of ["npm", "pythonWheel", "pythonSdist"]) {
+        writeFileSync(livePath, `${JSON.stringify({
+          ...live,
+          candidate: {
+            ...live.candidate,
+            artifacts: validArtifacts.map((artifact) =>
+              artifact.name === artifactName
+                ? { ...artifact, sha256: "b".repeat(64) }
+                : artifact,
+            ),
+          },
+        }, null, 2)}\n`);
+
+        const result = spawnSync(process.execPath, [
+          "../scripts/verify-promotion-reports.mjs",
+          "--readiness",
+          readinessPath,
+          "--live",
+          livePath,
+          "--artifacts-root",
+          artifactRoot,
+        ], {
+          cwd: new URL("..", import.meta.url),
+          encoding: "utf8",
+        });
+
+        expect(result.status, result.stdout + result.stderr).toBe(1);
+        expect(`${result.stdout}${result.stderr}`).toContain(`candidate artifact ${artifactName} sha256 must match staged artifact file`);
+      }
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -2262,11 +2383,11 @@ class RunInfra:
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
     expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
-    expect(readme).toContain("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json");
+    expect(readme).toContain("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .");
     const surfaceCoverageIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
     const preflightIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
     const liveCanaryIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
-    const promotionReportIndex = readme.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json");
+    const promotionReportIndex = readme.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .");
     expect(surfaceCoverageIndex).toBeGreaterThan(-1);
     expect(preflightIndex).toBeGreaterThan(surfaceCoverageIndex);
     expect(liveCanaryIndex).toBeGreaterThan(preflightIndex);
@@ -2521,6 +2642,7 @@ class RunInfra:
     const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
     const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
     const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const promotionReportCommand = "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .";
     const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
 
     expect(checks.find((check) => check.label === "publish workflow gates real publishes on strict promotion reports")?.ok)
@@ -2528,7 +2650,7 @@ class RunInfra:
     expect(checks.find((check) => check.label === "publish jobs use the exact promoted package artifacts")?.ok)
       .toBe(true);
 
-    const promotionIndex = publish.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json");
+    const promotionIndex = publish.indexOf(promotionReportCommand);
     const npmPublishIndex = publish.indexOf("npm publish");
     const pypiPublishIndex = publish.indexOf("uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b");
     expect(promotionIndex).toBeGreaterThan(-1);
@@ -2536,7 +2658,7 @@ class RunInfra:
     expect(pypiPublishIndex).toBeGreaterThan(promotionIndex);
 
     const withoutPromotionGate = publish.replace(
-      "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json",
+      promotionReportCommand,
       "echo skipped promotion report verification",
     );
     expect(withoutPromotionGate).not.toBe(publish);
