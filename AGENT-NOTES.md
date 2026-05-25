@@ -72,6 +72,9 @@ sizes plus sdist `runinfra.egg-info/SOURCES.txt` contents, so stale or tampered
 Python artifact metadata cannot pass the artifact gate.
 
 No source maps. `typescript/tsconfig.json` deliberately does NOT emit them.
+The promotion source digest includes `typescript/tsconfig.json` and
+`python/MANIFEST.in`, so compiler source-map changes or sdist manifest changes
+make stale readiness/live-canary reports invalid before publish.
 
 ## OIDC trusted publishing — the only allowed path
 
@@ -306,6 +309,8 @@ retiring the implicit beta status.
   job. It creates an `.npmrc` that forces token-based auth.
 - **Do not** add sourcemaps to `typescript/tsconfig.json`. The current
   setting (sourceMap omitted → false) is intentional.
+- **Do not** remove `typescript/tsconfig.json` or `python/MANIFEST.in` from the
+  promotion source digest. The source digest includes `typescript/tsconfig.json` and `python/MANIFEST.in`.
 - **Do not** widen the `files[]` array in `typescript/package.json` without
   auditing what would ship. The list is exhaustive on purpose.
 - **Do not** widen `python/MANIFEST.in` without auditing.

@@ -1,9 +1,11 @@
 export const sourceDigestFileLabels = [
   "typescript/package.json",
+  "typescript/tsconfig.json",
   "typescript/README.md",
   "typescript/CHANGELOG.md",
   "typescript/src/index.ts",
   "python/pyproject.toml",
+  "python/MANIFEST.in",
   "python/README.md",
   "python/CHANGELOG.md",
   "python/runinfra/__init__.py",

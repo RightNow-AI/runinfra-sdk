@@ -782,7 +782,10 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             ".env.local",
             "package/.env.local",
             "/tmp/project/.env.local",
+            "//# sourceMappingURL=index.py.map",
             "sourceURL=runinfra-sdk://dist/index.py",
+            '{"sourcesContent":["secret source"]}',
+            "webpack://runinfra-sdk/./runinfra/__init__.py",
         ]
 
         for sample in samples:

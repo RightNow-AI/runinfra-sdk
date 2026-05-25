@@ -145,6 +145,10 @@ hashes and byte sizes, so a stale or tampered wheel manifest fails before PyPI
 promotion. The Python sdist scan validates
 `runinfra.egg-info/SOURCES.txt` against the expected source file set, so stale
 source manifests cannot hide from the archive gate.
+The promotion source digest also includes `typescript/tsconfig.json` and
+`python/MANIFEST.in`, so source-map or package-manifest changes invalidate stale
+readiness and live-canary evidence even before artifact scanners inspect the
+built outputs.
 
 The artifact clean-install gate imports the npm tarball, the Python wheel, and
 an sdist-built Python wheel in separate disposable consumer environments. The

@@ -2471,6 +2471,8 @@ class RunInfra:
     expect(readme).toContain("Then run the strict preflight");
     expect(readme).toContain("Then run the strict live canary matrix against the exact production gateway");
     expect(liveCanaries).toContain("candidate.sourceDigestSha256");
+    expect(liveCanaries).toContain("typescript/tsconfig.json");
+    expect(liveCanaries).toContain("python/MANIFEST.in");
     expect(liveCanaries).toContain("candidate.artifacts");
     expect(liveCanaries).toContain("canonical live canary matrix");
     expect(liveCanaries).toContain("readiness `summary.ready` to equal the canonical matrix row count");
@@ -2484,6 +2486,7 @@ class RunInfra:
     expect(agentNotes).toContain("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk");
     expect(agentNotes).toContain("the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files");
     expect(agentNotes).toContain("readiness summary at all rows ready with zero blocked rows");
+    expect(agentNotes).toContain("source digest includes `typescript/tsconfig.json` and `python/MANIFEST.in`");
     expect(agentNotes).not.toContain("The simplified workflow doesn't run the strict gate scripts");
     expect(readme).toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");
@@ -2511,6 +2514,25 @@ class RunInfra:
 
     expect(manifest.sourceDigestFileLabels).toContain("typescript/CHANGELOG.md");
     expect(manifest.sourceDigestFileLabels).toContain("python/CHANGELOG.md");
+  });
+
+  it("includes package build configuration in live promotion source digests", async () => {
+    const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
+    const tsconfig = JSON.parse(
+      readFileSync(new URL("../tsconfig.json", import.meta.url), "utf8"),
+    ) as { compilerOptions?: Record<string, unknown>; include?: string[] };
+
+    expect(manifest.sourceDigestFileLabels).toEqual(expect.arrayContaining([
+      "typescript/tsconfig.json",
+      "python/MANIFEST.in",
+    ]));
+    expect(tsconfig.compilerOptions?.sourceMap).not.toBe(true);
+    expect(tsconfig.compilerOptions?.inlineSourceMap).not.toBe(true);
+    expect(tsconfig.compilerOptions?.declarationMap).not.toBe(true);
+    expect(tsconfig.compilerOptions?.inlineSources).not.toBe(true);
+    expect(tsconfig.compilerOptions).not.toHaveProperty("sourceRoot");
+    expect(tsconfig.compilerOptions).not.toHaveProperty("mapRoot");
+    expect(tsconfig.include).toEqual(["src/index.ts"]);
   });
 
   it("includes repo-level public SDK docs in live promotion source digests", async () => {
@@ -3063,7 +3085,10 @@ class RunInfra:
       ".env.local",
       "package/.env.local",
       "/tmp/project/.env.local",
+      "//# sourceMappingURL=index.js.map",
       "sourceURL=runinfra-sdk://dist/index.js",
+      '{"sourcesContent":["secret source"]}',
+      "webpack://runinfra-sdk/./src/index.ts",
     ];
 
     for (const sample of samples) {

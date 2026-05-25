@@ -34,6 +34,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   contain failed/skipped rows or inconsistent summary counts.
 - Hardened promotion readiness verification so forged or stale readiness
   summaries cannot contradict the strict readiness rows.
+- Included `typescript/tsconfig.json` and `python/MANIFEST.in` in promotion
+  source digests so source-map or package-manifest changes require fresh
+  readiness and live-canary evidence before publish.
 - Corrected modality-status docs so chat/responses are not described as
   strict-live green before fresh production artifact canaries pass.
 - Extended package leakage scanners to reject PyPI/Twine and pip credential

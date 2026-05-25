@@ -153,6 +153,9 @@ state generated the canary evidence without recording local paths. Full
 and record only exact versioned package file names plus SHA-256 values in
 `candidate.artifacts`; preflight reports do not require built artifacts and
 leave that list empty.
+The canonical source manifest includes `typescript/tsconfig.json` and
+`python/MANIFEST.in`, so source-map compiler changes or Python sdist manifest
+changes must generate new readiness and live-canary reports before promotion.
 `verify-promotion-reports.mjs` is the release gate that compares the readiness
 and live reports, requires the same candidate source digest, requires the live
 artifact report to include npm, Python wheel, and Python sdist hashes, and
