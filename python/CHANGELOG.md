@@ -22,6 +22,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Responses fields remain unsupported unless the gateway adds them.
 - Limited `extra_body` to JSON body helpers; multipart ASR uses explicit typed
   parameters only, matching the TypeScript SDK's extension posture.
+- Documented concrete asyncio and FastAPI background-task patterns for the
+  sync-only Python client while keeping `AsyncRunInfra` out of the public
+  surface until it has full parity coverage.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but

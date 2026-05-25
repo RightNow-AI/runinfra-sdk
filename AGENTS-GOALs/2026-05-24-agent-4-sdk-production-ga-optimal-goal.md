@@ -190,3 +190,11 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Refreshed current-shell strict artifact preflight again. It remains blocked because this shell has no live `RUNINFRA_*` canary environment loaded: 19 ready rows, 30 blocked rows. New candidate identity: SDK `0.1.4`, source digest `700de231e3a10a42f9109dd2378f718f0ec8659b267df1171d92527c705e7707`, source file count 33.
 - Ran `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-artifact.json`; it failed as expected, now explicitly rejecting the stale live report source digest/count in addition to the existing blocked readiness, failed unsupported-parameter row, skipped multimodal rows, and skipped idempotency row.
 - No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:05:38+03:00 - Agent 4
+- Addressed the Python production-ergonomics GA requirement without overclaiming async support. The decision remains sync-only for `runinfra==0.1.4`; `AsyncRunInfra` is intentionally not exported until it has unit, streaming, live-canary, artifact, and install parity.
+- Added runnable Python README examples for `asyncio.to_thread` and FastAPI `BackgroundTasks` so ASGI users have safe patterns that do not block the event loop or fake an async client.
+- Added a Python regression requiring the async-runtime guidance and confirming `AsyncRunInfra` is absent from the public module. Focused TDD: `python -m pytest python\tests\test_runinfra_sdk.py -q -k "sync_only_async_runtime_patterns"` failed before the docs change and passed after it.
+- Updated `python/CHANGELOG.md` to record the sync-only async-runtime guidance.
+- Refreshed current-shell strict artifact preflight again. It remains blocked because this shell has no live `RUNINFRA_*` canary environment loaded: 19 ready rows, 30 blocked rows. New candidate identity: SDK `0.1.4`, source digest `322672a372a3d88688507169065e3bb22e31c4b6384d8e7a23454870c413a93b`, source file count 33.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.

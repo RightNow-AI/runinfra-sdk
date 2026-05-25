@@ -122,6 +122,40 @@ inference request does not block the event loop. Do not instantiate an
 same unit, streaming, live-canary, and package-install coverage as the sync
 client.
 
+For one-off calls inside an asyncio handler, move the blocking SDK call to the
+default worker thread pool:
+
+```python
+import asyncio
+
+result = await asyncio.to_thread(
+    client.responses.create,
+    model="llama-3.1-8b",
+    input="Summarize this incident.",
+)
+```
+
+For request paths that should return immediately, hand work to your framework's
+background execution path or an external queue:
+
+```python
+from fastapi import BackgroundTasks, FastAPI
+
+app = FastAPI()
+
+def run_inference(prompt: str) -> None:
+    client.responses.create(
+        model="llama-3.1-8b",
+        input=prompt,
+        request_options={"timeout_seconds": 60, "max_retries": 0},
+    )
+
+@app.post("/jobs")
+async def create_job(prompt: str, background_tasks: BackgroundTasks) -> dict[str, str]:
+    background_tasks.add_task(run_inference, prompt)
+    return {"status": "queued"}
+```
+
 ## Supported public routes
 
 - `models.list()`

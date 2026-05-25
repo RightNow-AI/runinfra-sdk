@@ -85,6 +85,16 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertNotIn("reach any active deployment", readme)
         self.assertNotIn("reach every active deployment", readme)
 
+    def test_readme_documents_sync_only_async_runtime_patterns(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+
+        self.assertIn("`RunInfra` is intentionally sync-only", readme)
+        self.assertIn("asyncio.to_thread", readme)
+        self.assertIn("from fastapi import BackgroundTasks, FastAPI", readme)
+        self.assertIn("background_tasks.add_task", readme)
+        self.assertFalse(hasattr(runinfra, "AsyncRunInfra"))
+        self.assertNotIn("AsyncRunInfra = RunInfra", readme)
+
     def test_readme_documents_voice_pipeline_as_experimental_instead_of_unsupported(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
         changelog = Path(__file__).resolve().parents[1].joinpath("CHANGELOG.md").read_text()
