@@ -3267,6 +3267,88 @@ Current blockers:
 
 Checkpoint timestamp: 2026-05-25 04:01 +03:00.
 
+## Checkpoint: 2026-05-25 04:31 Asia/Amman
+
+Current state: still not GA, not deployed, and not published. Added an
+executable GitHub code-scanning release gate so publish promotion fails closed
+if `RightNow-AI/runinfra-sdk` has any open high/critical CodeQL/code-scanning
+alerts.
+
+Changes made:
+
+- Added `scripts/verify-github-security-status.mjs`.
+- Wired `promotion-gate` in `.github/workflows/publish.yml` to run the script
+  before strict live canaries.
+- Extended workflow policy tests so the promotion gate must include both the
+  security-status command and `security-events: read`.
+- Added TypeScript tests for high/critical alert detection and workflow-policy
+  enforcement.
+- Updated root/package READMEs and `AGENT-NOTES.md` so release checklists
+  require `node scripts/verify-github-security-status.mjs --repo
+  RightNow-AI/runinfra-sdk`.
+
+Fresh verification:
+
+- Focused security-gate test passed:
+  `pnpm --dir typescript test -- --reporter dot --testNamePattern
+  "code-scanning alerts|promotion gate to verify GitHub code scanning|non-publishing promotion jobs"`
+  passed 3 selected tests.
+- Doc red-green proof passed for TypeScript and Python promotion docs.
+- `node --check scripts\verify-github-security-status.mjs` passed.
+- `node scripts\verify-workflow-policy.mjs` passed, including the new
+  high/critical code-scanning gate.
+- Real GitHub query passed using the local GitHub CLI token without printing
+  it: no open high/critical code-scanning alerts for
+  `RightNow-AI/runinfra-sdk`.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` passed:
+  198 tests.
+- `python -m pytest python\tests -q` passed: 130 tests and 127 subtests.
+- `node scripts\verify-version-sync.mjs` passed for SDK version `0.1.4`.
+- `pnpm --dir typescript build` and `pnpm --dir typescript pack
+  --pack-destination .` passed, producing `typescript\runinfra-sdk-0.1.4.tgz`.
+- `python -m build python` passed, producing
+  `python\dist\runinfra-0.1.4-py3-none-any.whl` and
+  `python\dist\runinfra-0.1.4.tar.gz`.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz`
+  passed.
+- `python scripts\verify-python-package.py
+  python\dist\runinfra-0.1.4-py3-none-any.whl
+  python\dist\runinfra-0.1.4.tar.gz` passed.
+- `python -m twine check` passed for the wheel and sdist.
+- `node scripts\secret-scan-policy.mjs` passed.
+- `node scripts\verify-clean-installs.mjs --package both --mode artifact`
+  passed for npm tarball, Python wheel, and Python sdist.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed
+  with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\run-sdk-live-canaries.mjs --preflight --strict --report
+  artifacts\sdk\live-canary-readiness.json` failed closed because this shell
+  has no scoped production canary env loaded: 19 ready rows and 30 blocked rows.
+- `git diff --check` passed with expected Windows CRLF working-copy warnings.
+- Second-opinion review found the GitHub code-scanning workflow step had
+  `security-events: read` but did not pass the ephemeral GitHub token into the
+  verifier. Fixed by adding `GITHUB_TOKEN: ${{ github.token }}` to the verifier
+  step and enforcing that env wiring in `scripts/workflow-policy.mjs`.
+- Second-opinion follow-up confirmed the token-env blocker is closed and
+  reminded that `scripts/verify-github-security-status.mjs` must be included in
+  the commit.
+
+Current blockers:
+
+1. Strict live canary env is not loaded in this shell. Missing inputs include
+   `RUNINFRA_API_KEY`, LLM/embedding/image/TTS/ASR model IDs, embedding
+   dimensions, image size/response format, TTS voice/reference inputs, ASR
+   fixture/expected transcript/language/response format, voice-pipeline
+   pipeline/audio/expected transcript inputs, and idempotency replay opt-in.
+2. Production `api.runinfra.ai` still needs the RunPipe gateway
+   unsupported-parameter fix deployed before prior source-canary failure
+   evidence can close.
+3. npm/PyPI `0.1.4` is still not published. Publishing remains blocked until
+   strict production source/artifact live canaries and registry install/import
+   proof are green after deployment.
+4. No push, deploy, publish, or paid canary provisioning was performed in this
+   checkpoint.
+
 ## Checkpoint: 2026-05-25 04:15 Asia/Amman
 
 Current state: still not GA, not deployed, and not published. The RunPipe

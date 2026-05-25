@@ -101,6 +101,11 @@ specific CI run.
 Code scanning runs through GitHub default CodeQL setup and protected branch
 checks. Do not add an advanced CodeQL workflow unless default setup is disabled.
 
+Verify the current GitHub code-scanning release gate:
+```bash
+node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk
+```
+
 Verify the npm package:
 ```bash
 npm view @runinfra/sdk@latest dist.attestations

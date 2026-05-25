@@ -610,6 +610,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("RUNINFRA_ASR_FIXTURE_BASE64", readme)
         self.assertIn("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64", readme)
         self.assertIn("node scripts/verify-workflow-policy.mjs", readme)
+        self.assertIn("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk", readme)
         self.assertIn("node scripts/verify-version-sync.mjs", readme)
         self.assertIn("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz", readme)
         self.assertIn("python scripts/verify-python-package.py python/dist", readme)
@@ -663,6 +664,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64", live_canaries)
         self.assertIn("`dry_run=false` cannot bypass `promotion-gate`", agent_notes)
         self.assertIn("Clean artifact install/import now exercises the npm tarball, Python wheel, and", agent_notes)
+        self.assertIn("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk", agent_notes)
         self.assertIn(
             "the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files",
             agent_notes,

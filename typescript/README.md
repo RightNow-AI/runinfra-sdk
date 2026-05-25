@@ -350,6 +350,7 @@ repository root before opening a release PR:
 
 ```bash
 node scripts/verify-workflow-policy.mjs
+node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk
 node scripts/verify-version-sync.mjs
 pnpm --dir typescript install --frozen-lockfile
 pnpm --dir typescript exec tsc -p tsconfig.json --noEmit

@@ -451,6 +451,69 @@ describe("RunInfra TypeScript SDK", () => {
     expect(preflight.registryVersionChecks("0.1.4", "python").map((check) => check.label)).toEqual(["PyPI"]);
   });
 
+  it("fails the release gate on open high or critical GitHub code-scanning alerts", async () => {
+    const security = await import("../../scripts/verify-github-security-status.mjs") as {
+      highOrCriticalCodeScanningAlerts: (alerts: Array<unknown>) => Array<{
+        number?: number;
+        html_url?: string;
+      }>;
+      githubSecurityStatusErrors: (
+        options: {
+          repository: string;
+          fetchCodeScanningAlerts: () => Promise<Array<unknown>>;
+        },
+      ) => Promise<string[]>;
+    };
+
+    const alerts = [
+      {
+        number: 1,
+        state: "open",
+        html_url: "https://github.com/RightNow-AI/runinfra-sdk/security/code-scanning/1",
+        rule: { id: "js/sql-injection", security_severity_level: "high" },
+      },
+      {
+        number: 2,
+        state: "open",
+        html_url: "https://github.com/RightNow-AI/runinfra-sdk/security/code-scanning/2",
+        rule: { id: "js/hardcoded-credential", security_severity_level: "critical" },
+      },
+      {
+        number: 3,
+        state: "open",
+        rule: { id: "js/unused-local-variable", severity: "error" },
+      },
+      {
+        number: 4,
+        state: "dismissed",
+        rule: { id: "js/xss", security_severity_level: "critical" },
+      },
+      {
+        number: 5,
+        state: "open",
+        rule: { id: "js/path-injection", security_severity_level: "medium" },
+      },
+    ];
+
+    expect(security.highOrCriticalCodeScanningAlerts(alerts).map((alert) => alert.number)).toEqual([1, 2]);
+    await expect(
+      security.githubSecurityStatusErrors({
+        repository: "RightNow-AI/runinfra-sdk",
+        fetchCodeScanningAlerts: async () => alerts,
+      }),
+    ).resolves.toEqual([
+      "GitHub code scanning has 2 open high/critical alerts for RightNow-AI/runinfra-sdk.",
+      "Open high/critical alert #1: https://github.com/RightNow-AI/runinfra-sdk/security/code-scanning/1",
+      "Open high/critical alert #2: https://github.com/RightNow-AI/runinfra-sdk/security/code-scanning/2",
+    ]);
+    await expect(
+      security.githubSecurityStatusErrors({
+        repository: "RightNow-AI/runinfra-sdk",
+        fetchCodeScanningAlerts: async () => [],
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it("reports explicit production child canary base URLs without exposing custom staging URLs", async () => {
     const helper = await import("../../scripts/canary-report-base-url.mjs") as {
       productionBaseURL: string;
@@ -2096,6 +2159,7 @@ class RunInfra:
     expect(readme).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
     expect(readme).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
     expect(readme).toContain("node scripts/verify-workflow-policy.mjs");
+    expect(readme).toContain("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk");
     expect(readme).toContain("node scripts/verify-version-sync.mjs");
     expect(readme).toContain("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz");
     expect(readme).toContain("python scripts/verify-python-package.py python/dist");
@@ -2127,6 +2191,7 @@ class RunInfra:
     expect(liveCanaries).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
     expect(agentNotes).toContain("`dry_run=false` cannot bypass `promotion-gate`");
     expect(agentNotes).toContain("Clean artifact install/import now exercises the npm tarball, Python wheel, and");
+    expect(agentNotes).toContain("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk");
     expect(agentNotes).toContain("the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files");
     expect(agentNotes).not.toContain("The simplified workflow doesn't run the strict gate scripts");
     expect(readme).toContain("Do not use npm or PyPI tokens");
@@ -2275,6 +2340,36 @@ class RunInfra:
       hasCustomCodeqlWorkflow: false,
     });
     expect(mutatedChecks.find((check) => check.label === "publish workflow gates real publishes on strict promotion reports")?.ok)
+      .toBe(false);
+  });
+
+  it("requires the promotion gate to verify GitHub code scanning before live canaries", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const label = "promotion gate verifies GitHub code scanning has no open high/critical alerts";
+
+    expect(evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(true);
+
+    const withoutSecurityStep = publish.replace(
+      "node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk",
+      "echo skipped-security-status",
+    );
+    expect(evaluateWorkflowPolicy({ publish: withoutSecurityStep, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const withoutSecurityPermission = publish.replace(/\r?\n      security-events:\s*read/u, "");
+    expect(evaluateWorkflowPolicy({ publish: withoutSecurityPermission, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    expect(publish).toContain("GITHUB_TOKEN: ${{ github.token }}");
+    const withoutGithubTokenEnv = publish.replace(
+      /\r?\n        env:\r?\n          GITHUB_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/u,
+      "",
+    );
+    expect(withoutGithubTokenEnv).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: withoutGithubTokenEnv, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
       .toBe(false);
   });
 

@@ -217,6 +217,8 @@ and suppresses successful pip output so local paths do not appear in logs.
 
 Before GA promotion, also run:
 ```
+node scripts/verify-workflow-policy.mjs
+node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk
 pnpm --dir typescript build
 node scripts/verify-clean-installs.mjs --package both --mode artifact
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json

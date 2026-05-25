@@ -144,6 +144,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      security-events: read
     env:
       RUNINFRA_API_KEY: ${{ secrets.RUNINFRA_API_KEY }}
       RUNINFRA_BASE_URL: ${{ vars.RUNINFRA_BASE_URL }}
@@ -212,6 +213,11 @@ jobs:
             printf '%s' "$RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64" | base64 -d > artifacts/sdk/voice-pipeline-fixture.wav
             echo "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH=$PWD/artifacts/sdk/voice-pipeline-fixture.wav" >> "$GITHUB_ENV"
           fi
+
+      - name: Verify GitHub code scanning status
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk
 
       - name: Dry-run promotion gate summary
         if: ${{ github.event.inputs.dry_run == 'true' }}

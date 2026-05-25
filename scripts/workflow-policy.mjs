@@ -24,10 +24,21 @@ function jobHasOidcPermission(job) {
   return /(^|\r?\n)    permissions:\r?\n(?:      [a-zA-Z0-9_-]+:\s*\S+\r?\n)*?      id-token:\s*write\s*(?:\r?\n|$)/u.test(job);
 }
 
-function jobHasReadOnlyContentsPermission(job) {
-  return (
-    /(^|\r?\n)    permissions:\r?\n      contents:\s*read\s*(?:\r?\n|$)/u.test(job) &&
-    !/(^|\r?\n)      (?!contents:)[a-zA-Z0-9_-]+:\s*(read|write|none)\s*(?:\r?\n|$)/u.test(job)
+function jobPermissions(job) {
+  const match = job.match(/(^|\r?\n)    permissions:\r?\n((?:      [a-zA-Z0-9_-]+:\s*\S+\r?\n)+)/u);
+  if (!match) return new Map();
+  return new Map(
+    Array.from(match[2].matchAll(/^      ([a-zA-Z0-9_-]+):\s*(\S+)\s*$/gmu))
+      .map(([, key, value]) => [key, value]),
+  );
+}
+
+function jobHasReadOnlyContentsPermission(job, allowedExtraReadPermissions = []) {
+  const permissions = jobPermissions(job);
+  if (permissions.get("contents") !== "read") return false;
+  const allowed = new Set(["contents", ...allowedExtraReadPermissions]);
+  return Array.from(permissions.entries()).every(([permission, access]) =>
+    allowed.has(permission) && access === "read",
   );
 }
 
@@ -44,6 +55,21 @@ function jobHasCommandBetween(job, command, afterMarker, beforeMarkers) {
     const markerIndex = job.indexOf(marker);
     return markerIndex === -1 || commandIndex < markerIndex;
   });
+}
+
+function stepBlockForCommand(job, command) {
+  const commandIndex = job.indexOf(command);
+  if (commandIndex === -1) return "";
+  const stepStart = job.lastIndexOf("\n      - ", commandIndex);
+  const nextStep = job.indexOf("\n      - ", commandIndex);
+  const start = stepStart === -1 ? 0 : stepStart;
+  const end = nextStep === -1 ? job.length : nextStep;
+  return job.slice(start, end);
+}
+
+function stepCommandHasGithubToken(job, command) {
+  const step = stepBlockForCommand(job, command);
+  return /(^|\r?\n)        env:\r?\n(?:          [A-Z0-9_]+:\s*.*\r?\n)*?          GITHUB_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}\s*(?:\r?\n|$)/u.test(step);
 }
 
 function actionUses(workflows) {
@@ -83,6 +109,7 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     /verify-clean-installs\.mjs[\s\S]*?--package (?:both|python)[\s\S]*?--mode artifact[\s\S]*?--python-wheel artifacts\/python-local\/runinfra-\*-py3-none-any\.whl[\s\S]*?--python-sdist artifacts\/python-local\/runinfra-\*\.tar\.gz/u;
   const promotedArtifactLayoutCommand = "node scripts/verify-promoted-artifacts.mjs artifacts";
   const downloadPromotedArtifactsAction = "uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
+  const githubSecurityStatusCommand = "node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk";
 
   return [
     {
@@ -177,6 +204,18 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
         ]),
     },
     {
+      label: "promotion gate verifies GitHub code scanning has no open high/critical alerts",
+      ok:
+        jobPermissions(promotionGateJob).get("security-events") === "read" &&
+        jobHasReadOnlyContentsPermission(promotionGateJob, ["security-events"]) &&
+        stepCommandHasGithubToken(promotionGateJob, githubSecurityStatusCommand) &&
+        jobHasCommandBetween(promotionGateJob, githubSecurityStatusCommand, downloadPromotedArtifactsAction, [
+          strictReadinessCommand,
+          strictArtifactCommand,
+          promotionReportCommand,
+        ]),
+    },
+    {
       label: "publish jobs use the exact promoted package artifacts",
       ok:
         jobNeeds(publishNpmJob, "build-artifacts") &&
@@ -199,7 +238,9 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     },
     {
       label: "non-publishing promotion jobs use read-only contents permission",
-      ok: jobHasReadOnlyContentsPermission(buildArtifactsJob) && jobHasReadOnlyContentsPermission(promotionGateJob),
+      ok:
+        jobHasReadOnlyContentsPermission(buildArtifactsJob) &&
+        jobHasReadOnlyContentsPermission(promotionGateJob, ["security-events"]),
     },
     {
       label: "publish workflow verifies downloaded promoted artifact layout",
