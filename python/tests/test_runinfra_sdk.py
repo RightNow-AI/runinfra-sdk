@@ -131,21 +131,24 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             root_readme,
         )
         self.assertIn(
-            "| Chat completions, Responses | Beta, contract-tested. Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter` |",
+            "| Chat completions, Responses | Beta, contract-tested. Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows |",
             root_readme,
         )
+        self.assertNotIn("Strict live source canaries currently pass chat/responses rows", root_readme)
         self.assertIn(
             "| `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |",
             agent_notes,
         )
         self.assertIn(
-            "Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter`",
+            "Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows",
             package_readme,
         )
         self.assertIn(
-            "Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter`",
+            "Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows",
             agent_notes,
         )
+        self.assertNotIn("Strict live source canaries currently pass chat/responses rows", package_readme)
+        self.assertNotIn("Strict live source canaries currently pass chat/responses rows", agent_notes)
         normalized_changelog = " ".join(changelog.split())
         self.assertIn(
             "blocked for embeddings until the strict promotion artifacts include a deployed embedding target",

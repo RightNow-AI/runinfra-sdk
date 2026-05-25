@@ -161,7 +161,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("| Webhook delivery | Not shipped");
     expect(readme).toContain("| Voice pipeline | **Experimental**, pipeline-scoped route, not live-canary verified |");
     expect(readme).toContain("| Embeddings | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |");
-    expect(readme).toContain("| Chat completions, Responses | Beta, contract-tested. Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter` |");
+    expect(readme).toContain("| Chat completions, Responses | Beta, contract-tested. Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows |");
+    expect(readme).not.toContain("Strict live source canaries currently pass chat/responses rows");
     expect(readme).not.toContain("Chat completions, Responses, Embeddings | Beta, contract-tested");
     expect(readme).not.toContain("Webhook delivery, Voice pipeline | Not shipped");
     expect(readme).not.toContain("streaming final/slow-consumer rows pass against production");
@@ -183,7 +184,8 @@ describe("RunInfra TypeScript SDK", () => {
 
     for (const text of [packageReadme, agentNotes]) {
       expect(text).toContain("Not strict live-canary verified in the current promotion artifacts");
-      expect(text).toContain("Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter`");
+      expect(text).toContain("Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows");
+      expect(text).not.toContain("Strict live source canaries currently pass chat/responses rows");
       expect(text).not.toContain("streaming final/slow-consumer rows pass against production");
       expect(text).not.toContain("| Embeddings | `client.embeddings.create` | Beta, contract-tested |");
       expect(text).not.toContain("| `client.embeddings.create` | Beta, contract-tested |");

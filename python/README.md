@@ -16,7 +16,7 @@ This SDK is in **beta**. The surfaces below have different verification levels:
 
 | Modality | Surface | Status |
 |---|---|---|
-| LLM | `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested. Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter` |
+| LLM | `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested. Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows |
 | Embeddings | `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |
 | Images | `client.images.generate` | **Experimental**, not live-canary verified |
 | Audio (TTS) | `client.audio.speech.create` | **Experimental**, not live-canary verified |

@@ -119,7 +119,7 @@ and have admin bypass disabled. Main branch protection also enforces admins.
 
 | Surface | Status |
 |---|---|
-| `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested. Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter` |
+| `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested. Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows |
 | `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |
 | `client.images.generate` | **Experimental** — HTTP envelope matches OpenAI Images API but not live-canary verified end-to-end |
 | `client.audio.speech.create` | **Experimental** — same |

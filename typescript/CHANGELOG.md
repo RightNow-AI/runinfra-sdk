@@ -33,6 +33,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   contain failed/skipped rows or inconsistent summary counts.
 - Hardened promotion readiness verification so forged or stale readiness
   summaries cannot contradict the strict readiness rows.
+- Corrected modality-status docs so chat/responses are not described as
+  strict-live green before fresh production artifact canaries pass.
 - Extended package leakage scanners to reject PyPI/Twine and pip credential
   config material such as `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini`.
 
