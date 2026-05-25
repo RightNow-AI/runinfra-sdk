@@ -301,3 +301,9 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Readiness remains blocked in this shell because no live `RUNINFRA_*` canary environment is loaded: readiness summary `19` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `19` passed / `0` failed / `30` skipped and Python `19` passed / `0` failed / `30` skipped.
 - `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, readiness summary counts, skipped live rows, child summary counts, and parity. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
 - No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T15:44:30+03:00 - Agent 4
+- Verified the external GitHub code-scanning release gate read-only with the existing `gh` authenticated account by exporting the token only inside the shell process: `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` passed with no open high/critical alerts.
+- Verified secure workflow policy and dry-run dispatch locally: `node scripts\verify-workflow-policy.mjs` passed all OIDC, trusted-publisher, branch lock, SHA-pinning, no-token, artifact, clean-install, version-sync, and strict-promotion checks; `node scripts\verify-publish-dispatch.mjs --dry-run --version 0.1.4` passed.
+- This is read-only release-gate evidence only. It does not replace strict live artifact canaries, which remain blocked/skipped without a loaded live `RUNINFRA_*` canary environment.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
