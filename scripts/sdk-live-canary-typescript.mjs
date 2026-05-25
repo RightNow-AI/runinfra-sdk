@@ -790,6 +790,15 @@ function assertClientRequestIdHeader(calls, expected, label) {
   }
 }
 
+function assertCustomHeader(calls, name, expected, label) {
+  for (const [index, call] of calls.entries()) {
+    const value = headerValue(call.headers, name);
+    if (value !== expected) {
+      throw new Error(`${label} call ${index + 1} expected custom header ${name}`);
+    }
+  }
+}
+
 function assertRequestBodyDoesNotContain(call, forbidden, label) {
   const body = call?.body === undefined ? "" : String(call.body);
   for (const value of forbidden) {
@@ -797,6 +806,13 @@ function assertRequestBodyDoesNotContain(call, forbidden, label) {
       throw new Error(`${label} leaked ${value} into request body`);
     }
   }
+}
+
+function assertInvalidRequestOptionError(error, label) {
+  if (error?.status !== 0 || error?.type !== "invalid_request_options") {
+    throw new Error(`${label} invalid request option mapped unexpectedly: ${error?.status} ${error?.type}`);
+  }
+  return { errorType: error.type, errorStatus: error.status };
 }
 
 function assertRetryableError(error, label) {
@@ -1481,10 +1497,7 @@ await record("error.request.invalid_options", [], async () => {
       { unsupportedOption: true },
     );
   } catch (error) {
-    if (error?.status !== 0 || error?.type !== "invalid_request_options") {
-      throw new Error(`invalid request option mapped unexpectedly: ${error?.status} ${error?.type}`);
-    }
-    return { errorType: error.type, errorStatus: error.status };
+    return assertInvalidRequestOptionError(error, "error.request.invalid_options");
   }
   throw new Error("invalid request option unexpectedly succeeded");
 });
@@ -1509,6 +1522,44 @@ await record("request.client_request_id.local", [], async () => {
   );
   assertRequestId(response._request_id, "request.client_request_id.local");
   return { requestId: response._request_id, clientRequestIdHeader: "present" };
+});
+
+await record("request.custom_headers.local", [], async () => {
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse(
+      { id: "resp-local-custom-headers", status: "completed", output: [] },
+      200,
+      "req-local-custom-headers-server",
+    ),
+  ]);
+  const response = await local.responses.create(
+    { model: "runinfra-local-request-options-model", input: "local custom header canary" },
+    {
+      headers: { "X-RunInfra-App": "canary-app-metadata" },
+      maxRetries: 0,
+    },
+  );
+  assertCustomHeader(calls, "X-RunInfra-App", "canary-app-metadata", "request.custom_headers.local");
+  assertRequestBodyDoesNotContain(
+    calls[0],
+    ["headers", "X-RunInfra-App", "canary-app-metadata"],
+    "request.custom_headers.local",
+  );
+  const callsBeforeRejectedOverride = calls.length;
+  try {
+    await local.responses.create(
+      { model: "runinfra-local-request-options-model", input: "local custom header rejection canary" },
+      { headers: { Authorization: "Bearer sk-ri-forbidden-override" }, maxRetries: 0 },
+    );
+  } catch (error) {
+    const evidence = assertInvalidRequestOptionError(error, "request.custom_headers.local");
+    if (calls.length !== callsBeforeRejectedOverride) {
+      throw new Error("request.custom_headers.local sent a request after rejecting SDK-controlled header override");
+    }
+    assertRequestId(response._request_id, "request.custom_headers.local");
+    return { ...evidence, requestId: response._request_id, customHeader: "present", rejectedOverride: "authorization" };
+  }
+  throw new Error("custom Authorization header override unexpectedly succeeded");
 });
 
 await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {

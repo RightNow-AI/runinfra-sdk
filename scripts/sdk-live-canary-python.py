@@ -579,6 +579,12 @@ def assert_client_request_id_header(calls: List[Any], expected: str, label: str)
             raise AssertionError(f"{label} call {index} expected client request id header")
 
 
+def assert_custom_header(calls: List[Any], name: str, expected: str, label: str) -> None:
+    for index, call in enumerate(calls, start=1):
+        if call.headers.get(name) != expected:
+            raise AssertionError(f"{label} call {index} expected custom header {name}")
+
+
 def assert_request_body_does_not_contain(call: Any, forbidden: Iterable[str], label: str) -> None:
     body = getattr(call, "body", b"") or b""
     if isinstance(body, bytes):
@@ -588,6 +594,14 @@ def assert_request_body_does_not_contain(call: Any, forbidden: Iterable[str], la
     for value in forbidden:
         if value in text:
             raise AssertionError(f"{label} leaked {value} into request body")
+
+
+def assert_invalid_request_option_error(error: BaseException, label: str) -> Dict[str, Any]:
+    if getattr(error, "status", None) != 0 or getattr(error, "type", None) != "invalid_request_options":
+        raise AssertionError(
+            f"{label} invalid request option mapped unexpectedly: {getattr(error, 'status', None)} {getattr(error, 'type', None)}"
+        )
+    return {"errorType": getattr(error, "type", None), "errorStatus": getattr(error, "status", None)}
 
 
 def assert_retryable_error(error: BaseException, label: str) -> Dict[str, Any]:
@@ -868,6 +882,7 @@ def main() -> int:
     record("error.model.not_found", ["RUNINFRA_API_KEY"], lambda: _model_not_found(client()))
     record("error.request.invalid_options", [], _invalid_request_options)
     record("request.client_request_id.local", [], _request_client_request_id_local)
+    record("request.custom_headers.local", [], _request_custom_headers_local)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
     record("retry.safety.get.local", [], _retry_safety_get_local)
     record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
@@ -1460,11 +1475,7 @@ def _invalid_request_options() -> Dict[str, Any]:
             request_options={"unsupported_option": True},
         )
     except BaseException as error:  # noqa: BLE001
-        if getattr(error, "status", None) != 0 or getattr(error, "type", None) != "invalid_request_options":
-            raise AssertionError(
-                f"invalid request option mapped unexpectedly: {getattr(error, 'status', None)} {getattr(error, 'type', None)}"
-            )
-        return {"errorType": getattr(error, "type", None), "errorStatus": getattr(error, "status", None)}
+        return assert_invalid_request_option_error(error, "error.request.invalid_options")
     raise AssertionError("invalid request option unexpectedly succeeded")
 
 
@@ -1505,6 +1516,52 @@ def _request_client_request_id_local() -> Dict[str, Any]:
     )
     assert_request_id(response.get("_request_id"), "request.client_request_id.local")
     return {"requestId": response.get("_request_id"), "clientRequestIdHeader": "present"}
+
+
+def _request_custom_headers_local() -> Dict[str, Any]:
+    local = local_retry_client([
+        local_retry_response(
+            {"id": "resp-local-custom-headers", "status": "completed", "output": []},
+            200,
+            "req-local-custom-headers-server",
+        ),
+    ])
+    response = local["client"].responses.create(
+        model="runinfra-local-request-options-model",
+        input="local custom header canary",
+        request_options={
+            "headers": {"X-RunInfra-App": "canary-app-metadata"},
+            "max_retries": 0,
+        },
+    )
+    assert_custom_header(local["calls"], "X-RunInfra-App", "canary-app-metadata", "request.custom_headers.local")
+    assert_request_body_does_not_contain(
+        local["calls"][0],
+        ["headers", "X-RunInfra-App", "canary-app-metadata"],
+        "request.custom_headers.local",
+    )
+    calls_before_rejected_override = len(local["calls"])
+    try:
+        local["client"].responses.create(
+            model="runinfra-local-request-options-model",
+            input="local custom header rejection canary",
+            request_options={
+                "headers": {"Authorization": "Bearer sk-ri-forbidden-override"},
+                "max_retries": 0,
+            },
+        )
+    except BaseException as error:  # noqa: BLE001
+        evidence = assert_invalid_request_option_error(error, "request.custom_headers.local")
+        if len(local["calls"]) != calls_before_rejected_override:
+            raise AssertionError("request.custom_headers.local sent a request after rejecting SDK-controlled header override")
+        assert_request_id(response.get("_request_id"), "request.custom_headers.local")
+        return {
+            **evidence,
+            "requestId": response.get("_request_id"),
+            "customHeader": "present",
+            "rejectedOverride": "authorization",
+        }
+    raise AssertionError("custom Authorization header override unexpectedly succeeded")
 
 
 def _retry_safety_get_local() -> Dict[str, Any]:

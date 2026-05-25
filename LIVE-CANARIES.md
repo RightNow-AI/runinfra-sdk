@@ -213,6 +213,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `error.model.not_found`
 - `error.request.invalid_options`
 - `request.client_request_id.local`
+- `request.custom_headers.local`
 - `error.body.unsupported_parameter`
 - `retry.safety.get.local`
 - `retry.safety.post.requires_idempotency.local`
@@ -297,8 +298,9 @@ safe GET requests retry transient failures, charge-bearing JSON POSTs retry only
 with an idempotency key, and streaming, binary TTS, and multipart ASR requests
 are sent once even when an idempotency key is present.
 Local request-option rows do not call the production gateway; they prove
-user-supplied client request IDs are sent as `X-Client-Request-Id` and are not
-serialized into JSON request bodies.
+user-supplied client request IDs and custom request headers are sent as headers,
+are not serialized into JSON request bodies, and cannot override
+SDK-controlled credential or tracing headers.
 Webhook signature rows use installed package artifacts and deterministic local
 payloads because they are verification helpers, not live delivery endpoints.
 

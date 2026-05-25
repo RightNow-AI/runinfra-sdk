@@ -108,7 +108,10 @@ export const publicSurfaceCoverage = [
   { surface: "verify_webhook_signature", rows: ["webhooks.verify_signature.export"] },
   { surface: "construct_webhook_event", rows: ["webhooks.construct_event.export"] },
   { surface: "webhook delivery create/list absence", rows: ["webhooks.delivery_surface.absent"] },
-  { surface: "request option validation", rows: ["error.request.invalid_options", "request.client_request_id.local"] },
+  {
+    surface: "request option validation",
+    rows: ["error.request.invalid_options", "request.client_request_id.local", "request.custom_headers.local"],
+  },
   { surface: "unsupported body parameter handling", rows: ["error.body.unsupported_parameter"] },
   { surface: "authentication error mapping", rows: ["error.auth.invalid_key"] },
 ];

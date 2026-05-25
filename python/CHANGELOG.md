@@ -43,6 +43,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   config material such as `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini`.
 - Added a local strict canary row proving user-supplied client request IDs are
   sent as headers and do not leak into JSON request bodies.
+- Added a local strict canary row proving custom request headers are sent as
+  headers, do not leak into JSON bodies, and cannot override SDK credentials.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but
