@@ -736,7 +736,7 @@ function localRetryFailure(requestId) {
   );
 }
 
-function localRetryClient(responses) {
+function localRetryClient(responses, options = {}) {
   const calls = [];
   const queued = [...responses];
   return {
@@ -747,6 +747,7 @@ function localRetryClient(responses) {
       maxRetries: 1,
       retryBaseMs: 0,
       timeoutMs: 1000,
+      ...options,
       fetch: async (url, init = {}) => {
         calls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
         const response = queued.shift();
@@ -876,6 +877,23 @@ function assertInvalidRequestOptionError(error, label) {
     throw new Error(`${label} invalid request option mapped unexpectedly: ${error?.status} ${error?.type}`);
   }
   return { errorType: error.type, errorStatus: error.status };
+}
+
+async function assertUnknownRequestFieldRejected(run, calls, field, label) {
+  const callsBefore = calls.length;
+  try {
+    await run();
+  } catch (error) {
+    const evidence = assertInvalidRequestOptionError(error, label);
+    if (!String(error?.message ?? "").includes("Unknown") || !String(error?.message ?? "").includes(field)) {
+      throw new Error(`${label} rejected unknown field with unclear message: ${error?.message ?? "missing"}`);
+    }
+    if (calls.length !== callsBefore) {
+      throw new Error(`${label} sent a request after rejecting unknown direct request field`);
+    }
+    return evidence;
+  }
+  throw new Error(`${label} accepted unknown direct request field`);
 }
 
 function assertRetryableError(error, label) {
@@ -1793,6 +1811,72 @@ await record("request.extra_body.local", [], async () => {
     throw new Error("multipart extraBody unexpectedly succeeded");
   }
   throw new Error("extraBody typed field override unexpectedly succeeded");
+});
+
+await record("request.unknown_fields.local", [], async () => {
+  const field = "runinfra_unknown_direct_probe";
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse(
+      { id: "resp-local-unknown-fields", status: "completed", output: [] },
+      200,
+      "req-local-unknown-fields-extra-body",
+    ),
+  ], { pipelineId: "pipe-local-unknown-fields" });
+  let rejected = 0;
+  for (const [label, run] of [
+    ["responses", () => local.responses.create({
+      model: "runinfra-local-request-fields-model",
+      input: "local unknown request field canary",
+      [field]: "reject",
+    })],
+    ["chat", () => local.chat.completions.create({
+      model: "runinfra-local-request-fields-model",
+      messages: [{ role: "user", content: "local unknown request field canary" }],
+      [field]: "reject",
+    })],
+    ["embeddings", () => local.embeddings.create({
+      model: "runinfra-local-embedding-model",
+      input: "local unknown request field canary",
+      [field]: "reject",
+    })],
+    ["images", () => local.images.generate({
+      model: "runinfra-local-image-model",
+      prompt: "local unknown request field canary",
+      [field]: "reject",
+    })],
+    ["audio.speech", () => local.audio.speech.create({
+      model: "runinfra-local-tts-model",
+      input: "local unknown request field canary",
+      voice: "local",
+      [field]: "reject",
+    })],
+    ["audio.transcriptions", () => local.audio.transcriptions.create({
+      model: "runinfra-local-asr-model",
+      file: new Blob([new Uint8Array([82, 73, 70, 70])], { type: "audio/wav" }),
+      filename: "local-unknown-fields.wav",
+      [field]: "reject",
+    })],
+    ["voice.pipeline", () => local.voice.pipeline.create({
+      audio: new Uint8Array([1, 2, 3]),
+      mimeType: "audio/wav",
+      [field]: "reject",
+    })],
+  ]) {
+    await assertUnknownRequestFieldRejected(
+      run,
+      calls,
+      field,
+      `request.unknown_fields.local ${label}`,
+    );
+    rejected += 1;
+  }
+  const response = await local.responses.create(
+    { model: "runinfra-local-request-fields-model", input: "local extra body still works" },
+    { extraBody: { [field]: "present" }, maxRetries: 0 },
+  );
+  assertExtraBodyJsonField(calls[0], field, "present", "request.unknown_fields.local");
+  assertRequestId(response._request_id, "request.unknown_fields.local");
+  return { requestId: response._request_id, rejected, extraBodyField: "present" };
 });
 
 await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {

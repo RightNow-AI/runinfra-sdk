@@ -2310,6 +2310,30 @@ class RunInfra:
     expect(typescriptCanary).toContain("runinfra_unsupported_parameter_probe");
   });
 
+  it("keeps child canaries in parity for local unknown request field coverage", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { publicSurfaceCoverage } =
+      await import("../../scripts/live-canary-surface-coverage.mjs") as {
+        publicSurfaceCoverage: Array<{ surface: string; rows: string[] }>;
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const row = "request.unknown_fields.local";
+
+    expect(expectedRows).toContain(row);
+    expect(runner).toContain(`["${row}", () => []]`);
+    expect(typescriptCanary).toContain(`record("${row}"`);
+    expect(typescriptCanary).toContain("assertUnknownRequestFieldRejected");
+    expect(pythonCanary).toContain(`"${row}"`);
+    expect(pythonCanary).toContain("assert_unknown_request_field_rejected");
+    expect(liveCanaries).toContain(row);
+    expect(liveCanaries).toContain("unknown direct request fields");
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "request option validation")?.rows)
+      .toContain(row);
+  });
+
   it("keeps child live-canary failure diagnostics actionable without raw error messages", () => {
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
     const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
@@ -5823,6 +5847,101 @@ with open(report, "w", encoding="utf-8") as handle:
       message: "extraBody must not override typed request field: model",
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unknown direct request fields before sending and keeps extraBody as the escape hatch", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({ object: "response", output_text: "hi" }));
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      pipelineId: "pipe-unknown-fields",
+      fetch: fetcher,
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.responses.create({
+        model: "llama-3.1-8b",
+        input: "Hi",
+        runinfra_unsupported_parameter_probe: "must-use-extra-body",
+      } as Parameters<typeof client.responses.create>[0]),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "Unknown responses request field: runinfra_unsupported_parameter_probe",
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.chat.completions.create({
+        model: "llama-3.1-8b",
+        messages: [{ role: "user", content: "Hi" }],
+        runinfra_unsupported_parameter_probe: "must-use-extra-body",
+      } as Parameters<typeof client.chat.completions.create>[0]),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "Unknown chat completion request field: runinfra_unsupported_parameter_probe",
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.embeddings.create({
+        model: "embedding-model",
+        input: "Hi",
+        runinfra_unsupported_parameter_probe: "must-use-extra-body",
+      } as Parameters<typeof client.embeddings.create>[0]),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "Unknown embedding request field: runinfra_unsupported_parameter_probe",
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.images.generate({
+        model: "image-model",
+        prompt: "Hi",
+        runinfra_unsupported_parameter_probe: "must-use-extra-body",
+      } as Parameters<typeof client.images.generate>[0]),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "Unknown image generation request field: runinfra_unsupported_parameter_probe",
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.audio.speech.create({
+        model: "tts-model",
+        input: "Hi",
+        voice: "alloy",
+        runinfra_unsupported_parameter_probe: "must-use-extra-body",
+      } as Parameters<typeof client.audio.speech.create>[0]),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "Unknown audio speech request field: runinfra_unsupported_parameter_probe",
+    });
+
+    await expect(Promise.resolve().then(() =>
+      client.voice.pipeline.create({
+        audio: new Uint8Array([1, 2, 3]),
+        mimeType: "audio/wav",
+        runinfra_unsupported_parameter_probe: "not-allowed",
+      } as Parameters<typeof client.voice.pipeline.create>[0]),
+    )).rejects.toMatchObject({
+      type: "invalid_request_options",
+      message: "Unknown voice pipeline request field: runinfra_unsupported_parameter_probe",
+    });
+
+    expect(fetcher).not.toHaveBeenCalled();
+
+    await client.responses.create(
+      {
+        model: "llama-3.1-8b",
+        input: "Hi",
+      },
+      {
+        extraBody: {
+          runinfra_unsupported_parameter_probe: "must_error",
+        },
+      },
+    );
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect((fetcher.mock.calls[0]?.[1] as RequestInit).body).toContain(
+      '"runinfra_unsupported_parameter_probe":"must_error"',
+    );
   });
 
   it("rejects extraBody keys for omitted typed request fields before sending", async () => {

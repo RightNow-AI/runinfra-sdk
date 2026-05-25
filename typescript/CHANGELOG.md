@@ -47,6 +47,9 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 - Added a local strict canary row proving explicit JSON `extraBody` extensions
   are serialized deliberately, do not serialize SDK option names, reject typed
   field overrides, and fail closed on multipart paths.
+- Added a local strict canary row proving unknown direct request fields are
+  rejected before network sends and that unsupported JSON body probes must use
+  `extraBody`.
 - Added a local strict canary row proving 429 rate-limit responses map to
   `RateLimitError` with retry-after and request-id metadata.
 - Added a local strict canary row proving 402 insufficient-credits responses

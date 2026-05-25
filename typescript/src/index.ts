@@ -298,6 +298,11 @@ export interface VoicePipelineRequest {
   mimeType?: string;
 }
 
+const VOICE_PIPELINE_REQUEST_KEYS = new Set([
+  "audio",
+  "mimeType",
+]);
+
 export interface VoicePipelineResponse extends RunInfraRequestMetadata {
   object?: string;
   modality?: "voice-pipeline" | string;
@@ -856,6 +861,21 @@ function withValidatedModel<TRequest extends { model: unknown }>(
     ...request,
     model: validateSdkModel(request.model),
   };
+}
+
+function validateRequestFields(
+  request: unknown,
+  allowedKeys: ReadonlySet<string>,
+  label: string,
+): asserts request is Record<string, unknown> {
+  if (!isPlainRecord(request)) {
+    throw invalidRequestOption(`${label} request must be an object`);
+  }
+  for (const key of Object.keys(request)) {
+    if (!allowedKeys.has(key)) {
+      throw invalidRequestOption(`Unknown ${label} request field: ${key}`);
+    }
+  }
 }
 
 function validateNonEmptyStringField(value: unknown, name: string): string {
@@ -1521,6 +1541,7 @@ export class RunInfra {
       request: ChatCompletionRequest,
       requestOptions?: RunInfraRequestOptions,
     ) => {
+      validateRequestFields(request, CHAT_COMPLETION_REQUEST_KEYS, "chat completion");
       const body = withValidatedModel(request);
       validateChatMessages(body.messages);
       return this.request("/chat/completions", {
@@ -1538,6 +1559,7 @@ export class RunInfra {
     };
     this.embeddings = {
       create: (request, requestOptions) => {
+        validateRequestFields(request, EMBEDDING_REQUEST_KEYS, "embedding");
         const body = withValidatedModel(request);
         validateEmbeddingInput(body.input);
         validateEmbeddingResponseOptions(body);
@@ -1550,6 +1572,7 @@ export class RunInfra {
     };
     this.responses = {
       create: ((request: ResponsesCreateRequest, requestOptions?: RunInfraRequestOptions) => {
+        validateRequestFields(request, RESPONSES_CREATE_REQUEST_KEYS, "responses");
         const body = withValidatedModel(request);
         validateResponsesInput(body.input);
         return this.request("/responses", {
@@ -1563,6 +1586,7 @@ export class RunInfra {
     this.audio = {
       speech: {
         create: async (request, requestOptions) => {
+          validateRequestFields(request, SPEECH_REQUEST_KEYS, "audio speech");
           const body = withValidatedModel(request);
           validateNonEmptyStringField(body.input, "input");
           validateSpeechReference(body);
@@ -1610,6 +1634,7 @@ export class RunInfra {
     };
     this.images = {
       generate: (request, requestOptions) => {
+        validateRequestFields(request, IMAGE_GENERATE_REQUEST_KEYS, "image generation");
         const body = withValidatedModel(request);
         validateNonEmptyStringField(body.prompt, "prompt");
         return this.request("/images/generations", {
@@ -1631,6 +1656,7 @@ export class RunInfra {
               "voice pipeline requests require pipelineId or a pipeline-scoped baseURL",
             );
           }
+          validateRequestFields(request, VOICE_PIPELINE_REQUEST_KEYS, "voice pipeline");
           const audio = validateVoicePipelineAudio(request?.audio);
           return this.request("/pipeline", {
             method: "POST",

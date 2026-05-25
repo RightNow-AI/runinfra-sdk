@@ -116,9 +116,13 @@ export const publicSurfaceCoverage = [
       "request.custom_headers.local",
       "request.timeout.local",
       "request.extra_body.local",
+      "request.unknown_fields.local",
     ],
   },
-  { surface: "unsupported body parameter handling", rows: ["request.extra_body.local", "error.body.unsupported_parameter"] },
+  {
+    surface: "unsupported body parameter handling",
+    rows: ["request.extra_body.local", "request.unknown_fields.local", "error.body.unsupported_parameter"],
+  },
   {
     surface: "error mapping",
     rows: [

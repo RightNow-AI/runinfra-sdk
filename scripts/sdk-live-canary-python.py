@@ -662,6 +662,26 @@ def assert_invalid_request_option_error(error: BaseException, label: str) -> Dic
     return {"errorType": getattr(error, "type", None), "errorStatus": getattr(error, "status", None)}
 
 
+def assert_unknown_request_field_rejected(
+    run: Callable[[], Any],
+    calls: List[Any],
+    field: str,
+    label: str,
+) -> Dict[str, Any]:
+    calls_before = len(calls)
+    try:
+        run()
+    except TypeError as error:
+        if field not in str(error):
+            raise AssertionError(f"{label} rejected unknown field with unclear message") from error
+        if len(calls) != calls_before:
+            raise AssertionError(f"{label} sent a request after rejecting unknown direct request field")
+        return {"errorType": "type_error", "errorName": error.__class__.__name__}
+    except BaseException as error:
+        raise AssertionError(f"{label} expected TypeError, got {error.__class__.__name__}") from error
+    raise AssertionError(f"{label} accepted unknown direct request field")
+
+
 def assert_retryable_error(error: BaseException, label: str) -> Dict[str, Any]:
     if not isinstance(error, RunInfraError) or getattr(error, "status", None) != 503:
         raise AssertionError(
@@ -982,6 +1002,7 @@ def main() -> int:
     record("request.custom_headers.local", [], _request_custom_headers_local)
     record("request.timeout.local", [], _request_timeout_local)
     record("request.extra_body.local", [], _request_extra_body_local)
+    record("request.unknown_fields.local", [], _request_unknown_fields_local)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
     record("retry.safety.get.local", [], _retry_safety_get_local)
     record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
@@ -1791,6 +1812,71 @@ def _request_extra_body_local() -> Dict[str, Any]:
             "multipartExtraBody": "absent",
         }
     raise AssertionError("extra_body typed field override unexpectedly succeeded")
+
+
+def _request_unknown_fields_local() -> Dict[str, Any]:
+    field = "runinfra_unknown_direct_probe"
+    local = local_retry_client([
+        local_retry_response(
+            {"id": "resp-local-unknown-fields", "status": "completed", "output": []},
+            200,
+            "req-local-unknown-fields-extra-body",
+        ),
+    ])
+    client = local["client"]
+    calls = local["calls"]
+    checks = [
+        ("responses", lambda: client.responses.create(
+            model="runinfra-local-request-fields-model",
+            input="local unknown request field canary",
+            **{field: "reject"},
+        )),
+        ("chat", lambda: client.chat.completions.create(
+            model="runinfra-local-request-fields-model",
+            messages=[{"role": "user", "content": "local unknown request field canary"}],
+            **{field: "reject"},
+        )),
+        ("embeddings", lambda: client.embeddings.create(
+            model="runinfra-local-embedding-model",
+            input="local unknown request field canary",
+            **{field: "reject"},
+        )),
+        ("images", lambda: client.images.generate(
+            model="runinfra-local-image-model",
+            prompt="local unknown request field canary",
+            **{field: "reject"},
+        )),
+        ("audio.speech", lambda: client.audio.speech.create(
+            model="runinfra-local-tts-model",
+            input="local unknown request field canary",
+            voice="local",
+            **{field: "reject"},
+        )),
+        ("audio.transcriptions", lambda: client.audio.transcriptions.create(
+            model="runinfra-local-asr-model",
+            file=bytes([82, 73, 70, 70]),
+            filename="local-unknown-fields.wav",
+            **{field: "reject"},
+        )),
+        ("voice.pipeline", lambda: client.voice.pipeline.create(
+            audio=bytes([1, 2, 3]),
+            mime_type="audio/wav",
+            **{field: "reject"},
+        )),
+    ]
+    rejected = 0
+    for label, run in checks:
+        assert_unknown_request_field_rejected(run, calls, field, f"request.unknown_fields.local {label}")
+        rejected += 1
+    response = client.responses.create(
+        model="runinfra-local-request-fields-model",
+        input="local extra body still works",
+        extra_body={field: "present"},
+        request_options={"max_retries": 0},
+    )
+    assert_extra_body_json_field(calls[0], field, "present", "request.unknown_fields.local")
+    assert_request_id(response.get("_request_id"), "request.unknown_fields.local")
+    return {"requestId": response.get("_request_id"), "rejected": rejected, "extraBodyField": "present"}
 
 
 def _retry_safety_get_local() -> Dict[str, Any]:

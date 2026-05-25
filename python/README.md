@@ -277,7 +277,7 @@ If the gateway successfully finishes a request but the response body is too larg
 
 `timeout_seconds` must be positive, `max_retries` must be a non-negative integer, and `retry_base_seconds` must be non-negative. Unknown per-request option keys are rejected so typos do not silently disable idempotency, tracing, timeout, or retry behavior. Python request option aliases cannot be mixed; choose either snake_case or camelCase for a given option. Invalid values raise `RunInfraError` with `type == "invalid_request_options"` before any network request is sent.
 
-Python request helpers expose explicit OpenAI-style keyword parameters instead of arbitrary `**kwargs`. For deliberate gateway compatibility probes or newly rolled out gateway fields, pass an `extra_body` mapping on JSON body helpers. `extra_body` is only accepted on JSON body helpers. `extra_body` cannot override typed request fields such as `model`, `input`, or `messages`.
+Python request helpers expose explicit OpenAI-style keyword parameters instead of arbitrary `**kwargs`, so unknown direct request fields fail before any network request is sent. For deliberate gateway compatibility probes or newly rolled out gateway fields, pass an `extra_body` mapping on JSON body helpers. `extra_body` is only accepted on JSON body helpers. `extra_body` cannot override typed request fields such as `model`, `input`, or `messages`.
 
 ## Request validation
 

@@ -41,6 +41,7 @@ export const expectedRows = [
   "request.custom_headers.local",
   "request.timeout.local",
   "request.extra_body.local",
+  "request.unknown_fields.local",
   "error.body.unsupported_parameter",
   "retry.safety.get.local",
   "retry.safety.post.requires_idempotency.local",

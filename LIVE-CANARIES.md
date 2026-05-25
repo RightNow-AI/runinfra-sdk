@@ -218,6 +218,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `request.custom_headers.local`
 - `request.timeout.local`
 - `request.extra_body.local`
+- `request.unknown_fields.local`
 - `error.body.unsupported_parameter`
 - `retry.safety.get.local`
 - `retry.safety.post.requires_idempotency.local`
@@ -315,7 +316,9 @@ also prove timeout options are applied without serializing timeout option names
 into JSON request bodies. Local explicit JSON extra-body rows prove the
 deliberate body-extension escape hatch injects only requested JSON fields,
 does not serialize SDK option names, rejects typed-field overrides, and stays
-out of multipart upload paths.
+out of multipart upload paths. Local unknown-request-field rows prove that
+unknown direct request fields fail before network send, and that deliberate JSON
+extensions still have to use `extraBody` / `extra_body`.
 Webhook signature rows use installed package artifacts and deterministic local
 payloads because they are verification helpers, not live delivery endpoints.
 

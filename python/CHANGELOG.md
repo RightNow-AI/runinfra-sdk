@@ -50,6 +50,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added a local strict canary row proving explicit JSON `extra_body` extensions
   are serialized deliberately, do not serialize SDK option names, reject typed
   field overrides, and stay out of multipart ASR helpers.
+- Added a local strict canary row proving unknown direct request fields are
+  rejected before network sends and that unsupported JSON body probes must use
+  `extra_body`.
 - Added a local strict canary row proving 429 rate-limit responses map to
   `RateLimitError` with `retry_after_seconds` and request-id metadata.
 - Added a local strict canary row proving 402 insufficient-credits responses
