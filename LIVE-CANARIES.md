@@ -157,8 +157,11 @@ leave that list empty.
 and live reports, requires the same candidate source digest, requires the live
 artifact report to include npm, Python wheel, and Python sdist hashes, and
 requires `--artifacts-root`, and recomputes those hashes from the staged
-artifact files before allowing promotion. It fails if either language has skipped or failed rows. It also requires readiness
-`rowCoverageErrors` to be empty and `expectedRows` to match the canonical live canary matrix exactly,
+artifact files before allowing promotion. It fails if either language has
+skipped or failed rows. It also requires readiness `rowCoverageErrors` to be
+empty, readiness `summary.ready` to equal the canonical matrix row count,
+readiness `summary.blocked` to be `0`, and `expectedRows` to match the
+canonical live canary matrix exactly,
 so a shortened self-consistent report cannot satisfy the gate. The report's
 candidate source file count must also match the canonical live-canary source
 file manifest.

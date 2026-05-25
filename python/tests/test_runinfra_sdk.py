@@ -673,6 +673,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Then run the strict live canary matrix against the exact production gateway", readme)
         self.assertIn("candidate.sourceDigestSha256", live_canaries)
         self.assertIn("candidate.artifacts", live_canaries)
+        self.assertIn("readiness `summary.ready` to equal the canonical matrix row count", live_canaries)
+        self.assertIn("readiness `summary.blocked` to be `0`", live_canaries)
         self.assertIn(
             "artifact clean-install gate imports both the prebuilt Python wheel and an",
             live_canaries,
@@ -687,6 +689,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files",
             agent_notes,
         )
+        self.assertIn("readiness summary at all rows ready with zero blocked rows", agent_notes)
         self.assertNotIn("The simplified workflow doesn't run the strict gate scripts", agent_notes)
         self.assertIn("Do not use npm or PyPI tokens", readme)
         self.assertNotIn("pnpm verify:sdk-release", readme)

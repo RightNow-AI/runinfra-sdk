@@ -572,6 +572,7 @@ describe("RunInfra TypeScript SDK", () => {
         status: "ready",
         missing: [],
         rowCoverageErrors: [],
+        summary: { ready: expectedRows.length, blocked: 0 },
         rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
       },
       surfaceCoverage,
@@ -660,6 +661,7 @@ describe("RunInfra TypeScript SDK", () => {
         status: "ready",
         missing: [],
         rowCoverageErrors: [],
+        summary: { ready: expectedRows.length, blocked: 0 },
         rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
       },
       surfaceCoverage,
@@ -742,6 +744,7 @@ describe("RunInfra TypeScript SDK", () => {
         status: "ready",
         missing: [],
         rowCoverageErrors: [],
+        summary: { ready: expectedRows.length, blocked: 0 },
         rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
       },
       surfaceCoverage,
@@ -939,6 +942,7 @@ describe("RunInfra TypeScript SDK", () => {
         status: "ready",
         missing: [],
         rowCoverageErrors: [],
+        summary: { ready: expectedRows.length, blocked: 0 },
         rows: expectedRows.map((name) => ({ name, status: "ready", missing: [] })),
       },
       surfaceCoverage,
@@ -1032,6 +1036,29 @@ describe("RunInfra TypeScript SDK", () => {
         ...readiness,
         readiness: {
           ...readiness.readiness,
+          summary: { ready: expectedRows.length - 1, blocked: 1 },
+        },
+      }, null, 2)}\n`);
+      const mismatchedReadinessSummary = spawnSync(process.execPath, [
+        ...promotionArgs,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(mismatchedReadinessSummary.status).toBe(1);
+      expect(`${mismatchedReadinessSummary.stdout}${mismatchedReadinessSummary.stderr}`).toContain(
+        `readiness summary ready count must be ${expectedRows.length}`,
+      );
+      expect(`${mismatchedReadinessSummary.stdout}${mismatchedReadinessSummary.stderr}`).toContain(
+        "readiness summary blocked count must be 0",
+      );
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
+
+      writeFileSync(readinessPath, `${JSON.stringify({
+        ...readiness,
+        readiness: {
+          ...readiness.readiness,
           rowCoverageErrors: ["readiness requirements missing strict matrix rows: images.generate"],
         },
       }, null, 2)}\n`);
@@ -1046,8 +1073,10 @@ describe("RunInfra TypeScript SDK", () => {
       expect(`${staleReadinessCoverage.stdout}${staleReadinessCoverage.stderr}`).toContain(
         "readiness report row coverage errors must be empty",
       );
-      expect(readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8"))
-        .toContain("requires readiness\n`rowCoverageErrors` to be empty");
+      const liveCanaryDocs = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+      expect(liveCanaryDocs).toContain("requires readiness `rowCoverageErrors` to be");
+      expect(liveCanaryDocs).toContain("readiness `summary.ready` to equal the canonical matrix row count");
+      expect(liveCanaryDocs).toContain("readiness `summary.blocked` to be `0`");
 
       writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
 
@@ -2442,6 +2471,8 @@ class RunInfra:
     expect(liveCanaries).toContain("candidate.sourceDigestSha256");
     expect(liveCanaries).toContain("candidate.artifacts");
     expect(liveCanaries).toContain("canonical live canary matrix");
+    expect(liveCanaries).toContain("readiness `summary.ready` to equal the canonical matrix row count");
+    expect(liveCanaries).toContain("readiness `summary.blocked` to be `0`");
     expect(liveCanaries).toContain("artifact clean-install gate imports both the prebuilt Python wheel and an");
     expect(liveCanaries).toContain("sdist-built wheel");
     expect(liveCanaries).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
@@ -2450,6 +2481,7 @@ class RunInfra:
     expect(agentNotes).toContain("Clean artifact install/import now exercises the npm tarball, Python wheel, and");
     expect(agentNotes).toContain("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk");
     expect(agentNotes).toContain("the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files");
+    expect(agentNotes).toContain("readiness summary at all rows ready with zero blocked rows");
     expect(agentNotes).not.toContain("The simplified workflow doesn't run the strict gate scripts");
     expect(readme).toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");

@@ -247,7 +247,8 @@ Do not graduate image, TTS, ASR, or voice pipeline out of experimental status
 without strict TypeScript + Python live-canary reports for the exact production
 gateway, models, workspace key, and pipeline key. Strict reports must keep
 TS/Python row parity, redact custom base URLs, drain final streams to terminal
-events, and prove idempotency replay with explicit gateway evidence.
+events, prove idempotency replay with explicit gateway evidence, and keep the
+readiness summary at all rows ready with zero blocked rows.
 
 6. Watch:
    ```

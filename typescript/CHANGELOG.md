@@ -31,6 +31,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   `response_format` fields.
 - Hardened parent live-canary parity so strict reports fail when child reports
   contain failed/skipped rows or inconsistent summary counts.
+- Hardened promotion readiness verification so forged or stale readiness
+  summaries cannot contradict the strict readiness rows.
 - Extended package leakage scanners to reject PyPI/Twine and pip credential
   config material such as `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini`.
 

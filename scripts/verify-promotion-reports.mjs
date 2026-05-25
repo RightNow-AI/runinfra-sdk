@@ -312,10 +312,30 @@ function readinessErrors(report) {
   if (!sameStringArray(rowNames, expectedRows)) {
     reportErrors.push("readiness rows must exactly match expectedRows");
   }
+  const counts = { ready: 0, blocked: 0 };
   for (const row of rows) {
+    if (row?.status === "ready" || row?.status === "blocked") {
+      counts[row.status] += 1;
+    }
     if (row?.status !== "ready") reportErrors.push(`readiness row ${String(row?.name ?? "<unknown>")} must be ready`);
     if (!Array.isArray(row?.missing) || row.missing.length !== 0) {
       reportErrors.push(`readiness row ${String(row?.name ?? "<unknown>")} missing list must be empty`);
+    }
+  }
+  if (!report?.readiness?.summary || typeof report.readiness.summary !== "object") {
+    reportErrors.push("readiness summary must be present");
+  } else {
+    if (report.readiness.summary.ready !== counts.ready) {
+      reportErrors.push("readiness summary ready count must match ready rows");
+    }
+    if (report.readiness.summary.blocked !== counts.blocked) {
+      reportErrors.push("readiness summary blocked count must match blocked rows");
+    }
+    if (report.readiness.summary.ready !== expectedRows.length) {
+      reportErrors.push(`readiness summary ready count must be ${expectedRows.length}`);
+    }
+    if (report.readiness.summary.blocked !== 0) {
+      reportErrors.push("readiness summary blocked count must be 0");
     }
   }
   if (!Array.isArray(report?.reports) || report.reports.length !== 0) {
