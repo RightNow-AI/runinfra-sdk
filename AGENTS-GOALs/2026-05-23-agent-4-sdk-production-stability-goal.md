@@ -3140,6 +3140,54 @@ Current blockers:
 4. No push, deploy, publish, or paid canary provisioning was performed in this
    checkpoint.
 
+## Checkpoint: 2026-05-25 04:16 Asia/Amman
+
+Current state: still not GA, not deployed, and not published. Local package
+artifact evidence was refreshed after the RunPipe local-main merge checkpoint.
+
+Fresh local artifact verification:
+
+- `pnpm --dir typescript build` passed.
+- `pnpm --dir typescript pack --pack-destination .` passed and produced
+  `typescript\runinfra-sdk-0.1.4.tgz`.
+- `python -m build python` passed and produced
+  `python\dist\runinfra-0.1.4-py3-none-any.whl` and
+  `python\dist\runinfra-0.1.4.tar.gz`.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz`
+  passed.
+- `python scripts\verify-python-package.py python\dist\runinfra-0.1.4-py3-none-any.whl python\dist\runinfra-0.1.4.tar.gz`
+  passed.
+- `python -m twine check python\dist\runinfra-0.1.4-py3-none-any.whl python\dist\runinfra-0.1.4.tar.gz`
+  passed.
+- `node scripts\verify-clean-installs.mjs --package typescript --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz`
+  passed.
+- `node scripts\verify-clean-installs.mjs --package python --mode artifact --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz`
+  passed.
+- `node scripts\verify-workflow-policy.mjs` passed, including OIDC/trusted
+  publishing, provenance, exact promoted artifact use, dry-run defaults, branch
+  locks, and pinned action checks.
+- `node scripts\verify-version-sync.mjs` passed for SDK version `0.1.4`.
+- `git diff --check` passed.
+
+Fresh public registry state:
+
+- `npm view @runinfra/sdk versions --json --registry https://registry.npmjs.org/`
+  returned versions through `0.1.3` only.
+- `python -m pip index versions runinfra` returned latest `0.1.3`.
+
+Current blockers:
+
+1. Production `api.runinfra.ai` still has not picked up the locally merged
+   RunPipe gateway unsupported-parameter rejection.
+2. Multimodal/idempotency strict rows still need scoped live canary
+   models/fixtures/env inputs.
+3. npm/PyPI `0.1.4` is not published yet. Keep publish blocked until production
+   source canaries, strict artifact live canaries, registry artifact scans,
+   clean registry installs, CodeQL/security checks, and independent review are
+   green.
+4. No push, deploy, publish, or paid canary provisioning was performed in this
+   checkpoint.
+
 Checkpoint timestamp: 2026-05-25 04:01 +03:00.
 
 ## Checkpoint: 2026-05-25 04:15 Asia/Amman
