@@ -765,6 +765,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             ".env.local",
             "package/.env.local",
             "/tmp/project/.env.local",
+            "sourceURL=runinfra-sdk://dist/index.py",
         ]
 
         for sample in samples:

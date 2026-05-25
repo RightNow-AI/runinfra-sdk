@@ -18,6 +18,7 @@ export const forbiddenContentPatterns = [
   { label: "Google API key", regex: /AIza[0-9A-Za-z_-]{35}/u },
   { label: "Slack token", regex: /xox[baprs]-[A-Za-z0-9-]{20,}/u },
   { label: "source map reference", regex: /sourceMappingURL/u },
+  { label: "source URL reference", regex: /sourceURL/u },
   { label: "inline source map content", regex: /sourcesContent/u },
   { label: "webpack source URL", regex: /webpack:\/\//u },
   { label: "npm config file", regex: /\.npmrc/u },

@@ -2863,6 +2863,7 @@ class RunInfra:
       ".env.local",
       "package/.env.local",
       "/tmp/project/.env.local",
+      "sourceURL=runinfra-sdk://dist/index.js",
     ];
 
     for (const sample of samples) {
