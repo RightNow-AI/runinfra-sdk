@@ -307,3 +307,8 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Verified secure workflow policy and dry-run dispatch locally: `node scripts\verify-workflow-policy.mjs` passed all OIDC, trusted-publisher, branch lock, SHA-pinning, no-token, artifact, clean-install, version-sync, and strict-promotion checks; `node scripts\verify-publish-dispatch.mjs --dry-run --version 0.1.4` passed.
 - This is read-only release-gate evidence only. It does not replace strict live artifact canaries, which remain blocked/skipped without a loaded live `RUNINFRA_*` canary environment.
 - No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T15:46:27+03:00 - Agent 4
+- Checked canonical registry availability read-only. `node scripts\verify-clean-installs.mjs --package both --mode registry --version 0.1.4` failed at registry preflight because npm `@runinfra/sdk@0.1.4` and PyPI `runinfra==0.1.4` are not available.
+- Confirmed visible registry versions: `npm view @runinfra/sdk versions --json` returned `0.1.0` through `0.1.3`; `python -m pip index versions runinfra` reported latest `0.1.3`. Current local SDK version remains `0.1.4`, so the current local candidate has not been published to canonical registries.
+- This is a publish-state gap, not a local package build gap. Do not publish until strict live artifact canaries pass and the user gives explicit current publish approval.
