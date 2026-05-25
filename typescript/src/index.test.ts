@@ -2265,6 +2265,13 @@ class RunInfra:
     expect(manifest.sourceDigestFileLabels).not.toContain("typescript/dist/index.d.ts");
   });
 
+  it("includes shipped SDK READMEs in live promotion source digests", async () => {
+    const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
+
+    expect(manifest.sourceDigestFileLabels).toContain("typescript/README.md");
+    expect(manifest.sourceDigestFileLabels).toContain("python/README.md");
+  });
+
   it("uses the canonical live canary source manifest for source digests", () => {
     const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
 
