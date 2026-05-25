@@ -103,3 +103,8 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Verified `git diff --check HEAD~1..HEAD` in the isolated gateway worktree: passed.
 - Current gateway candidate branch is clean and ahead of `origin/main` by 11 commits. It is ready for review/push/deploy approval as the local fix candidate for the SDK live-canary `error.body.unsupported_parameter` blocker, but it has not been pushed or deployed by Agent 4 in this checkpoint.
 - SDK GA remains blocked until that production gateway behavior is live, strict multimodal/idempotency canary inputs exist and pass, artifact and registry install/import gates pass, and independent review is clean.
+
+### 2026-05-25T13:25:48+03:00 - Agent 4
+- Ran the SDK GitHub security gate. The first `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` attempt failed with `401 Unauthorized` because the process did not have a GitHub token.
+- Confirmed `gh auth status` had an authenticated CLI session, then reran the verifier with the CLI token supplied through `GITHUB_TOKEN` without printing it.
+- Verified `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk`: passed, with no open high/critical code-scanning alerts reported for `RightNow-AI/runinfra-sdk`.
