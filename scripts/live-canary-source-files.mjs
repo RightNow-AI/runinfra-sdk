@@ -1,9 +1,11 @@
 export const sourceDigestFileLabels = [
   "typescript/package.json",
   "typescript/README.md",
+  "typescript/CHANGELOG.md",
   "typescript/src/index.ts",
   "python/pyproject.toml",
   "python/README.md",
+  "python/CHANGELOG.md",
   "python/runinfra/__init__.py",
   "scripts/run-sdk-live-canaries.mjs",
   "scripts/canary-report-base-url.mjs",
