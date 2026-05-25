@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { productionBaseURL } from "./canary-report-base-url.mjs";
 import { expectedRows as canonicalExpectedRows } from "./live-canary-matrix.mjs";
@@ -11,6 +12,7 @@ const livePath = optionValue("--live") ?? "artifacts/sdk/live-canary.json";
 const expectedSdkVersion = readExpectedSdkVersion();
 const canonicalSurfaceCoverageSurfaces = canonicalPublicSurfaceCoverage.map((entry) => entry.surface);
 const canonicalSourceFileCount = canonicalSourceDigestFileLabels.length;
+const canonicalSourceDigestSha256 = currentSourceDigestSha256();
 const errors = [];
 
 const readiness = readReport(readinessPath, "readiness report");
@@ -46,6 +48,17 @@ function readExpectedSdkVersion() {
     throw new Error("typescript/package.json is missing a package version.");
   }
   return packageJson.version;
+}
+
+function currentSourceDigestSha256() {
+  const digest = createHash("sha256");
+  for (const label of canonicalSourceDigestFileLabels) {
+    digest.update(label);
+    digest.update("\0");
+    digest.update(readFileSync(new URL(`../${label}`, import.meta.url)));
+    digest.update("\0");
+  }
+  return digest.digest("hex");
 }
 
 function readReport(path, label) {
@@ -153,6 +166,8 @@ function candidateErrors(label, report, options) {
   }
   if (!isSha256(candidate.sourceDigestSha256)) {
     reportErrors.push(`${label} candidate sourceDigestSha256 must be a SHA-256 hex digest`);
+  } else if (candidate.sourceDigestSha256 !== canonicalSourceDigestSha256) {
+    reportErrors.push(`${label} candidate source digest must match the current canonical promotion source digest`);
   }
   if (!Number.isInteger(candidate.sourceFileCount) || candidate.sourceFileCount <= 0) {
     reportErrors.push(`${label} candidate sourceFileCount must be a positive integer`);

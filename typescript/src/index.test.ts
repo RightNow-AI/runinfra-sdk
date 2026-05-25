@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,6 +44,21 @@ function jsonReadFailureResponse(message: string, init: ResponseInit = {}): Resp
       ...init,
     },
   );
+}
+
+async function currentPromotionSourceIdentity(): Promise<{ sourceDigestSha256: string; sourceFileCount: number }> {
+  const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
+  const digest = createHash("sha256");
+  for (const label of manifest.sourceDigestFileLabels) {
+    digest.update(label);
+    digest.update("\0");
+    digest.update(readFileSync(new URL(`../../${label}`, import.meta.url)));
+    digest.update("\0");
+  }
+  return {
+    sourceDigestSha256: digest.digest("hex"),
+    sourceFileCount: manifest.sourceDigestFileLabels.length,
+  };
 }
 
 interface TarEntry {
@@ -870,17 +885,15 @@ describe("RunInfra TypeScript SDK", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-promotion-reports-"));
     const readinessPath = join(tmp, "readiness.json");
     const livePath = join(tmp, "live.json");
-    const digest = "a".repeat(64);
+    const identity = await currentPromotionSourceIdentity();
+    const digest = identity.sourceDigestSha256;
     const matrix = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
     const coverageManifest = await import("../../scripts/live-canary-surface-coverage.mjs") as {
       publicSurfaceCoverage: Array<{ surface: string }>;
     };
-    const sourceManifest = await import("../../scripts/live-canary-source-files.mjs") as {
-      sourceDigestFileLabels: string[];
-    };
     const expectedRows = matrix.expectedRows;
     const surfaces = coverageManifest.publicSurfaceCoverage.map((entry) => entry.surface);
-    const sourceFileCount = sourceManifest.sourceDigestFileLabels.length;
+    const sourceFileCount = identity.sourceFileCount;
     const liveArtifacts = [
       { name: "npm", fileName: `runinfra-sdk-${RUNINFRA_SDK_VERSION}.tgz`, sha256: "b".repeat(64) },
       { name: "pythonWheel", fileName: `runinfra-${RUNINFRA_SDK_VERSION}-py3-none-any.whl`, sha256: "c".repeat(64) },
@@ -1108,6 +1121,31 @@ describe("RunInfra TypeScript SDK", () => {
 
       expect(nonStrictChild.status).toBe(1);
       expect(`${nonStrictChild.stdout}${nonStrictChild.stderr}`).toContain("child report must be strict");
+
+      const staleSameCountDigest = digest === "a".repeat(64) ? "b".repeat(64) : "a".repeat(64);
+      writeFileSync(readinessPath, `${JSON.stringify({
+        ...readiness,
+        candidate: { ...readiness.candidate, sourceDigestSha256: staleSameCountDigest },
+      }, null, 2)}\n`);
+      writeFileSync(livePath, `${JSON.stringify({
+        ...live,
+        candidate: { ...live.candidate, sourceDigestSha256: staleSameCountDigest },
+      }, null, 2)}\n`);
+      const staleSameCount = spawnSync(process.execPath, [
+        "../scripts/verify-promotion-reports.mjs",
+        "--readiness",
+        readinessPath,
+        "--live",
+        livePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(staleSameCount.status).toBe(1);
+      expect(`${staleSameCount.stdout}${staleSameCount.stderr}`).toContain(
+        "candidate source digest must match the current canonical promotion source digest",
+      );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -2350,6 +2388,26 @@ class RunInfra:
     const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
 
     expect(manifest.sourceDigestFileLabels).toContain("scripts/live-canary-model-discovery.mjs");
+  });
+
+  it("includes production publish gate scripts and workflows in live promotion source digests", async () => {
+    const manifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
+
+    expect(manifest.sourceDigestFileLabels).toEqual(expect.arrayContaining([
+      "scripts/verify-promotion-reports.mjs",
+      "scripts/verify-promoted-artifacts.mjs",
+      "scripts/verify-npm-package.mjs",
+      "scripts/verify-python-package.py",
+      "scripts/verify-clean-installs.mjs",
+      "scripts/clean-install-policy.mjs",
+      "scripts/registry-version-preflight.mjs",
+      "scripts/verify-version-sync.mjs",
+      "scripts/verify-publish-dispatch.mjs",
+      "scripts/verify-workflow-policy.mjs",
+      "scripts/workflow-policy.mjs",
+      ".github/workflows/ci.yml",
+      ".github/workflows/publish.yml",
+    ]));
   });
 
   it("builds redacted live model-discovery candidate reports from catalog metadata", async () => {
