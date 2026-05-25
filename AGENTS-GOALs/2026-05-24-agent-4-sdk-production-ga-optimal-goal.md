@@ -115,3 +115,8 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Existing template inventory includes the LLM canary template plus stock SGLang, TEI embedding, and vLLM templates. No pods are currently listed.
 - No existing RunPod endpoint was found for embeddings, images, TTS, ASR, or voice pipeline canary coverage in this read-only check.
 - Strict multimodal canaries therefore still need either approved provisioning of scoped canary targets or already-deployed RunPipe workspace models that expose those modalities before GA can be claimed.
+
+### 2026-05-25T13:27:17+03:00 - Agent 4
+- Verified `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`: passed. The report listed 22 declared public SDK surfaces, no uncovered surfaces, and no uncovered strict matrix rows.
+- Verified `node scripts\verify-workflow-policy.mjs`: passed all publish and CI policy checks, including OIDC trusted publishing, no long-lived registry tokens, strict promotion reports, CodeQL gate wiring, exact promoted artifact use, branch lock to main, default dry-run, version confirmation, and SHA-pinned workflow actions.
+- Verified `node scripts\secret-scan-policy.mjs`: passed with exit code 0.
