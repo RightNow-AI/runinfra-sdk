@@ -87,6 +87,7 @@ export interface ChatCompletionStreamEvent extends Record<string, unknown> {
 
 export interface RunInfraRequestMetadata extends Record<string, unknown> {
   _request_id?: string;
+  _idempotent_replay?: boolean;
 }
 
 export interface ChatCompletionResponse extends RunInfraRequestMetadata {
@@ -132,15 +133,9 @@ export interface ResponsesCreateRequest {
   stream?: boolean;
   temperature?: number;
   top_p?: number;
-  metadata?: Record<string, unknown>;
-  store?: boolean;
-  include?: string[];
-  reasoning?: Record<string, unknown>;
   tools?: Array<Record<string, unknown>>;
   tool_choice?: string | Record<string, unknown>;
   response_format?: Record<string, unknown>;
-  previous_response_id?: string;
-  user?: string;
 }
 
 const RESPONSES_CREATE_REQUEST_KEYS = new Set([
@@ -151,15 +146,9 @@ const RESPONSES_CREATE_REQUEST_KEYS = new Set([
   "stream",
   "temperature",
   "top_p",
-  "metadata",
-  "store",
-  "include",
-  "reasoning",
   "tools",
   "tool_choice",
   "response_format",
-  "previous_response_id",
-  "user",
 ]);
 
 export interface ResponsesStreamEvent extends Record<string, unknown> {
@@ -812,6 +801,14 @@ function normalizeBaseURL(baseURL: string, pipelineId?: string | null): string {
   return `${trimmed}/${encodeURIComponent(validatedPipelineId)}`;
 }
 
+function baseUrlLooksPipelineScoped(baseURL: string): boolean {
+  const parsed = new URL(baseURL);
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  const lastV1 = segments.lastIndexOf("v1");
+  if (lastV1 >= 0) return segments.length > lastV1 + 1;
+  return segments.length > 0;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1359,22 +1356,20 @@ async function raiseForStatus(response: Response): Promise<void> {
 
 async function parseJsonResponse<TResponse>(response: Response): Promise<TResponse> {
   const requestId = response.headers.get("x-request-id") ?? undefined;
+  const idempotentReplay =
+    response.headers.get("x-runinfra-idempotent-replay")?.trim().toLowerCase() === "true";
   let payload: unknown;
   try {
     payload = await response.json();
   } catch (error) {
     throw new ResponseBodyReadError(normalizeTransportError(error, requestId));
   }
-  if (
-      requestId &&
-      payload &&
-      typeof payload === "object" &&
-      !Array.isArray(payload)
-  ) {
-    return { ...(payload as Record<string, unknown>), _request_id: requestId } as TResponse;
-  }
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-    return payload as TResponse;
+    return {
+      ...(payload as Record<string, unknown>),
+      ...(requestId ? { _request_id: requestId } : {}),
+      ...(idempotentReplay ? { _idempotent_replay: true } : {}),
+    } as TResponse;
   }
   throw new RunInfraError(
     `RunInfra JSON response shape error: expected object, got ${jsonPayloadKind(payload)}.`,
@@ -1481,6 +1476,7 @@ export class RunInfra {
 
   private readonly apiKey: string;
   private readonly baseURL: string;
+  private readonly hasPipelineScope: boolean;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly retryBaseMs: number;
@@ -1506,10 +1502,12 @@ export class RunInfra {
       );
     }
     this.apiKey = validatedApiKey;
-    this.baseURL = normalizeBaseURL(
+    const normalizedBaseURL = normalizeBaseURL(
       options.baseURL ?? "https://api.runinfra.ai/v1",
       options.pipelineId,
     );
+    this.baseURL = normalizedBaseURL;
+    this.hasPipelineScope = Boolean(options.pipelineId) || baseUrlLooksPipelineScoped(normalizedBaseURL);
     this.timeoutMs = validatePositiveNumber(options.timeoutMs ?? 120_000, "timeoutMs");
     this.maxRetries = validateNonNegativeInteger(options.maxRetries ?? 2, "maxRetries");
     this.retryBaseMs = validateNonNegativeNumber(options.retryBaseMs ?? 250, "retryBaseMs");
@@ -1627,6 +1625,11 @@ export class RunInfra {
     this.voice = {
       pipeline: {
         create: (request, requestOptions) => {
+          if (!this.hasPipelineScope) {
+            throw invalidRequestOption(
+              "voice pipeline requests require pipelineId or a pipeline-scoped baseURL",
+            );
+          }
           const audio = validateVoicePipelineAudio(request?.audio);
           return this.request("/pipeline", {
             method: "POST",

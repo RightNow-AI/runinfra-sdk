@@ -17,6 +17,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Replaced arbitrary `**kwargs` on public request helpers with explicit
   OpenAI-style keyword parameters plus an `extra_body` mapping for deliberate
   gateway compatibility probes.
+- Kept `responses.create()` keyword parameters limited to the
+  gateway-supported Responses compatibility adapter fields; stateful OpenAI
+  Responses fields remain unsupported unless the gateway adds them.
 - Limited `extra_body` to JSON body helpers; multipart ASR uses explicit typed
   parameters only, matching the TypeScript SDK's extension posture.
 

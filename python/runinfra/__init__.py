@@ -27,6 +27,7 @@ _WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH = 8192
 
 class RunInfraRequestMetadata(TypedDict, total=False):
     _request_id: str
+    _idempotent_replay: bool
 
 
 class ModelObject(RunInfraRequestMetadata, total=False):
@@ -344,6 +345,16 @@ def _normalize_base_url(base_url: str, pipeline_id: Optional[str]) -> str:
     if _base_url_already_has_pipeline_id(base, validated_pipeline_id):
         return base
     return f"{base}/{urllib.parse.quote(validated_pipeline_id, safe='')}"
+
+
+def _base_url_looks_pipeline_scoped(base_url: str) -> bool:
+    parsed = urllib.parse.urlparse(base_url)
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    try:
+        last_v1 = len(segments) - 1 - list(reversed(segments)).index("v1")
+    except ValueError:
+        return len(segments) > 0
+    return len(segments) > last_v1 + 1
 
 
 def _default_transport(timeout: float) -> Transport:
@@ -850,6 +861,13 @@ def _request_id_from_headers(headers: Mapping[str, str]) -> Optional[str]:
     return None
 
 
+def _idempotent_replay_from_headers(headers: Mapping[str, str]) -> bool:
+    for key, value in headers.items():
+        if key.lower() == "x-runinfra-idempotent-replay":
+            return value.strip().lower() == "true"
+    return False
+
+
 def _error_from_response(response: RunInfraResponse) -> RunInfraError:
     message = f"RunInfra request failed with status {response.status}"
     error_type = "api_error"
@@ -899,9 +917,12 @@ def _json_response(response: RunInfraResponse) -> Any:
     payload = response.json()
     if isinstance(payload, dict):
         request_id = _request_id_from_headers(response.headers)
+        metadata: Dict[str, Any] = {}
         if request_id:
-            return {**payload, "_request_id": request_id}
-        return payload
+            metadata["_request_id"] = request_id
+        if _idempotent_replay_from_headers(response.headers):
+            metadata["_idempotent_replay"] = True
+        return {**payload, **metadata} if metadata else payload
     request_id = _request_id_from_headers(response.headers)
     raise RunInfraError(
         f"RunInfra JSON response shape error: expected object, got {_json_payload_kind(payload)}.",
@@ -1001,12 +1022,14 @@ class _Requester:
         *,
         api_key: str,
         base_url: str,
+        pipeline_scoped: bool,
         transport: Transport,
         max_retries: int,
         retry_base_seconds: float,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
+        self.pipeline_scoped = pipeline_scoped
         self.transport = transport
         self.max_retries = max_retries
         self.retry_base_seconds = retry_base_seconds
@@ -1209,15 +1232,9 @@ class _Responses:
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
-        metadata: Optional[Mapping[str, object]] = None,
-        store: Optional[bool] = None,
-        include: Optional[Sequence[str]] = None,
-        reasoning: Optional[Mapping[str, object]] = None,
         tools: Optional[Sequence[Mapping[str, object]]] = None,
         tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
         response_format: Optional[Mapping[str, object]] = None,
-        previous_response_id: Optional[str] = None,
-        user: Optional[str] = None,
         request_options: Optional[Mapping[str, Any]] = None,
         extra_body: Optional[Mapping[str, object]] = None,
     ) -> Union[ResponsesCreateResponse, RunInfraStream]:
@@ -1235,15 +1252,9 @@ class _Responses:
                 "temperature": temperature,
                 "top_p": top_p,
                 "max_output_tokens": max_output_tokens,
-                "metadata": metadata,
-                "store": store,
-                "include": include,
-                "reasoning": reasoning,
                 "tools": tools,
                 "tool_choice": tool_choice,
                 "response_format": response_format,
-                "previous_response_id": previous_response_id,
-                "user": user,
             },
             extra_body,
         )
@@ -1520,6 +1531,10 @@ class _VoicePipeline:
         mime_type: str = "audio/wav",
         request_options: Optional[Mapping[str, Any]] = None,
     ) -> VoicePipelineResponse:
+        if not self._requester.pipeline_scoped:
+            raise _invalid_request_option(
+                "voice pipeline requests require pipeline_id or a pipeline-scoped base_url"
+            )
         return _json_response(self._requester.request(
             "/pipeline",
             body=_validated_audio_bytes(audio),
@@ -1563,9 +1578,11 @@ class RunInfra:
         )
         if transport is not None and not callable(transport):
             raise _invalid_request_option("transport must be callable")
+        normalized_base_url = _normalize_base_url(base_url, pipeline_id)
         requester = _Requester(
             api_key=api_key,
-            base_url=_normalize_base_url(base_url, pipeline_id),
+            base_url=normalized_base_url,
+            pipeline_scoped=pipeline_id is not None or _base_url_looks_pipeline_scoped(normalized_base_url),
             transport=transport if transport is not None else _default_transport(timeout_seconds),
             max_retries=max_retries,
             retry_base_seconds=retry_base_seconds,

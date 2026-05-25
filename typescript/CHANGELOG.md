@@ -18,8 +18,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   parameters `n`, `size`, `response_format`, `quality`, `style`, and `user`,
   matching the documented SDK surface and Python keyword parameters.
 - Added explicit TypeScript request typing for OpenAI-style chat completions
-  and Responses adapter parameters that were already pass-through compatible
-  at runtime.
+  and the gateway-supported Responses adapter parameters that were already
+  pass-through compatible at runtime.
 - Added explicit TypeScript request typing for auxiliary embedding and audio
   parameters `user`, `speed`, and `temperature`, matching the Python SDK.
 - Closed TypeScript request body interfaces around typed fields and added

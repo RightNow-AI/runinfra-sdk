@@ -40,7 +40,7 @@ const idempotencyEvidenceFieldPattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A
 
 function idempotencyEvidenceFields() {
   const fields = (env("RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD") ??
-    "idempotency_replayed,_idempotency_replayed,idempotency.replayed,replay.replayed")
+    "idempotency_replayed,_idempotency_replayed,_idempotent_replay,idempotency.replayed,replay.replayed")
     .split(",")
     .map((field) => field.trim())
     .filter(Boolean);

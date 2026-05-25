@@ -294,7 +294,8 @@ payloads because they are verification helpers, not live delivery endpoints.
 The idempotency row is intentionally strict. It does not pass merely because
 two calls returned successfully. The second response must expose replay
 evidence in one of these default fields: `idempotency_replayed`,
-`_idempotency_replayed`, `idempotency.replayed`, or `replay.replayed`. Override
+`_idempotency_replayed`, `_idempotent_replay`, `idempotency.replayed`, or
+`replay.replayed`. Override
 the field list with `RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD` only when the
 gateway exposes equivalent replay evidence under a different response path.
 

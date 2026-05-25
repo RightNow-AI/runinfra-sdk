@@ -630,7 +630,7 @@ def idempotency_evidence_fields() -> List[str]:
         field.strip()
         for field in (
             env("RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD")
-            or "idempotency_replayed,_idempotency_replayed,idempotency.replayed,replay.replayed"
+            or "idempotency_replayed,_idempotency_replayed,_idempotent_replay,idempotency.replayed,replay.replayed"
         ).split(",")
         if field.strip()
     ]

@@ -1936,17 +1936,21 @@ class RunInfra:
     for (const field of [
       "temperature?: number;",
       "top_p?: number;",
+      "tools?: Array<Record<string, unknown>>;",
+      "tool_choice?: string | Record<string, unknown>;",
+      "response_format?: Record<string, unknown>;",
+    ]) {
+      expect(responsesRequest).toContain(field);
+    }
+    for (const unsupportedField of [
       "metadata?: Record<string, unknown>;",
       "store?: boolean;",
       "include?: string[];",
       "reasoning?: Record<string, unknown>;",
-      "tools?: Array<Record<string, unknown>>;",
-      "tool_choice?: string | Record<string, unknown>;",
-      "response_format?: Record<string, unknown>;",
       "previous_response_id?: string;",
       "user?: string;",
     ]) {
-      expect(responsesRequest).toContain(field);
+      expect(responsesRequest).not.toContain(unsupportedField);
     }
 
     expect(readme).toContain("LLM pass-through options are typed for parity");
@@ -5013,29 +5017,35 @@ with open(report, "w", encoding="utf-8") as handle:
       "prompt must be a non-empty string",
     );
     await expectInvalidPayload(
-      () => client.responses.create({
-        model: "llama",
-        input: "Hi",
-        metadata: { value: Number.NaN },
-      }),
+      () => client.responses.create(
+        {
+          model: "llama",
+          input: "Hi",
+        },
+        { extraBody: { metadata: { value: Number.NaN } } },
+      ),
       "JSON request body must be JSON-serializable and contain only finite numbers",
     );
     await expectInvalidPayload(
-      () => client.responses.create({
-        model: "llama",
-        input: "Hi",
-        metadata: BigInt(1) as unknown,
-      }),
+      () => client.responses.create(
+        {
+          model: "llama",
+          input: "Hi",
+        },
+        { extraBody: { metadata: BigInt(1) as unknown } },
+      ),
       "JSON request body must be JSON-serializable and contain only finite numbers",
     );
     const cyclicArray: unknown[] = [];
     cyclicArray.push(cyclicArray);
     await expectInvalidPayload(
-      () => client.responses.create({
-        model: "llama",
-        input: "Hi",
-        metadata: cyclicArray,
-      }),
+      () => client.responses.create(
+        {
+          model: "llama",
+          input: "Hi",
+        },
+        { extraBody: { metadata: cyclicArray } },
+      ),
       "JSON request body must be JSON-serializable and contain only finite numbers",
     );
 
@@ -5747,7 +5757,12 @@ with open(report, "w", encoding="utf-8") as handle:
     const fetcher = vi.fn().mockResolvedValue(
       jsonResponse(
         { object: "list", data: [] },
-        { headers: { "x-request-id": "req-server-123" } },
+        {
+          headers: {
+            "x-request-id": "req-server-123",
+            "x-runinfra-idempotent-replay": "true",
+          },
+        },
       ),
     );
     const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher });
@@ -5755,6 +5770,7 @@ with open(report, "w", encoding="utf-8") as handle:
     await expect(client.models.list()).resolves.toMatchObject({
       object: "list",
       _request_id: "req-server-123",
+      _idempotent_replay: true,
     });
   });
 
@@ -6608,6 +6624,29 @@ with open(report, "w", encoding="utf-8") as handle:
     );
     const body = (fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body;
     expect(new Uint8Array(body as ArrayBuffer)).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it("rejects voice pipeline calls without a pipeline-scoped client before sending", async () => {
+    const fetcher = vi.fn();
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+    });
+
+    let caught: unknown;
+    try {
+      client.voice.pipeline.create({
+        audio: new Uint8Array([1, 2, 3]),
+        mimeType: "audio/wav",
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({
+      type: "invalid_request_options",
+      message: "voice pipeline requests require pipelineId or a pipeline-scoped baseURL",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("does not expose unshipped webhook delivery helpers on the public runtime surface", () => {

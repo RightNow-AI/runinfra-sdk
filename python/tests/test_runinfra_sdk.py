@@ -1132,6 +1132,21 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                     {parameter.kind for parameter in signature.parameters.values()},
                 )
 
+    def test_responses_signature_exposes_only_gateway_supported_adapter_fields(self):
+        client = RunInfra(api_key="sk-ri-test", transport=RecordingTransport())
+        signature = inspect.signature(client.responses.create)
+
+        for name in [
+            "metadata",
+            "store",
+            "include",
+            "reasoning",
+            "previous_response_id",
+            "user",
+        ]:
+            with self.subTest(name=name):
+                self.assertNotIn(name, signature.parameters)
+
     def test_runtime_package_source_does_not_define_kwargs_parameters(self):
         source_path = Path(runinfra.__file__).resolve()
         source = source_path.read_text()
@@ -1374,6 +1389,18 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertEqual(transport.calls[0].headers["Accept"], "application/json")
         self.assertEqual(transport.calls[0].headers["Idempotency-Key"], "idem-voice")
 
+    def test_voice_pipeline_requires_pipeline_scoped_client_before_sending(self):
+        transport = RecordingTransport(json_response({}))
+        client = RunInfra(api_key="sk-ri-test", transport=transport)
+
+        with self.assertRaisesRegex(
+            RunInfraError,
+            "voice pipeline requests require pipeline_id or a pipeline-scoped base_url",
+        ):
+            client.voice.pipeline.create(audio=b"\x01\x02\x03", mime_type="audio/wav")
+
+        self.assertEqual(transport.calls, [])
+
     def test_rejects_blank_inference_model_ids_before_sending(self):
         cases = (
             lambda client: client.chat.completions.create(
@@ -1483,7 +1510,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                 lambda client: client.responses.create(
                     model="llama",
                     input="Hi",
-                    metadata={"value": math.nan},
+                    extra_body={"metadata": {"value": math.nan}},
                 ),
                 "JSON request body must be serializable and contain only finite numbers",
             ),
@@ -1491,7 +1518,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                 lambda client: client.responses.create(
                     model="llama",
                     input="Hi",
-                    metadata=object(),
+                    extra_body={"metadata": object()},
                 ),
                 "JSON request body must be serializable and contain only finite numbers",
             ),
@@ -1800,7 +1827,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         transport = RecordingTransport(
             RunInfraResponse(
                 200,
-                {"content-type": "application/json", "x-request-id": "req-server-123"},
+                {
+                    "content-type": "application/json",
+                    "x-request-id": "req-server-123",
+                    "x-runinfra-idempotent-replay": "true",
+                },
                 json.dumps({"object": "list", "data": []}).encode("utf-8"),
             )
         )
@@ -1809,6 +1840,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         response = client.models.list()
 
         self.assertEqual(response["_request_id"], "req-server-123")
+        self.assertTrue(response["_idempotent_replay"])
 
     def test_request_ids_are_header_case_insensitive(self):
         transport = RecordingTransport(
