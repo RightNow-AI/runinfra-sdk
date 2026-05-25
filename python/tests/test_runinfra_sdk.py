@@ -1147,6 +1147,26 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertNotIn(name, signature.parameters)
 
+    def test_child_responses_param_canaries_use_supported_adapter_fields(self):
+        root = Path(__file__).resolve().parents[2]
+        typescript_canary = root.joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = root.joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        typescript_block = re.search(
+            r'await record\("openai\.params\.responses"[\s\S]*?await record\("responses\.stream\.final"',
+            typescript_canary,
+        )
+        python_block = re.search(
+            r"def _responses_params\([\s\S]*?def _responses_stream_final",
+            python_canary,
+        )
+
+        self.assertIsNotNone(typescript_block)
+        self.assertIsNotNone(python_block)
+        self.assertIn("top_p: 1", typescript_block.group(0))
+        self.assertNotIn("metadata", typescript_block.group(0))
+        self.assertIn("top_p=1", python_block.group(0))
+        self.assertNotIn("metadata", python_block.group(0))
+
     def test_runtime_package_source_does_not_define_kwargs_parameters(self):
         source_path = Path(runinfra.__file__).resolve()
         source = source_path.read_text()

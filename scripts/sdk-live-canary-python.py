@@ -1098,8 +1098,8 @@ def _responses_params(client: RunInfra, model: str) -> Dict[str, Any]:
         input="Reply with the single word ok.",
         instructions="Be concise.",
         temperature=0,
+        top_p=1,
         max_output_tokens=16,
-        metadata={"sdk_canary": "openai_params_responses"},
     )
     assert_object(response, "responses params response")
     assert_responses_envelope(response, "responses params response")

@@ -1888,6 +1888,22 @@ class RunInfra:
     expect(pythonCanary).toContain("response_format=response_format");
   });
 
+  it("keeps child canaries aligned with the Responses adapter parameter contract", () => {
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const typescriptBlock = typescriptCanary.match(
+      /await record\("openai\.params\.responses"[\s\S]*?await record\("responses\.stream\.final"/u,
+    )?.[0];
+    const pythonBlock = pythonCanary.match(
+      /def _responses_params\([\s\S]*?def _responses_stream_final/u,
+    )?.[0];
+
+    expect(typescriptBlock).toContain("top_p: 1");
+    expect(typescriptBlock).not.toContain("metadata");
+    expect(pythonBlock).toContain("top_p=1");
+    expect(pythonBlock).not.toContain("metadata");
+  });
+
   it("types TypeScript image request OpenAI-compatible parameters", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const imageRequest = source.match(

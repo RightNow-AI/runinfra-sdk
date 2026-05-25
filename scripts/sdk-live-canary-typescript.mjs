@@ -1124,8 +1124,8 @@ await record("openai.params.responses", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL
     input: "Reply with the single word ok.",
     instructions: "Be concise.",
     temperature: 0,
+    top_p: 1,
     max_output_tokens: 16,
-    metadata: { sdk_canary: "openai_params_responses" },
   });
   assertObject(response, "responses params response");
   assertResponsesEnvelope(response, "responses params response");
