@@ -2334,6 +2334,30 @@ class RunInfra:
       .toContain(row);
   });
 
+  it("keeps child canaries in parity for local browser API-key guard coverage", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { publicSurfaceCoverage } =
+      await import("../../scripts/live-canary-surface-coverage.mjs") as {
+        publicSurfaceCoverage: Array<{ surface: string; rows: string[] }>;
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const row = "browser.api_key_guard.local";
+
+    expect(expectedRows).toContain(row);
+    expect(runner).toContain(`["${row}", () => []]`);
+    expect(typescriptCanary).toContain(`record("${row}"`);
+    expect(typescriptCanary).toContain("assertBrowserApiKeyGuard");
+    expect(pythonCanary).toContain(`"${row}"`);
+    expect(pythonCanary).toContain("browser_token_surface");
+    expect(liveCanaries).toContain(row);
+    expect(liveCanaries).toContain("browser API-key guard");
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "browser API-key guard")?.rows)
+      .toContain(row);
+  });
+
   it("keeps child live-canary failure diagnostics actionable without raw error messages", () => {
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
     const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");

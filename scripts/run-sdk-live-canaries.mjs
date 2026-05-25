@@ -420,6 +420,7 @@ const rowReadinessRequirements = [
   ["request.timeout.local", () => []],
   ["request.extra_body.local", () => []],
   ["request.unknown_fields.local", () => []],
+  ["browser.api_key_guard.local", () => []],
   ["error.body.unsupported_parameter", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["retry.safety.get.local", () => []],
   ["retry.safety.post.requires_idempotency.local", () => []],

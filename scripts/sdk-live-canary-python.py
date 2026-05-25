@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if os.environ.get("RUNINFRA_CANARY_PYTHON_IMPORT_MODE") != "installed":
     sys.path.insert(0, str(REPO_ROOT / "python"))
 
+import runinfra as runinfra_module  # noqa: E402
 from runinfra import (  # noqa: E402
     __version__,
     AuthenticationError,
@@ -1003,6 +1004,7 @@ def main() -> int:
     record("request.timeout.local", [], _request_timeout_local)
     record("request.extra_body.local", [], _request_extra_body_local)
     record("request.unknown_fields.local", [], _request_unknown_fields_local)
+    record("browser.api_key_guard.local", [], _browser_api_key_guard_local)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
     record("retry.safety.get.local", [], _retry_safety_get_local)
     record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
@@ -1877,6 +1879,24 @@ def _request_unknown_fields_local() -> Dict[str, Any]:
     assert_extra_body_json_field(calls[0], field, "present", "request.unknown_fields.local")
     assert_request_id(response.get("_request_id"), "request.unknown_fields.local")
     return {"requestId": response.get("_request_id"), "rejected": rejected, "extraBodyField": "present"}
+
+
+def _browser_api_key_guard_local() -> Dict[str, Any]:
+    forbidden_exports = {
+        "BrowserRunInfra",
+        "BrowserToken",
+        "create_browser_token",
+        "dangerously_allow_browser",
+        "dangerouslyAllowBrowser",
+    }
+    exported = set(dir(runinfra_module))
+    present = sorted(forbidden_exports.intersection(exported))
+    if present:
+        raise AssertionError(f"browser.api_key_guard.local exposed browser token surface: {', '.join(present)}")
+    return {
+        "browser_token_surface": "absent",
+        "runtime": "python",
+    }
 
 
 def _retry_safety_get_local() -> Dict[str, Any]:

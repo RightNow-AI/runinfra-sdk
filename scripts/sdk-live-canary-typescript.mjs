@@ -896,6 +896,72 @@ async function assertUnknownRequestFieldRejected(run, calls, field, label) {
   throw new Error(`${label} accepted unknown direct request field`);
 }
 
+function restoreGlobalDescriptor(name, descriptor) {
+  if (descriptor) {
+    Object.defineProperty(globalThis, name, descriptor);
+  } else {
+    Reflect.deleteProperty(globalThis, name);
+  }
+}
+
+function assertBrowserRuntimeRejected(label) {
+  try {
+    new RunInfra({ apiKey: "sk-ri-live-canary-local" });
+  } catch (error) {
+    if (!(error instanceof RunInfraError) || error.type !== "invalid_runtime") {
+      throw new Error(`${label} expected invalid_runtime RunInfraError`);
+    }
+    const message = String(error.message ?? "");
+    if (!message.includes("server-side environments")) {
+      throw new Error(`${label} did not explain server-side API-key posture`);
+    }
+    if (message.includes("sk-ri-live-canary-local")) {
+      throw new Error(`${label} leaked the API key in the runtime error`);
+    }
+    return { errorType: error.type, errorStatus: error.status };
+  }
+  throw new Error(`${label} unexpectedly allowed browser API-key client construction`);
+}
+
+function assertBrowserApiKeyGuard() {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const originalSelf = Object.getOwnPropertyDescriptor(globalThis, "self");
+  const originalWorkerGlobalScope = Object.getOwnPropertyDescriptor(globalThis, "WorkerGlobalScope");
+  const evidence = {};
+  try {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: {} });
+    evidence.window = assertBrowserRuntimeRejected("browser.api_key_guard.local window");
+    new RunInfra({ apiKey: "sk-ri-live-canary-local", dangerouslyAllowBrowser: true });
+
+    restoreGlobalDescriptor("window", originalWindow);
+    restoreGlobalDescriptor("document", originalDocument);
+    function WorkerGlobalScope() {}
+    const workerGlobal = Object.create(WorkerGlobalScope.prototype);
+    Object.defineProperty(globalThis, "WorkerGlobalScope", {
+      configurable: true,
+      value: WorkerGlobalScope,
+    });
+    Object.defineProperty(globalThis, "self", {
+      configurable: true,
+      value: workerGlobal,
+    });
+    evidence.worker = assertBrowserRuntimeRejected("browser.api_key_guard.local worker");
+    new RunInfra({ apiKey: "sk-ri-live-canary-local", dangerouslyAllowBrowser: true });
+    return {
+      windowGuard: evidence.window.errorType,
+      workerGuard: evidence.worker.errorType,
+      explicitOptIn: "dangerouslyAllowBrowser",
+    };
+  } finally {
+    restoreGlobalDescriptor("window", originalWindow);
+    restoreGlobalDescriptor("document", originalDocument);
+    restoreGlobalDescriptor("self", originalSelf);
+    restoreGlobalDescriptor("WorkerGlobalScope", originalWorkerGlobalScope);
+  }
+}
+
 function assertRetryableError(error, label) {
   if (!(error instanceof RunInfraError) || error.status !== 503) {
     throw new Error(`${label} expected local 503 RunInfraError, got ${error?.status ?? error?.name ?? typeof error}`);
@@ -1878,6 +1944,8 @@ await record("request.unknown_fields.local", [], async () => {
   assertRequestId(response._request_id, "request.unknown_fields.local");
   return { requestId: response._request_id, rejected, extraBodyField: "present" };
 });
+
+await record("browser.api_key_guard.local", [], async () => assertBrowserApiKeyGuard());
 
 await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {
   try {

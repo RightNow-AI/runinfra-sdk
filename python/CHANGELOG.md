@@ -53,6 +53,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added a local strict canary row proving unknown direct request fields are
   rejected before network sends and that unsupported JSON body probes must use
   `extra_body`.
+- Added a local strict canary row proving the Python package exposes no browser
+  token helper surface while the TypeScript package enforces the browser
+  API-key guard.
 - Added a local strict canary row proving 429 rate-limit responses map to
   `RateLimitError` with `retry_after_seconds` and request-id metadata.
 - Added a local strict canary row proving 402 insufficient-credits responses

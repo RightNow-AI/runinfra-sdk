@@ -123,6 +123,7 @@ export const publicSurfaceCoverage = [
     surface: "unsupported body parameter handling",
     rows: ["request.extra_body.local", "request.unknown_fields.local", "error.body.unsupported_parameter"],
   },
+  { surface: "browser API-key guard", rows: ["browser.api_key_guard.local"] },
   {
     surface: "error mapping",
     rows: [

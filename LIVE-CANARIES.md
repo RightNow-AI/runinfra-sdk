@@ -219,6 +219,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `request.timeout.local`
 - `request.extra_body.local`
 - `request.unknown_fields.local`
+- `browser.api_key_guard.local`
 - `error.body.unsupported_parameter`
 - `retry.safety.get.local`
 - `retry.safety.post.requires_idempotency.local`
@@ -319,6 +320,9 @@ does not serialize SDK option names, rejects typed-field overrides, and stays
 out of multipart upload paths. Local unknown-request-field rows prove that
 unknown direct request fields fail before network send, and that deliberate JSON
 extensions still have to use `extraBody` / `extra_body`.
+Local browser API-key guard rows prove the shipped TypeScript artifact fails
+closed in browser-like runtimes unless `dangerouslyAllowBrowser: true` is set,
+and that the Python package exposes no browser-token helper surface.
 Webhook signature rows use installed package artifacts and deterministic local
 payloads because they are verification helpers, not live delivery endpoints.
 
