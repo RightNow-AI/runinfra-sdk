@@ -560,6 +560,7 @@ function sdkModuleURL() {
 const sdkModule = await import(sdkModuleURL());
 const {
   AuthenticationError,
+  InsufficientCreditsError,
   ModelNotFoundError,
   PermissionDeniedError,
   RateLimitError,
@@ -901,6 +902,21 @@ function assertRateLimitError(error, label, expectedRetryAfterMs) {
     errorStatus: error.status,
     requestId: error.requestId,
     retryAfterMs: error.retryAfterMs,
+  };
+}
+
+function assertInsufficientCreditsError(error, label) {
+  if (!(error instanceof InsufficientCreditsError)) {
+    throw new Error(`${label} expected InsufficientCreditsError, got ${error?.name ?? typeof error}`);
+  }
+  if (error.status !== 402 || error.type !== "insufficient_credits") {
+    throw new Error(`${label} insufficient-credits error mapped unexpectedly: ${error.status} ${error.type}`);
+  }
+  assertRequestId(error.requestId, label);
+  return {
+    errorType: error.type,
+    errorStatus: error.status,
+    requestId: error.requestId,
   };
 }
 
@@ -1581,6 +1597,27 @@ await record("error.request.invalid_options", [], async () => {
     return assertInvalidRequestOptionError(error, "error.request.invalid_options");
   }
   throw new Error("invalid request option unexpectedly succeeded");
+});
+
+await record("error.insufficient_credits.local", [], async () => {
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse(
+      { error: { message: "local insufficient credits probe", type: "insufficient_credits" } },
+      402,
+      "req-local-insufficient-credits",
+    ),
+  ]);
+  try {
+    await local.responses.create(
+      { model: "runinfra-local-error-model", input: "local insufficient-credits canary" },
+    );
+  } catch (error) {
+    return {
+      ...assertInsufficientCreditsError(error, "error.insufficient_credits.local"),
+      ...assertRetryCallCount(calls, 1, "error.insufficient_credits.local"),
+    };
+  }
+  throw new Error("local insufficient-credits error unexpectedly succeeded");
 });
 
 await record("error.rate_limit.local", [], async () => {

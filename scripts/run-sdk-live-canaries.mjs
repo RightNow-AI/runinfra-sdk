@@ -413,6 +413,7 @@ const rowReadinessRequirements = [
   ["error.auth.invalid_key", () => []],
   ["error.model.not_found", () => missingEnv(["RUNINFRA_API_KEY"])],
   ["error.request.invalid_options", () => []],
+  ["error.insufficient_credits.local", () => []],
   ["error.rate_limit.local", () => []],
   ["request.client_request_id.local", () => []],
   ["request.custom_headers.local", () => []],

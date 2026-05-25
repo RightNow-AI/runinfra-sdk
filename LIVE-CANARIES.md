@@ -212,6 +212,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `error.auth.invalid_key`
 - `error.model.not_found`
 - `error.request.invalid_options`
+- `error.insufficient_credits.local`
 - `error.rate_limit.local`
 - `request.client_request_id.local`
 - `request.custom_headers.local`
@@ -289,6 +290,9 @@ remain callable.
 Local rate-limit error rows do not call the production gateway; they run
 against deterministic installed package transports and prove 429 responses map
 to typed `RateLimitError` failures with `Retry-After` metadata and request IDs.
+Local insufficient-credits error rows use the same installed package transport
+path and prove 402 responses map to typed `InsufficientCreditsError` failures
+with request IDs, without requiring a real workspace to exhaust billing credits.
 Webhook verification rows exercise both client-attached helpers and top-level
 package exports. The unsupported body-parameter row sends a real OpenAI-style
 request with a RunInfra probe parameter and requires a clear traced 400/422

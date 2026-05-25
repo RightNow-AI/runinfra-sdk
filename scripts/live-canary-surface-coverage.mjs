@@ -125,6 +125,7 @@ export const publicSurfaceCoverage = [
       "error.auth.invalid_key",
       "error.model.not_found",
       "error.request.invalid_options",
+      "error.insufficient_credits.local",
       "error.rate_limit.local",
       "error.body.unsupported_parameter",
     ],

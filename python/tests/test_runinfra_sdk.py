@@ -340,6 +340,30 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn(row, live_canaries)
         self.assertIn("rate-limit", live_canaries)
 
+    def test_child_canaries_cover_local_insufficient_credits_error_mapping(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        row = "error.insufficient_credits.local"
+
+        self.assertIn(f'"{row}"', runner)
+        self.assertIn(f'record("{row}"', typescript_canary)
+        self.assertIn("InsufficientCreditsError", typescript_canary)
+        self.assertIn(f'"{row}"', python_canary)
+        self.assertIn("InsufficientCreditsError", python_canary)
+        self.assertIn(row, live_canaries)
+        self.assertIn("insufficient-credits", live_canaries)
+        typescript_row_start = typescript_canary.index(f'await record("{row}"')
+        typescript_row_end = typescript_canary.index('await record("error.rate_limit.local"', typescript_row_start)
+        typescript_row = typescript_canary[typescript_row_start:typescript_row_end]
+        python_row_start = python_canary.index("def _insufficient_credits_error_local()")
+        python_row_end = python_canary.index("def _rate_limit_error_local()", python_row_start)
+        python_row = python_canary[python_row_start:python_row_end]
+
+        self.assertNotIn("maxRetries: 0", typescript_row)
+        self.assertNotIn('"max_retries": 0', python_row)
+
     def test_models_list_canary_fails_when_configured_model_is_absent_from_catalog(self):
         typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
         python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()

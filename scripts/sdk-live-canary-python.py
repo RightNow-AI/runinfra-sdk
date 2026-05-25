@@ -22,6 +22,7 @@ if os.environ.get("RUNINFRA_CANARY_PYTHON_IMPORT_MODE") != "installed":
 from runinfra import (  # noqa: E402
     __version__,
     AuthenticationError,
+    InsufficientCreditsError,
     ModelNotFoundError,
     PermissionDeniedError,
     RateLimitError,
@@ -696,6 +697,22 @@ def assert_rate_limit_error(error: BaseException, label: str, expected_retry_aft
     }
 
 
+def assert_insufficient_credits_error(error: BaseException, label: str) -> Dict[str, Any]:
+    if not isinstance(error, InsufficientCreditsError):
+        raise AssertionError(f"{label} expected InsufficientCreditsError, got {error.__class__.__name__}")
+    if getattr(error, "status", None) != 402 or getattr(error, "type", None) != "insufficient_credits":
+        raise AssertionError(
+            f"{label} insufficient-credits error mapped unexpectedly: {getattr(error, 'status', None)} {getattr(error, 'type', None)}"
+        )
+    request_id = getattr(error, "request_id", None)
+    assert_request_id(request_id, label)
+    return {
+        "errorType": getattr(error, "type", None),
+        "errorStatus": getattr(error, "status", None),
+        "requestId": request_id,
+    }
+
+
 def is_chat_terminal_event(event: Dict[str, Any]) -> bool:
     choices = event.get("choices")
     return isinstance(choices, list) and any(
@@ -959,6 +976,7 @@ def main() -> int:
     record("error.auth.invalid_key", [], lambda: _auth_error(base_url))
     record("error.model.not_found", ["RUNINFRA_API_KEY"], lambda: _model_not_found(client()))
     record("error.request.invalid_options", [], _invalid_request_options)
+    record("error.insufficient_credits.local", [], _insufficient_credits_error_local)
     record("error.rate_limit.local", [], _rate_limit_error_local)
     record("request.client_request_id.local", [], _request_client_request_id_local)
     record("request.custom_headers.local", [], _request_custom_headers_local)
@@ -1558,6 +1576,27 @@ def _invalid_request_options() -> Dict[str, Any]:
     except BaseException as error:  # noqa: BLE001
         return assert_invalid_request_option_error(error, "error.request.invalid_options")
     raise AssertionError("invalid request option unexpectedly succeeded")
+
+
+def _insufficient_credits_error_local() -> Dict[str, Any]:
+    local = local_retry_client([
+        local_retry_response(
+            {"error": {"message": "local insufficient credits probe", "type": "insufficient_credits"}},
+            402,
+            "req-local-insufficient-credits",
+        ),
+    ])
+    try:
+        local["client"].responses.create(
+            model="runinfra-local-error-model",
+            input="local insufficient-credits canary",
+        )
+    except BaseException as error:  # noqa: BLE001
+        return {
+            **assert_insufficient_credits_error(error, "error.insufficient_credits.local"),
+            **assert_retry_call_count(local["calls"], 1, "error.insufficient_credits.local"),
+        }
+    raise AssertionError("local insufficient-credits error unexpectedly succeeded")
 
 
 def _rate_limit_error_local() -> Dict[str, Any]:

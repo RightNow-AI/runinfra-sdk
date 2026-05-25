@@ -419,6 +419,40 @@ describe("RunInfra TypeScript SDK", () => {
       .toContain(row);
   });
 
+  it("keeps child canaries in parity for local insufficient-credits error mapping", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { publicSurfaceCoverage } =
+      await import("../../scripts/live-canary-surface-coverage.mjs") as {
+        publicSurfaceCoverage: Array<{ surface: string; rows: string[] }>;
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const row = "error.insufficient_credits.local";
+
+    expect(expectedRows).toContain(row);
+    expect(runner).toContain(`["${row}", () => []]`);
+    expect(typescriptCanary).toContain(`record("${row}"`);
+    expect(typescriptCanary).toContain("InsufficientCreditsError");
+    expect(pythonCanary).toContain(`"${row}"`);
+    expect(pythonCanary).toContain("InsufficientCreditsError");
+    expect(liveCanaries).toContain(row);
+    expect(liveCanaries).toContain("insufficient-credits");
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "error mapping")?.rows)
+      .toContain(row);
+
+    const typescriptRowStart = typescriptCanary.indexOf(`await record("${row}"`);
+    const typescriptRowEnd = typescriptCanary.indexOf('await record("error.rate_limit.local"', typescriptRowStart);
+    const typescriptRow = typescriptCanary.slice(typescriptRowStart, typescriptRowEnd);
+    const pythonRowStart = pythonCanary.indexOf("def _insufficient_credits_error_local()");
+    const pythonRowEnd = pythonCanary.indexOf("def _rate_limit_error_local()", pythonRowStart);
+    const pythonRow = pythonCanary.slice(pythonRowStart, pythonRowEnd);
+
+    expect(typescriptRow).not.toContain("maxRetries: 0");
+    expect(pythonRow).not.toContain('"max_retries": 0');
+  });
+
   it("fails models.list live canaries when configured model ids are absent from the catalog", () => {
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
     const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
