@@ -601,6 +601,7 @@ describe("RunInfra TypeScript SDK", () => {
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
+        summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
         results: expectedRows.map((name) => ({ name, status: "passed" })),
       })),
     };
@@ -688,6 +689,7 @@ describe("RunInfra TypeScript SDK", () => {
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
+        summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
         results: expectedRows.map((name) => ({ name, status: "passed" })),
       })),
     };
@@ -768,6 +770,7 @@ describe("RunInfra TypeScript SDK", () => {
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
+        summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
         results: expectedRows.map((name) => ({ name, status: "passed" })),
       })),
     };
@@ -961,6 +964,7 @@ describe("RunInfra TypeScript SDK", () => {
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
+        summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
         results: expectedRows.map((name) => ({ name, status: "passed" })),
       })),
     };
@@ -999,8 +1003,29 @@ describe("RunInfra TypeScript SDK", () => {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
       });
-      expect(success.status).toBe(0);
+      expect(success.status, success.stdout + success.stderr).toBe(0);
       expect(success.stdout).toContain(`Verified promotion reports for SDK ${RUNINFRA_SDK_VERSION}`);
+
+      writeFileSync(livePath, `${JSON.stringify({
+        ...live,
+        reports: live.reports.map((report) =>
+          report.language === "typescript"
+            ? { ...report, summary: { passed: expectedRows.length - 1, failed: 0, skipped: 0 } }
+            : report,
+        ),
+      }, null, 2)}\n`);
+      const mismatchedSummary = spawnSync(process.execPath, [
+        ...promotionArgs,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(mismatchedSummary.status).toBe(1);
+      expect(`${mismatchedSummary.stdout}${mismatchedSummary.stderr}`).toContain(
+        `typescript summary passed count must be ${expectedRows.length}`,
+      );
+      writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
 
       writeFileSync(readinessPath, `${JSON.stringify({
         ...readiness,

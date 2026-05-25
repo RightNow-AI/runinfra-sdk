@@ -358,7 +358,12 @@ function liveCanaryErrors(report) {
         reportErrors.push(`${language} row ${String(result?.name ?? "<unknown>")} must be passed`);
       }
     }
-    if (child?.summary) {
+    if (!child?.summary || typeof child.summary !== "object") {
+      reportErrors.push(`${language} summary must be present`);
+    } else {
+      if (child.summary.passed !== expectedRows.length) {
+        reportErrors.push(`${language} summary passed count must be ${expectedRows.length}`);
+      }
       if (child.summary.failed !== 0) reportErrors.push(`${language} summary failed count must be 0`);
       if (child.summary.skipped !== 0) reportErrors.push(`${language} summary skipped count must be 0`);
     }
