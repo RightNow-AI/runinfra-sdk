@@ -413,6 +413,7 @@ const rowReadinessRequirements = [
   ["error.auth.invalid_key", () => []],
   ["error.model.not_found", () => missingEnv(["RUNINFRA_API_KEY"])],
   ["error.request.invalid_options", () => []],
+  ["request.client_request_id.local", () => []],
   ["error.body.unsupported_parameter", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"])],
   ["retry.safety.get.local", () => []],
   ["retry.safety.post.requires_idempotency.local", () => []],

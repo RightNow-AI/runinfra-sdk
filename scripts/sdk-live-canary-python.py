@@ -573,6 +573,23 @@ def assert_idempotency_header(calls: List[Any], expected: str, label: str) -> No
             raise AssertionError(f"{label} call {index} expected idempotency header")
 
 
+def assert_client_request_id_header(calls: List[Any], expected: str, label: str) -> None:
+    for index, call in enumerate(calls, start=1):
+        if call.headers.get("X-Client-Request-Id") != expected:
+            raise AssertionError(f"{label} call {index} expected client request id header")
+
+
+def assert_request_body_does_not_contain(call: Any, forbidden: Iterable[str], label: str) -> None:
+    body = getattr(call, "body", b"") or b""
+    if isinstance(body, bytes):
+        text = body.decode("utf-8", errors="replace")
+    else:
+        text = str(body)
+    for value in forbidden:
+        if value in text:
+            raise AssertionError(f"{label} leaked {value} into request body")
+
+
 def assert_retryable_error(error: BaseException, label: str) -> Dict[str, Any]:
     if not isinstance(error, RunInfraError) or getattr(error, "status", None) != 503:
         raise AssertionError(
@@ -850,6 +867,7 @@ def main() -> int:
     record("error.auth.invalid_key", [], lambda: _auth_error(base_url))
     record("error.model.not_found", ["RUNINFRA_API_KEY"], lambda: _model_not_found(client()))
     record("error.request.invalid_options", [], _invalid_request_options)
+    record("request.client_request_id.local", [], _request_client_request_id_local)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
     record("retry.safety.get.local", [], _retry_safety_get_local)
     record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
@@ -1461,6 +1479,32 @@ def _unsupported_body_parameter(client: RunInfra, model: str) -> Dict[str, Any]:
     except BaseException as error:  # noqa: BLE001
         return assert_clear_unsupported_parameter_error(error, "unsupported body parameter")
     raise AssertionError("unsupported body parameter unexpectedly succeeded")
+
+
+def _request_client_request_id_local() -> Dict[str, Any]:
+    local = local_retry_client([
+        local_retry_response(
+            {"id": "resp-local-client-request-id", "status": "completed", "output": []},
+            200,
+            "req-local-client-request-id-server",
+        ),
+    ])
+    response = local["client"].responses.create(
+        model="runinfra-local-request-options-model",
+        input="local request option canary",
+        request_options={
+            "client_request_id": "req-local-client-request-id",
+            "max_retries": 0,
+        },
+    )
+    assert_client_request_id_header(local["calls"], "req-local-client-request-id", "request.client_request_id.local")
+    assert_request_body_does_not_contain(
+        local["calls"][0],
+        ["clientRequestId", "client_request_id", "req-local-client-request-id"],
+        "request.client_request_id.local",
+    )
+    assert_request_id(response.get("_request_id"), "request.client_request_id.local")
+    return {"requestId": response.get("_request_id"), "clientRequestIdHeader": "present"}
 
 
 def _retry_safety_get_local() -> Dict[str, Any]:

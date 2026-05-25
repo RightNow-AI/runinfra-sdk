@@ -38,6 +38,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   readiness and live-canary evidence before publish.
 - Corrected modality-status docs so chat/responses are not described as
   strict-live green before fresh production artifact canaries pass.
+- Added a local strict canary row proving user-supplied client request IDs are
+  sent as headers and do not leak into JSON request bodies.
 - Extended package leakage scanners to reject PyPI/Twine and pip credential
   config material such as `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini`.
 

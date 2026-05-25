@@ -483,6 +483,21 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Local retry-safety rows", live_canaries)
         self.assertIn("do not call the production gateway", live_canaries)
 
+    def test_child_canaries_cover_local_client_request_id_row(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        row = "request.client_request_id.local"
+
+        self.assertIn(f'"{row}"', runner)
+        self.assertIn(f'record("{row}"', typescript_canary)
+        self.assertIn("assertClientRequestIdHeader", typescript_canary)
+        self.assertIn(f'"{row}"', python_canary)
+        self.assertIn("assert_client_request_id_header", python_canary)
+        self.assertIn(row, live_canaries)
+        self.assertIn("Local request-option rows", live_canaries)
+
     def test_runner_has_public_surface_coverage_gate(self):
         scripts_dir = Path(__file__).resolve().parents[2].joinpath("scripts")
         runner = scripts_dir.joinpath("run-sdk-live-canaries.mjs").read_text()

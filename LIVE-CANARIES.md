@@ -212,6 +212,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `error.auth.invalid_key`
 - `error.model.not_found`
 - `error.request.invalid_options`
+- `request.client_request_id.local`
 - `error.body.unsupported_parameter`
 - `retry.safety.get.local`
 - `retry.safety.post.requires_idempotency.local`
@@ -295,6 +296,9 @@ deterministic local HTTP responses from the installed SDK package. They prove
 safe GET requests retry transient failures, charge-bearing JSON POSTs retry only
 with an idempotency key, and streaming, binary TTS, and multipart ASR requests
 are sent once even when an idempotency key is present.
+Local request-option rows do not call the production gateway; they prove
+user-supplied client request IDs are sent as `X-Client-Request-Id` and are not
+serialized into JSON request bodies.
 Webhook signature rows use installed package artifacts and deterministic local
 payloads because they are verification helpers, not live delivery endpoints.
 

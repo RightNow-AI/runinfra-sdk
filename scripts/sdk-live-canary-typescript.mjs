@@ -745,7 +745,7 @@ function localRetryClient(responses) {
       retryBaseMs: 0,
       timeoutMs: 1000,
       fetch: async (url, init = {}) => {
-        calls.push({ url: String(url), method: init.method, headers: init.headers });
+        calls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
         const response = queued.shift();
         if (!response) throw new Error("local retry canary exhausted fake responses");
         return response;
@@ -777,6 +777,24 @@ function assertIdempotencyHeader(calls, expected, label) {
     const value = headerValue(call.headers, "Idempotency-Key");
     if (value !== expected) {
       throw new Error(`${label} call ${index + 1} expected idempotency header`);
+    }
+  }
+}
+
+function assertClientRequestIdHeader(calls, expected, label) {
+  for (const [index, call] of calls.entries()) {
+    const value = headerValue(call.headers, "X-Client-Request-Id");
+    if (value !== expected) {
+      throw new Error(`${label} call ${index + 1} expected client request id header`);
+    }
+  }
+}
+
+function assertRequestBodyDoesNotContain(call, forbidden, label) {
+  const body = call?.body === undefined ? "" : String(call.body);
+  for (const value of forbidden) {
+    if (body.includes(value)) {
+      throw new Error(`${label} leaked ${value} into request body`);
     }
   }
 }
@@ -1469,6 +1487,28 @@ await record("error.request.invalid_options", [], async () => {
     return { errorType: error.type, errorStatus: error.status };
   }
   throw new Error("invalid request option unexpectedly succeeded");
+});
+
+await record("request.client_request_id.local", [], async () => {
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse(
+      { id: "resp-local-client-request-id", status: "completed", output: [] },
+      200,
+      "req-local-client-request-id-server",
+    ),
+  ]);
+  const response = await local.responses.create(
+    { model: "runinfra-local-request-options-model", input: "local request option canary" },
+    { clientRequestId: "req-local-client-request-id", maxRetries: 0 },
+  );
+  assertClientRequestIdHeader(calls, "req-local-client-request-id", "request.client_request_id.local");
+  assertRequestBodyDoesNotContain(
+    calls[0],
+    ["clientRequestId", "client_request_id", "req-local-client-request-id"],
+    "request.client_request_id.local",
+  );
+  assertRequestId(response._request_id, "request.client_request_id.local");
+  return { requestId: response._request_id, clientRequestIdHeader: "present" };
 });
 
 await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {

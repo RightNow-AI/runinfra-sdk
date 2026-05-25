@@ -35,6 +35,7 @@ export const expectedRows = [
   "error.auth.invalid_key",
   "error.model.not_found",
   "error.request.invalid_options",
+  "request.client_request_id.local",
   "error.body.unsupported_parameter",
   "retry.safety.get.local",
   "retry.safety.post.requires_idempotency.local",
