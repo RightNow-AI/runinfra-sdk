@@ -249,6 +249,32 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn('"completion_tokens"', python_canary)
         self.assertIn('"total_tokens"', python_canary)
         self.assertIn('"usage": "present"', python_canary)
+        self.assertIn("assertChatStreamCompatibilityEvent", typescript_canary)
+        self.assertIn(
+            "events.forEach((event, index) => assertChatStreamCompatibilityEvent(event, `chat stream event ${index}`))",
+            typescript_canary,
+        )
+        self.assertIn(
+            "events.forEach((event, index) => assertChatStreamCompatibilityEvent(event, `chat slow-consumer stream event ${index}`))",
+            typescript_canary,
+        )
+        self.assertIn(
+            "events.forEach((event, index) => assertChatStreamEnvelope(event, `chat cancellation stream event ${index}`))",
+            typescript_canary,
+        )
+        self.assertIn("assert_chat_stream_compatibility_event", python_canary)
+        self.assertIn(
+            'assert_chat_stream_compatibility_event(event, f"chat stream event {index}")',
+            python_canary,
+        )
+        self.assertIn(
+            'assert_chat_stream_compatibility_event(event, f"chat slow-consumer stream event {index}")',
+            python_canary,
+        )
+        self.assertIn(
+            'assert_chat_stream_envelope(event, f"chat cancellation stream event {index}")',
+            python_canary,
+        )
 
     def test_child_canaries_cover_live_model_not_found_error_mapping(self):
         runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()

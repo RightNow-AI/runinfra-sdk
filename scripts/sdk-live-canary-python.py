@@ -172,6 +172,13 @@ def assert_chat_stream_usage_event(event: Dict[str, Any], label: str) -> None:
     assert_chat_usage_object(event.get("usage"), f"{label}.usage")
 
 
+def assert_chat_stream_compatibility_event(event: Dict[str, Any], label: str) -> None:
+    if is_chat_stream_usage_event(event):
+        assert_chat_stream_usage_event(event, label)
+        return
+    assert_chat_stream_envelope(event, label)
+
+
 def assert_chat_usage_object(value: Any, label: str) -> None:
     usage = assert_object(value, label)
     for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
@@ -981,7 +988,7 @@ def _chat_stream_final(client: RunInfra, model: str) -> Dict[str, Any]:
     assert_request_id(stream.request_id, "chat.completions.stream.final")
     events = read_full_stream(stream, "chat stream", is_chat_terminal_event)
     for index, event in enumerate(events):
-        assert_chat_stream_envelope(event, f"chat stream event {index}")
+        assert_chat_stream_compatibility_event(event, f"chat stream event {index}")
     return {"requestId": stream.request_id, "eventCount": len(events)}
 
 
@@ -1013,7 +1020,7 @@ def _chat_stream_slow_consumer(client: RunInfra, model: str) -> Dict[str, Any]:
     result = read_slow_stream(stream, "chat slow-consumer stream", is_chat_terminal_event, delay_seconds)
     events = result["events"]
     for index, event in enumerate(events):
-        assert_chat_stream_envelope(event, f"chat slow-consumer stream event {index}")
+        assert_chat_stream_compatibility_event(event, f"chat slow-consumer stream event {index}")
     return {
         "requestId": stream.request_id,
         "eventCount": len(events),

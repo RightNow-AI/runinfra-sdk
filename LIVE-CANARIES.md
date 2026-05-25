@@ -212,8 +212,10 @@ event type/status, finite embedding vectors, image URL/base64 outputs, binary
 non-JSON TTS responses, and string ASR transcripts. The TTS binary-interface
 row validates TypeScript `blob()` and `stream()` handling plus the Python raw
 byte response surface. Final streaming rows drain real SSE streams and require
-terminal events. Cancellation streaming rows consume a prefix and then close
-early to cover consumer cancellation. TypeScript cancellation rows break out of
+terminal events. Chat final and slow-consumer rows accept either normal chat
+delta chunks or OpenAI-style usage chunks with empty `choices` and numeric token
+usage, without recording token counts. Cancellation streaming rows require
+normal chat chunks, consume a prefix, and then close early to cover consumer cancellation. TypeScript cancellation rows break out of
 `for await`, and Python cancellation rows close the active iterator, so both
 languages release local stream resources after partial consumption.
 Responses rows prove the compatibility adapter returns the documented envelope

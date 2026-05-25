@@ -3013,3 +3013,131 @@ Current production blockers:
 4. No push, deploy, publish, or paid canary provisioning should happen without explicit current authorization.
 
 Checkpoint timestamp: 2026-05-25 03:06 +03:00.
+
+## 2026-05-25 Agent 4 Checkpoint: Chat Stream Usage Chunk Canary Alignment
+
+Root-cause investigation for strict source live canary failures found two
+separate issues:
+
+- Chat streaming rows were failing because production chat SSE streams emit an
+  OpenAI-style usage chunk with empty `choices` and numeric token usage before
+  `[DONE]`. The canary already validated this shape for
+  `openai.params.chat.stream_options`, but `chat.completions.stream.final`,
+  `chat.completions.stream.cancel`, and
+  `chat.completions.stream.slow_consumer` still required every event to have a
+  non-empty chat `choices` delta.
+- `error.body.unsupported_parameter` is a real live gateway failure:
+  `/v1/responses` still returned 200 for a reserved
+  `runinfra_unsupported_parameter_probe` top-level parameter against
+  `https://api.runinfra.ai/v1`.
+
+Changes made in `runinfra-sdk`:
+
+- Added `assertChatStreamCompatibilityEvent` in the TypeScript live canary.
+  It accepts either a normal chat stream envelope or the already validated
+  usage-chunk envelope.
+- Added `assert_chat_stream_compatibility_event` in the Python live canary with
+  the same behavior.
+- Switched chat final and slow-consumer canary rows in both languages to use
+  the compatibility assertion.
+- Kept chat cancellation rows on the stricter normal chat stream-envelope
+  assertion because cancellation consumes only a prefix and must not pass on a
+  usage-only stream.
+- Added parity guard coverage in both SDK test suites so these rows cannot
+  regress to rejecting valid usage chunks, and so cancellation cannot be
+  relaxed to usage-only prefix acceptance.
+- Updated `LIVE-CANARIES.md` to document that chat stream rows accept validated
+  usage chunks without recording token counts while cancellation still requires
+  normal chat chunks.
+
+Fresh evidence:
+
+- Direct sanitized live probe showed non-stream chat returned 200 with
+  `x-request-id`; chat stream returned 200 and emitted normal chat chunks plus
+  one usage chunk with empty `choices`; `/v1/responses` with the reserved
+  parameter returned 200, which is the remaining contract failure.
+- Red tests first:
+  `pnpm --dir typescript test -- -t "keeps child canaries in parity for chat stream options usage coverage" --reporter dot`
+  failed on missing `assertChatStreamCompatibilityEvent`.
+- Red tests first:
+  `python -m pytest python\tests\test_runinfra_sdk.py -q -k "chat_stream_options_usage_chunks"`
+  failed on missing `assertChatStreamCompatibilityEvent`.
+- After implementation, both focused tests passed.
+- Strict source live canary after the stream fix:
+  `node scripts\run-sdk-live-canaries.mjs --runinfra-env-file C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local --package-source source --strict --report artifacts\sdk\live-canary-current-env-after-stream-fix.json`
+  failed closed with TypeScript 33 passed, 1 failed, 15 skipped and Python
+  33 passed, 1 failed, 15 skipped.
+- The only failed row in both languages is now
+  `error.body.unsupported_parameter`.
+- The skipped rows remain the same missing multimodal/idempotency inputs:
+  embedding model/dimensions, image model/size/response format, TTS model plus
+  voice or reference-audio inputs and response format, ASR model/fixture/expected
+  text/language/response format, voice-pipeline audio/expected text, and
+  `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1`.
+- RunPipe local evidence still shows the unsupported-parameter fix exists
+  locally: `pnpm test -- --reporter dot -t "reserved runinfra|unsupported parameter"`
+  passed 2 selected tests in `C:\Users\jaber\RightNow-Full\RunPipe-main-agent1-20260521`.
+- Local SDK gates after the doc wrap fix:
+  `node --check scripts\sdk-live-canary-typescript.mjs`,
+  `node --check scripts\run-sdk-live-canaries.mjs`, and
+  `python -m py_compile scripts\sdk-live-canary-python.py` passed.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test -- --reporter dot --testTimeout 5000`
+  passed 196 tests.
+- `python -m pytest python\tests -q` passed 130 tests and 127 subtests.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed
+  with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `node scripts\verify-workflow-policy.mjs` and
+  `node scripts\verify-version-sync.mjs` passed.
+- `pnpm --dir typescript build` and
+  `pnpm --dir typescript pack --pack-destination .` passed, producing
+  `typescript\runinfra-sdk-0.1.4.tgz`.
+- `python -m build python` passed, producing the wheel and sdist under
+  `python\dist`.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz`
+  passed.
+- `python scripts\verify-python-package.py python\dist\runinfra-0.1.4-py3-none-any.whl python\dist\runinfra-0.1.4.tar.gz`
+  passed.
+- `python -m twine check python\dist\runinfra-0.1.4-py3-none-any.whl python\dist\runinfra-0.1.4.tar.gz`
+  passed.
+- Artifact clean installs passed for both languages:
+  `node scripts\verify-clean-installs.mjs --package typescript --mode artifact --npm-tarball typescript\runinfra-sdk-0.1.4.tgz`
+  and
+  `node scripts\verify-clean-installs.mjs --package python --mode artifact --python-wheel python\dist\runinfra-0.1.4-py3-none-any.whl --python-sdist python\dist\runinfra-0.1.4.tar.gz`.
+- `git diff --check` passed with only expected Windows CRLF working-copy
+  warnings.
+- Required second-opinion review was attempted through CodeRabbit, but the CLI
+  was not installed. The fallback subagent review found one P1: cancellation
+  rows could pass on a usage-only prefix. That was fixed by restoring strict
+  cancellation envelope assertions in both language canaries, tightening docs,
+  and adding focused guard tests. The focused TS/Python guard tests passed after
+  the fix.
+- Final post-review verification:
+  `node --check scripts\sdk-live-canary-typescript.mjs`,
+  `node --check scripts\run-sdk-live-canaries.mjs`,
+  `python -m py_compile scripts\sdk-live-canary-python.py`,
+  `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit`,
+  `pnpm --dir typescript test -- --reporter dot --testTimeout 5000`,
+  `python -m pytest python\tests -q`,
+  `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`,
+  `node scripts\verify-workflow-policy.mjs`,
+  `node scripts\verify-version-sync.mjs`, and `git diff --check` all passed
+  (diff check emitted only expected Windows CRLF warnings).
+- Final post-review strict source live canary:
+  `node scripts\run-sdk-live-canaries.mjs --runinfra-env-file C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local --package-source source --strict --report artifacts\sdk\live-canary-current-env-after-cancel-review-fix.json`
+  failed closed with the same remaining shape: TypeScript 33 passed, 1 failed,
+  15 skipped and Python 33 passed, 1 failed, 15 skipped. The only failed row is
+  still `error.body.unsupported_parameter`.
+
+Current blockers:
+
+1. Production `api.runinfra.ai` has not picked up the local RunPipe responses
+   unsupported-parameter rejection, so strict live canaries still cannot close.
+2. Multimodal/idempotency strict rows still need scoped live canary
+   models/fixtures/env inputs.
+3. npm/PyPI latest are still not proven as `0.1.4` from registry in this
+   checkpoint.
+4. No push, deploy, publish, or paid canary provisioning was performed in this
+   checkpoint.
+
+Checkpoint timestamp: 2026-05-25 04:01 +03:00.

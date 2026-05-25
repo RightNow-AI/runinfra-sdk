@@ -201,6 +201,14 @@ function assertChatStreamUsageEvent(event, label) {
   assertChatUsageObject(event.usage, `${label}.usage`);
 }
 
+function assertChatStreamCompatibilityEvent(event, label) {
+  if (isChatStreamUsageEvent(event)) {
+    assertChatStreamUsageEvent(event, label);
+    return;
+  }
+  assertChatStreamEnvelope(event, label);
+}
+
 function assertChatUsageObject(value, label) {
   const usage = assertObject(value, label);
   for (const field of ["prompt_tokens", "completion_tokens", "total_tokens"]) {
@@ -1006,7 +1014,7 @@ await record("chat.completions.stream.final", ["RUNINFRA_API_KEY", "RUNINFRA_LLM
   });
   assertRequestId(stream.requestId, "chat.completions.stream.final");
   const events = await readFullStream(stream, "chat stream", isChatTerminalEvent);
-  events.forEach((event, index) => assertChatStreamEnvelope(event, `chat stream event ${index}`));
+  events.forEach((event, index) => assertChatStreamCompatibilityEvent(event, `chat stream event ${index}`));
   return { requestId: stream.requestId, eventCount: events.length };
 });
 
@@ -1036,7 +1044,7 @@ await record("chat.completions.stream.slow_consumer", slowStreamRequirements, as
   assertRequestId(stream.requestId, "chat.completions.stream.slow_consumer");
   const result = await readSlowStream(stream, "chat slow-consumer stream", isChatTerminalEvent, delayMs);
   const { events } = result;
-  events.forEach((event, index) => assertChatStreamEnvelope(event, `chat slow-consumer stream event ${index}`));
+  events.forEach((event, index) => assertChatStreamCompatibilityEvent(event, `chat slow-consumer stream event ${index}`));
   return { requestId: stream.requestId, eventCount: events.length, slowConsumerDelayMs: result.delayMs };
 });
 

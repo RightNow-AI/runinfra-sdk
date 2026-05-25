@@ -335,6 +335,26 @@ describe("RunInfra TypeScript SDK", () => {
     expect(pythonCanary).toContain('"completion_tokens"');
     expect(pythonCanary).toContain('"total_tokens"');
     expect(pythonCanary).toContain('"usage": "present"');
+    expect(typescriptCanary).toContain("assertChatStreamCompatibilityEvent");
+    expect(typescriptCanary).toContain(
+      "events.forEach((event, index) => assertChatStreamCompatibilityEvent(event, `chat stream event ${index}`))",
+    );
+    expect(typescriptCanary).toContain(
+      "events.forEach((event, index) => assertChatStreamCompatibilityEvent(event, `chat slow-consumer stream event ${index}`))",
+    );
+    expect(typescriptCanary).toContain(
+      "events.forEach((event, index) => assertChatStreamEnvelope(event, `chat cancellation stream event ${index}`))",
+    );
+    expect(pythonCanary).toContain("assert_chat_stream_compatibility_event");
+    expect(pythonCanary).toContain(
+      "assert_chat_stream_compatibility_event(event, f\"chat stream event {index}\")",
+    );
+    expect(pythonCanary).toContain(
+      "assert_chat_stream_compatibility_event(event, f\"chat slow-consumer stream event {index}\")",
+    );
+    expect(pythonCanary).toContain(
+      "assert_chat_stream_envelope(event, f\"chat cancellation stream event {index}\")",
+    );
   });
 
   it("keeps child canaries in parity for live model-not-found error mapping", () => {
