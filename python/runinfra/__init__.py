@@ -343,6 +343,22 @@ def _normalize_base_url(base_url: str, pipeline_id: Optional[str]) -> str:
     return f"{base}/{urllib.parse.quote(validated_pipeline_id, safe='')}"
 
 
+def _get_response_status(response: object) -> int:
+    """Get status code from response object, supporting both .status and .getcode()."""
+    if hasattr(response, "status"):
+        return response.status
+    if hasattr(response, "getcode"):
+        return response.getcode()
+    raise AttributeError(
+        f"response has neither '.status' nor '.getcode()': {type(response)!r}"
+    )
+
+
+def _normalize_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Normalize header keys to lowercase for case-insensitive access."""
+    return {k.lower(): v for k, v in headers.items()}
+
+
 def _default_transport(timeout: float) -> Transport:
     def send(request: RunInfraRequest) -> RunInfraResponse:
         req = urllib.request.Request(
@@ -356,7 +372,8 @@ def _default_transport(timeout: float) -> Transport:
                 req,
                 timeout=request.timeout_seconds or timeout,
             )
-            response_headers = dict(response.headers.items())
+            response_headers = _normalize_headers(dict(response.headers.items()))
+            response_status = _get_response_status(response)
             if request.stream:
                 def iter_response() -> Iterator[bytes]:
                     try:
@@ -369,7 +386,7 @@ def _default_transport(timeout: float) -> Transport:
                         response.close()
 
                 return RunInfraResponse(
-                    response.status,
+                    response_status,
                     response_headers,
                     iter_response(),
                 )
@@ -384,12 +401,12 @@ def _default_transport(timeout: float) -> Transport:
                     )
                 ) from exc
             return RunInfraResponse(
-                response.status,
+                response_status,
                 response_headers,
                 body,
             )
         except urllib.error.HTTPError as exc:
-            response_headers = dict(exc.headers.items())
+            response_headers = _normalize_headers(dict(exc.headers.items()))
             try:
                 body = exc.read()
             except Exception as read_exc:
