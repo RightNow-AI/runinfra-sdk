@@ -123,6 +123,13 @@ Check strict live-canary readiness without exposing env values:
 node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 ```
 
+Create a private env template for the strict canary inputs:
+```bash
+node scripts/run-sdk-live-canaries.mjs --write-env-template .env.sdk-live.local
+```
+The template writer is static, never copies current env values, and refuses to
+overwrite an existing file unless `--force-env-template` is supplied.
+
 Run the strict artifact live canary against the exact package artifacts:
 ```bash
 node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
@@ -171,6 +178,10 @@ If canary inputs live in a local env file, load it through the runner:
 ```bash
 node scripts/run-sdk-live-canaries.mjs --runinfra-env-file <path-to-env-file> --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 ```
+
+Use `--write-env-template <path-to-env-file>` to create a private starting
+point for that file. The generated template contains only canonical names,
+safe defaults, blank placeholders, and commented GitHub fixture-secret names.
 
 Do not use Node's `--env-file` option in promotion commands. `--runinfra-env-file <path-to-env-file>` keeps env-file parsing, explicit shell-env precedence, and report redaction inside the canary runner.
 

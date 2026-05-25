@@ -2924,11 +2924,15 @@ class RunInfra:
       readFileSync(new URL("../README.md", import.meta.url), "utf8"),
       readFileSync(new URL("../../python/README.md", import.meta.url), "utf8"),
     ];
+    const gitignore = readFileSync(new URL("../../.gitignore", import.meta.url), "utf8");
 
     for (const doc of docs) {
       expect(doc).toContain("`--runinfra-env-file <path-to-env-file>`");
+      expect(doc).toContain("--write-env-template");
+      expect(doc).toContain(".env.sdk-live.local");
       expect(doc).toContain("Do not use Node's `--env-file` option in promotion commands");
     }
+    expect(gitignore).toContain(".env.*.local");
   });
 
   it("documents model discovery as informational and separate from strict preflight", () => {
@@ -4508,6 +4512,88 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(result.stderr).toContain("--runinfra-env-file does not exist");
       expect(result.stderr).not.toContain(envPath);
       expect(result.stderr).not.toContain("private-canary-env");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("writes a static strict live-canary env template without leaking current env values", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-env-template-"));
+    const templatePath = join(tmp, "sdk-live.env");
+    try {
+      const result = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--write-env-template",
+        templatePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "template-secret-api-key",
+          RUNINFRA_LLM_MODEL: "template-secret-llm-model",
+          RUNINFRA_ASR_EXPECTED_TEXT: "template-secret-transcript",
+          NPM_TOKEN: "template-secret-npm-token",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Wrote strict live-canary env template.");
+      const template = readFileSync(templatePath, "utf8");
+      expect(template).toContain("RUNINFRA_API_KEY=");
+      expect(template).toContain("RUNINFRA_LLM_MODEL=");
+      expect(template).toContain("RUNINFRA_EMBEDDING_DIMENSIONS=");
+      expect(template).toContain("RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json");
+      expect(template).toContain("RUNINFRA_TTS_RESPONSE_FORMAT=mp3");
+      expect(template).toContain("RUNINFRA_ASR_RESPONSE_FORMAT=json");
+      expect(template).toContain("RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1");
+      expect(template).toContain("# RUNINFRA_ASR_FIXTURE_BASE64=");
+      expect(template).toContain("# RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64=");
+      expect(template).toContain("RUNINFRA_VOICE_PIPELINE_ID=");
+      expect(template).toContain("RUNINFRA_VOICE_PIPELINE_API_KEY=");
+      expect(template).toContain("TEST_PIPELINE_ID=");
+      expect(template).not.toContain("template-secret-api-key");
+      expect(template).not.toContain("template-secret-llm-model");
+      expect(template).not.toContain("template-secret-transcript");
+      expect(template).not.toContain("template-secret-npm-token");
+      expect(result.stderr).not.toContain(templatePath);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to overwrite a strict live-canary env template unless forced", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-env-template-overwrite-"));
+    const templatePath = join(tmp, "sdk-live.env");
+    try {
+      writeFileSync(templatePath, "do-not-overwrite\n");
+
+      const refused = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--write-env-template",
+        templatePath,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(refused.status).toBe(2);
+      expect(refused.stderr).toContain("strict live-canary env template already exists");
+      expect(refused.stderr).not.toContain(templatePath);
+      expect(readFileSync(templatePath, "utf8")).toBe("do-not-overwrite\n");
+
+      const forced = spawnSync(process.execPath, [
+        "../scripts/run-sdk-live-canaries.mjs",
+        "--write-env-template",
+        templatePath,
+        "--force-env-template",
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(forced.status, forced.stderr).toBe(0);
+      expect(readFileSync(templatePath, "utf8")).toContain("RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

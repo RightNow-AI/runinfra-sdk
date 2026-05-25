@@ -21,8 +21,11 @@ const strict = args.includes("--strict");
 const preflight = args.includes("--preflight");
 const verifySurfaceCoverage = args.includes("--verify-surface-coverage");
 const discoverModels = args.includes("--discover-models");
+const writeEnvTemplate = args.some((arg) => arg === "--write-env-template" || arg.startsWith("--write-env-template="));
+const forceEnvTemplate = args.includes("--force-env-template");
 const reportPath = optionValue("--report");
 const packageSource = optionValue("--package-source") ?? "artifact";
+const envTemplatePath = optionValue("--write-env-template");
 const scriptEnvFilePath = optionValue("--runinfra-env-file") ?? optionValue("--env-file");
 const nodeEnvFilePath = optionValueFrom(process.execArgv, "--env-file");
 const envFilePath = scriptEnvFilePath ?? nodeEnvFilePath;
@@ -55,6 +58,30 @@ if (!["artifact", "source"].includes(packageSource)) {
 if ([discoverModels, preflight, verifySurfaceCoverage].filter(Boolean).length > 1) {
   console.error("--discover-models cannot be combined with --preflight or --verify-surface-coverage.");
   process.exit(2);
+}
+
+if (forceEnvTemplate && !writeEnvTemplate) {
+  console.error("--force-env-template requires --write-env-template.");
+  process.exit(2);
+}
+
+if (writeEnvTemplate) {
+  if (!envTemplatePath || envTemplatePath.startsWith("--")) {
+    console.error("--write-env-template requires an output path.");
+    process.exit(2);
+  }
+  if ([discoverModels, preflight, verifySurfaceCoverage].some(Boolean)) {
+    console.error("--write-env-template cannot be combined with --discover-models, --preflight, or --verify-surface-coverage.");
+    process.exit(2);
+  }
+  if (reportPath) {
+    console.error("--write-env-template cannot be combined with --report.");
+    process.exit(2);
+  }
+  if (envFilePath) {
+    console.error("--write-env-template cannot be combined with --runinfra-env-file or Node --env-file.");
+    process.exit(2);
+  }
 }
 
 function parseEnvFileContent(content) {
@@ -94,8 +121,6 @@ const canonicalEnvAliases = new Map([
   ["RUNINFRA_ASR_FIXTURE_PATH", ["TEST_ASR_FILE"]],
   ["RUNINFRA_VOICE_PIPELINE_ID", ["TEST_PIPELINE_ID"]],
 ]);
-
-loadEnvFileIntoProcessEnv(envFilePath, envFileMayAlreadyBeLoaded);
 
 function logicalEnvGroup(name) {
   const names = new Set([name]);
@@ -212,6 +237,111 @@ const relevantEnv = [
   "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY",
   "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD",
 ];
+
+function buildStrictLiveCanaryEnvTemplate() {
+  return [
+    "# RunInfra SDK strict live-canary env template.",
+    "# Fill values in a private file and pass it with --runinfra-env-file.",
+    "# Do not commit this file, paste registry tokens into it, or use it as promotion evidence.",
+    "",
+    "# Gateway and execution controls.",
+    `RUNINFRA_BASE_URL=${productionBaseURL}`,
+    "RUNINFRA_API_KEY=",
+    "RUNINFRA_CANARY_TIMEOUT_SECONDS=120",
+    "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS=25",
+    "",
+    "# Text, chat, responses, streaming, embeddings, and images.",
+    "RUNINFRA_LLM_MODEL=",
+    "RUNINFRA_EMBEDDING_MODEL=",
+    "RUNINFRA_EMBEDDING_DIMENSIONS=",
+    "RUNINFRA_IMAGE_MODEL=",
+    "RUNINFRA_IMAGE_SIZE=",
+    "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
+    "",
+    "# Text to speech. Use either RUNINFRA_TTS_VOICE or the reference-audio pair.",
+    "RUNINFRA_TTS_MODEL=",
+    "RUNINFRA_TTS_VOICE=",
+    "RUNINFRA_TTS_REF_AUDIO=",
+    "RUNINFRA_TTS_REF_TEXT=",
+    "RUNINFRA_TTS_TASK_TYPE=Base",
+    "RUNINFRA_TTS_RESPONSE_FORMAT=mp3",
+    "",
+    "# Speech to text. For GitHub Actions, store the fixture as the base64 secret below.",
+    "RUNINFRA_ASR_MODEL=",
+    "RUNINFRA_ASR_LANGUAGE=en",
+    "RUNINFRA_ASR_RESPONSE_FORMAT=json",
+    "RUNINFRA_ASR_FIXTURE_PATH=",
+    "# RUNINFRA_ASR_FIXTURE_BASE64=",
+    "RUNINFRA_ASR_FIXTURE_CONTENT_TYPE=audio/wav",
+    "RUNINFRA_ASR_EXPECTED_TEXT=",
+    "",
+    "# Voice pipeline. The audio fixture falls back to RUNINFRA_ASR_FIXTURE_PATH when unset.",
+    "RUNINFRA_PIPELINE_API_KEY=",
+    "RUNINFRA_VOICE_PIPELINE_ID=",
+    "RUNINFRA_VOICE_PIPELINE_API_KEY=",
+    "RUNINFRA_VOICE_PIPELINE_AUDIO_PATH=",
+    "# RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64=",
+    "RUNINFRA_VOICE_PIPELINE_AUDIO_CONTENT_TYPE=audio/wav",
+    "RUNINFRA_VOICE_PIPELINE_EXPECTED_TEXT=",
+    "",
+    "# Explicitly opt in to replaying an idempotent request during the strict canary.",
+    "RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1",
+    "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD=",
+    "",
+    "# Legacy RunPipe aliases accepted by the runner. Prefer RUNINFRA_* for new setup.",
+    "TEST_MODEL=",
+    "TEST_EMBEDDING_MODEL=",
+    "TEST_IMAGE_MODEL=",
+    "TEST_TTS_MODEL=",
+    "TEST_TTS_VOICE=",
+    "TEST_TTS_REF_AUDIO=",
+    "TEST_TTS_REF_TEXT=",
+    "TEST_TTS_TASK_TYPE=",
+    "TEST_ASR_MODEL=",
+    "TEST_ASR_FILE=",
+    "TEST_PIPELINE_ID=",
+    "",
+  ].join("\n");
+}
+
+function assertEnvTemplateDoesNotLeak(template) {
+  const matchedPattern = findForbiddenContent(template);
+  if (matchedPattern) {
+    throw new Error(`strict live-canary env template contains forbidden content: ${matchedPattern.label}`);
+  }
+  if (sensitiveEnvValues().some((value) => template.includes(value))) {
+    throw new Error("strict live-canary env template contains a sensitive environment value");
+  }
+}
+
+function writeStrictLiveCanaryEnvTemplate(outputPath) {
+  const absolute = resolve(outputPath);
+  if (existsSync(absolute) && !forceEnvTemplate) {
+    throw new Error("strict live-canary env template already exists; pass --force-env-template to replace it.");
+  }
+  const template = buildStrictLiveCanaryEnvTemplate();
+  assertEnvTemplateDoesNotLeak(template);
+  try {
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, template);
+  } catch {
+    throw new Error("failed to write strict live-canary env template.");
+  }
+}
+
+if (writeEnvTemplate) {
+  try {
+    writeStrictLiveCanaryEnvTemplate(envTemplatePath);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
+  console.log("Wrote strict live-canary env template.");
+  process.exit(0);
+}
+
+loadEnvFileIntoProcessEnv(envFilePath, envFileMayAlreadyBeLoaded);
+
 const ttsResponseFormats = ["mp3", "opus", "aac", "flac", "wav", "pcm"];
 const idempotencyEvidenceFieldRequirementMessage =
   "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths";

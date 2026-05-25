@@ -37,6 +37,19 @@ GA inputs are explicit without exposing values. It also fails closed if the
 readiness requirement rows drift from the canonical strict matrix, so a new
 live row cannot be added without a matching preflight requirement.
 
+To create a private local env file without copying secrets into docs or
+reports, generate the static template and fill it outside git:
+
+```bash
+node scripts/run-sdk-live-canaries.mjs --write-env-template .env.sdk-live.local
+```
+
+The template writer never reads current env values and refuses to overwrite an
+existing file unless `--force-env-template` is supplied. The generated file
+includes local fixture path fields plus commented GitHub Actions base64 fixture
+secret names, but only the strict preflight and live reports are promotion
+evidence.
+
 If canary inputs live in a local env file, load it through
 `--runinfra-env-file <path-to-env-file>`:
 

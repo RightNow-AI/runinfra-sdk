@@ -417,8 +417,14 @@ node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-
 If canary inputs live in a local env file, load it through the runner:
 
 ```bash
+node scripts/run-sdk-live-canaries.mjs --write-env-template .env.sdk-live.local
 node scripts/run-sdk-live-canaries.mjs --runinfra-env-file <path-to-env-file> --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 ```
+
+`--write-env-template <path-to-env-file>` creates a static private template
+with canonical `RUNINFRA_*` names, safe defaults, blank placeholders, and
+commented GitHub fixture-secret names. It never copies current env values and
+refuses to overwrite an existing file unless `--force-env-template` is passed.
 
 Do not use Node's `--env-file` option in promotion commands.
 `--runinfra-env-file <path-to-env-file>` keeps env-file parsing, explicit
