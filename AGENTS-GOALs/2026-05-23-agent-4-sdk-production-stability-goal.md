@@ -3361,6 +3361,9 @@ Change made:
   change their `candidate.sourceDigestSha256` and `candidate.sourceFileCount`
   if the code-scanning release-gate verifier changes.
 - Added a TypeScript regression test requiring that manifest entry.
+- Tightened the redacted preflight-report test so
+  `candidate.sourceFileCount` must equal the current source manifest length,
+  not just be greater than an old lower bound.
 
 TDD evidence:
 
@@ -3398,6 +3401,11 @@ Fresh verification:
   `node scripts\verify-workflow-policy.mjs`, and
   `node scripts\verify-version-sync.mjs` passed.
 - `git diff --check` passed with expected Windows CRLF working-copy warnings.
+- Follow-up focused check passed:
+  `pnpm --dir typescript test -- --reporter dot --testNamePattern
+  "redacted strict live-canary preflight report|GitHub code-scanning release
+  gate in source digests"` passed 2 selected tests after tightening the exact
+  source-count assertion.
 
 Current blockers remain:
 

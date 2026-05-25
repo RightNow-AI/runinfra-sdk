@@ -3305,7 +3305,8 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
-  it("writes a redacted strict live-canary preflight report without running live calls", () => {
+  it("writes a redacted strict live-canary preflight report without running live calls", async () => {
+    const sourceManifest = await import("../../scripts/live-canary-source-files.mjs") as { sourceDigestFileLabels: string[] };
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
     const reportPath = join(tmp, "readiness.json");
     try {
@@ -3362,7 +3363,7 @@ with open(report, "w", encoding="utf-8") as handle:
         artifacts: [],
       });
       expect(report.candidate?.sourceDigestSha256).toMatch(/^[a-f0-9]{64}$/u);
-      expect(report.candidate?.sourceFileCount).toBeGreaterThanOrEqual(8);
+      expect(report.candidate?.sourceFileCount).toBe(sourceManifest.sourceDigestFileLabels.length);
       expect(report.readiness?.status).toBe("blocked");
       expect(report.readiness?.rows?.map((row) => row.name)).toEqual(report.expectedRows);
       expect(report.expectedRows).toEqual(expect.arrayContaining([
