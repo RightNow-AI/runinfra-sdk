@@ -121,7 +121,19 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             root_readme,
         )
         self.assertIn(
+            "| Chat completions, Responses | Beta, contract-tested. Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter` |",
+            root_readme,
+        )
+        self.assertIn(
             "| `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |",
+            agent_notes,
+        )
+        self.assertIn(
+            "Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter`",
+            package_readme,
+        )
+        self.assertIn(
+            "Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter`",
             agent_notes,
         )
         normalized_changelog = " ".join(changelog.split())
@@ -132,6 +144,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         for text in (package_readme, root_readme, agent_notes, changelog):
             self.assertNotIn("LLM + embeddings tested", text)
             self.assertNotIn("Live-canary coverage is currently restricted to LLM + embeddings", text)
+            self.assertNotIn("streaming final/slow-consumer rows pass against production", text)
 
     def test_readme_documents_safe_base_url_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()

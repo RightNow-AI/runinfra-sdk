@@ -69,7 +69,7 @@ See each package's own README + CHANGELOG for surface-level docs.
 
 | Surface | Status |
 |---|---|
-| Chat completions, Responses | Beta, contract-tested. Strict live GA is still blocked until streaming final/slow-consumer rows pass against production |
+| Chat completions, Responses | Beta, contract-tested. Strict live source canaries currently pass chat/responses rows except production `error.body.unsupported_parameter` |
 | Embeddings | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |
 | Images, Audio TTS/ASR | **Experimental**, not live-canary verified |
 | Voice pipeline | **Experimental**, pipeline-scoped route, not live-canary verified |

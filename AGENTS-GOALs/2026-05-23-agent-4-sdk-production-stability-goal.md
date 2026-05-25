@@ -3140,6 +3140,83 @@ Current blockers:
 4. No push, deploy, publish, or paid canary provisioning was performed in this
    checkpoint.
 
+## Checkpoint: 2026-05-25 04:21 Asia/Amman
+
+Current state: still not GA, not deployed, and not published. Closed a stale
+public-documentation readiness gap: the package READMEs and agent handoff no
+longer claim chat/responses strict live GA is blocked on streaming
+final/slow-consumer rows. Fresh evidence shows those rows now pass in the
+source live canary, while production still fails only
+`error.body.unsupported_parameter` and skips the multimodal/idempotency rows.
+
+Changes made:
+
+- Updated root `README.md`, `typescript/README.md`, `python/README.md`, and
+  `AGENT-NOTES.md` to state that strict source canaries currently pass
+  chat/responses rows except production `error.body.unsupported_parameter`.
+- Added TypeScript and Python doc regressions so the stale
+  `streaming final/slow-consumer rows pass against production` blocker wording
+  cannot reappear in the shipped docs.
+
+TDD evidence:
+
+- Red phase passed as expected:
+  `pnpm --dir typescript test -- --reporter dot --testNamePattern "modality status aligned|overclaim embeddings"`
+  failed 2 selected tests before the docs were updated.
+- Red phase passed as expected:
+  `python -m pytest python\tests\test_runinfra_sdk.py -q -k "docs_do_not_overclaim_embeddings_live_verification"`
+  failed before the docs were updated.
+
+Fresh verification:
+
+- Focused green phase:
+  `pnpm --dir typescript test -- --reporter dot --testNamePattern "modality status aligned|overclaim embeddings"`
+  passed 2 selected tests.
+- Focused green phase:
+  `python -m pytest python\tests\test_runinfra_sdk.py -q -k "docs_do_not_overclaim_embeddings_live_verification"`
+  passed 1 selected test.
+- `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` passed:
+  196 tests.
+- `python -m pytest python\tests -q` passed: 130 tests and 127 subtests.
+- `pnpm --dir typescript build` passed.
+- `pnpm --dir typescript pack --pack-destination .` passed and produced
+  `typescript\runinfra-sdk-0.1.4.tgz`.
+- `python -m build python` passed and produced the `0.1.4` wheel and sdist.
+- `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz`
+  passed.
+- `python scripts\verify-python-package.py python\dist\runinfra-0.1.4-py3-none-any.whl python\dist\runinfra-0.1.4.tar.gz`
+  passed.
+- `python -m twine check python\dist\runinfra-0.1.4-py3-none-any.whl python\dist\runinfra-0.1.4.tar.gz`
+  passed.
+- Artifact clean installs passed for TypeScript npm tarball, Python wheel, and
+  Python sdist.
+- `node scripts\verify-workflow-policy.mjs` passed.
+- `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed
+  with 22 declared surfaces, 26 covered surfaces, and 49 rows.
+- `git diff --check` passed with Windows CRLF working-copy warnings only.
+
+Second-opinion review:
+
+- Fresh subagent spawn was unavailable because the agent thread limit was
+  reached.
+- Reused existing agent `019e5ca1-003f-7091-a8a5-7097af886fbc` for a
+  read-only review of the uncommitted diff.
+- Result: no findings.
+
+Current blockers:
+
+1. Production `api.runinfra.ai` still has not picked up the locally merged
+   RunPipe gateway unsupported-parameter rejection.
+2. Multimodal/idempotency strict rows still need scoped live canary
+   models/fixtures/env inputs.
+3. npm/PyPI `0.1.4` is not published yet. Keep publish blocked until production
+   source canaries, strict artifact live canaries, registry artifact scans,
+   clean registry installs, CodeQL/security checks, and independent review are
+   green.
+4. No push, deploy, publish, or paid canary provisioning was performed in this
+   checkpoint.
+
 ## Checkpoint: 2026-05-25 04:16 Asia/Amman
 
 Current state: still not GA, not deployed, and not published. Local package
