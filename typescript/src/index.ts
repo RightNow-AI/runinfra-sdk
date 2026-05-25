@@ -1530,6 +1530,15 @@ export class RunInfra {
     constructEvent: typeof constructWebhookEvent;
   };
 
+  /**
+   * Voice pipeline surface.
+   *
+   * @experimental As of v0.1.4, this method has NOT been verified end-to-end
+   * against a live deployed pipeline in our canary suite. It requires a
+   * pipeline-scoped client and posts binary audio to `/pipeline`, but you
+   * should test against your own deployed pipeline before using in production.
+   * Live-canary verification is tracked for v1.0.0 GA.
+   */
   readonly voice: {
     pipeline: {
       create: (request: VoicePipelineRequest, options?: RunInfraRequestOptions) => Promise<VoicePipelineResponse>;

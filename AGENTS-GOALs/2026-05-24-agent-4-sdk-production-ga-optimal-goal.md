@@ -451,6 +451,35 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the refreshed no-env reports still cannot promote as GA.
 - No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
 
+### 2026-05-25T22:56:10+03:00 - Agent 4
+- Closed a shipped-source truth gap for the public voice pipeline surface. README/changelog already marked `client.voice.pipeline.create()` experimental, but TypeScript generated declarations and Python runtime help did not carry the same warning on the actual public SDK surface.
+- Added `@experimental` JSDoc to TypeScript `RunInfra.voice` and a `[EXPERIMENTAL]` Python docstring to `_Voice`, both stating that v0.1.4 voice pipeline is not live-canary verified and should be tested against a deployed pipeline before production use.
+- Added TS/Python regressions that first failed on the missing voice annotations, then passed after the source updates. Updated both package changelogs to record the annotation change.
+- Refreshed safe live catalog discovery with the scoped SDK-live env file. Discovery completed via `GET /models`, catalog count `1`, classified count `1`, invalid count `0`; it still only classified `RUNINFRA_LLM_MODEL` as `Qwen/Qwen2.5-0.5B-Instruct` and found no embedding/image/TTS/ASR candidates.
+- Verification passed:
+  - Focused TS voice annotation test.
+  - Focused Python voice annotation test.
+  - Python source compile.
+  - TypeScript no-emit typecheck.
+  - Full TypeScript suite: `234` tests.
+  - Full Python suite: `151` tests and `142` subtests.
+  - Surface coverage: `58` rows, `28` surfaces, no uncovered surfaces/rows.
+  - Secret scan, version sync, workflow policy.
+  - Rebuilt npm tarball, Python wheel, and Python sdist.
+  - npm package scanner, Python artifact scanner, `twine check`, and clean artifact install/import for npm, Python wheel, and Python sdist.
+  - `git diff --check` reported only the expected Windows LF-to-CRLF warnings.
+- CodeRabbit CLI is still not installed, so external CLI review could not run. Local adversarial review of the diff found no blocker: comments/docstrings only, no runtime behavior change, no secret/report/publish-path weakening.
+- Refreshed no-env reports for the current source state:
+  - Source digest: `e175d512b1658fc7f22378d4cc0b1ada9b75fd36fe003039353fc6f72f9cabd5`
+  - Source file count: `37`
+  - NPM artifact SHA-256: `8016165164a2800f71e1b4da82f489fcc25f4cb25c1ab072198c5585bda40c2b`
+  - Python wheel SHA-256: `fccfa11a1008df98175009cb442cf575a3362bd8c608de5e6f134a75e43b2729`
+  - Python sdist SHA-256: `80b75a54ef937cb9088030038011b006903d45b1333b1a14e97e13f4630e6d3f`
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+- Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows. Remaining missing inputs are still embedding model/dimensions, image model/size/response format, TTS model/voice or ref-audio pair/response format, ASR model/language/response format/fixture/expected text, voice-pipeline audio or ASR fixture, voice-pipeline expected text or ASR expected text, and `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1`.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the refreshed no-env reports still cannot promote as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
 ### 2026-05-25T19:07:12+03:00 - Agent 4
 - Extended browser-security hardening with `browser.api_key_guard.local`. The RED TypeScript and Python parity tests first failed because the row was absent from the canonical matrix, parent readiness, child canaries, docs, and surface coverage.
 - Added the row to the canonical live canary matrix, parent readiness requirements, public-surface coverage, TypeScript child canary, Python child canary, `LIVE-CANARIES.md`, both package changelogs, and TS/Python parity tests.

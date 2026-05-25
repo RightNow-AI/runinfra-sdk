@@ -197,6 +197,7 @@ describe("RunInfra TypeScript SDK", () => {
   it("documents voice pipeline as experimental instead of unsupported", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
     expect(readme).toContain(
       "| Voice pipeline | `client.voice.pipeline.create` | **Experimental**, pipeline-scoped route, not live-canary verified |",
@@ -204,6 +205,9 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).not.toContain("Voice pipeline | `client.voice.pipeline.create` | Not shipped");
     expect(changelog).not.toContain("client.voice.pipeline.create` is not shipped");
     expect(changelog).toContain("client.voice.pipeline.create` posts audio to the pipeline-scoped `/pipeline` route");
+    expect(source).toMatch(
+      /\/\*\*[\s\S]*Voice pipeline surface\.[\s\S]*@experimental As of v0\.1\.4, this method has NOT been verified end-to-end[\s\S]*readonly voice:/u,
+    );
   });
 
   it("documents safe base URL requirements", () => {

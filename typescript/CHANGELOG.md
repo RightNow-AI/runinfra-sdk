@@ -53,6 +53,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 - Added a local strict canary row proving the shipped SDK fails closed in
   browser-like runtimes unless `dangerouslyAllowBrowser: true` is explicitly
   set.
+- Added `@experimental` JSDoc to the public voice pipeline surface so IDEs and
+  generated declarations match its not-yet-live-verified status.
 - Added a local strict canary row proving initial transport, response body read,
   status error body, and stream read public errors redact the configured API
   key while still sending it only as a bearer header.

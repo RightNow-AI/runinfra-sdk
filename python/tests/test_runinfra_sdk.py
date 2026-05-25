@@ -110,6 +110,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
     def test_readme_documents_voice_pipeline_as_experimental_instead_of_unsupported(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
         changelog = Path(__file__).resolve().parents[1].joinpath("CHANGELOG.md").read_text()
+        source = Path(__file__).resolve().parents[1].joinpath("runinfra", "__init__.py").read_text()
 
         self.assertIn(
             "| Voice pipeline | `client.voice.pipeline.create` | **Experimental**, pipeline-scoped route, not live-canary verified |",
@@ -118,6 +119,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertNotIn("Voice pipeline | `client.voice.pipeline.create` | Not shipped", readme)
         self.assertNotIn("client.voice.pipeline.create` is not shipped", changelog)
         self.assertIn("client.voice.pipeline.create` posts audio to the pipeline-scoped `/pipeline` route", changelog)
+        voice_start = source.index("class _Voice:")
+        runinfra_start = source.index("class RunInfra:", voice_start)
+        voice_block = source[voice_start:runinfra_start]
+        self.assertIn("[EXPERIMENTAL] As of v0.1.4, this method has NOT been verified end-to-end", voice_block)
+        self.assertIn("Live-canary verification is tracked for v1.0.0 GA", voice_block)
 
     def test_pyproject_uses_non_deprecated_license_metadata(self):
         pyproject = Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text()

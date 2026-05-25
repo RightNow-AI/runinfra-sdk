@@ -56,6 +56,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Added a local strict canary row proving the Python package exposes no browser
   token helper surface while the TypeScript package enforces the browser
   API-key guard.
+- Added a `[EXPERIMENTAL]` docstring to the public voice pipeline surface so
+  runtime help matches its not-yet-live-verified status.
 - Added a local strict canary row proving initial transport, response body read,
   status error body, and stream read public errors redact the configured API
   key while still sending it only as a bearer header. The Python canary also
