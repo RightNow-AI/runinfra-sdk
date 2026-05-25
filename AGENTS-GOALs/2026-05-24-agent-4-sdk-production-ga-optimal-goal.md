@@ -92,3 +92,14 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
 - Verified current public registry availability for SDK `0.1.4` without publishing: `node scripts\verify-clean-installs.mjs --package both --mode registry --version 0.1.4 --registry-attempts 1 --registry-retry-delay-ms 1000` failed at registry preflight.
 - Canonical npm does not currently have `@runinfra/sdk@0.1.4`, and canonical PyPI does not currently have `runinfra==0.1.4`. The script stopped before creating consumer install workspaces.
 - Registry install/import proof for `0.1.4` remains blocked until a trusted-publishing release is actually performed after strict readiness/live/artifact promotion gates pass.
+
+### 2026-05-25T13:25:10+03:00 - Agent 4
+- Re-checked the current RunPipe production-gateway source state after `git fetch --all --prune`. `origin/main` still does not contain the SDK gateway contract fix commit family; the current production blocker is therefore integration/deploy state, not missing local SDK artifact code.
+- The active RunPipe checkout is dirty with unrelated plan/token/UI work, so no edits or merges were done there.
+- Used the existing isolated RunPipe worktree `C:\Users\jaber\RightNow-Full\RunPipe-sdk-gateway-main-20260525` on `fix/sdk-gateway-contracts-main-20260525` for the gateway candidate. It was clean, contained the SDK gateway contract tests/code, and was behind current `origin/main`.
+- Merged current `origin/main` into that isolated gateway branch. Merge commit: `bc8ea7aa Merge remote-tracking branch 'origin/main' into fix/sdk-gateway-contracts-main-20260525`.
+- Verified the post-merge gateway candidate with focused checks: `pnpm test -- app/api/v1/workspace-flat.test.ts -t "rejects reserved runinfra-prefixed body parameters before proxying"` passed 1 test; `pnpm test -- app/api/v1/[...path]/route.test.ts -t "rejects reserved runinfra-prefixed responses parameters before proxying"` passed 1 test; `pnpm test -- lib/api/responses-compat.test.ts` passed 16 tests.
+- Verified `pnpm typecheck` in the isolated gateway worktree: passed.
+- Verified `git diff --check HEAD~1..HEAD` in the isolated gateway worktree: passed.
+- Current gateway candidate branch is clean and ahead of `origin/main` by 11 commits. It is ready for review/push/deploy approval as the local fix candidate for the SDK live-canary `error.body.unsupported_parameter` blocker, but it has not been pushed or deployed by Agent 4 in this checkpoint.
+- SDK GA remains blocked until that production gateway behavior is live, strict multimodal/idempotency canary inputs exist and pass, artifact and registry install/import gates pass, and independent review is clean.
