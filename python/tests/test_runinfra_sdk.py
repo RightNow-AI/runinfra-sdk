@@ -513,6 +513,21 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn(row, live_canaries)
         self.assertIn("custom request headers", live_canaries)
 
+    def test_child_canaries_cover_local_timeout_row(self):
+        runner = Path(__file__).resolve().parents[2].joinpath("scripts", "run-sdk-live-canaries.mjs").read_text()
+        typescript_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-typescript.mjs").read_text()
+        python_canary = Path(__file__).resolve().parents[2].joinpath("scripts", "sdk-live-canary-python.py").read_text()
+        live_canaries = Path(__file__).resolve().parents[2].joinpath("LIVE-CANARIES.md").read_text()
+        row = "request.timeout.local"
+
+        self.assertIn(f'"{row}"', runner)
+        self.assertIn(f'record("{row}"', typescript_canary)
+        self.assertIn("localTimeoutClient", typescript_canary)
+        self.assertIn(f'"{row}"', python_canary)
+        self.assertIn("local_timeout_client", python_canary)
+        self.assertIn(row, live_canaries)
+        self.assertIn("per-request timeout", live_canaries)
+
     def test_runner_has_public_surface_coverage_gate(self):
         scripts_dir = Path(__file__).resolve().parents[2].joinpath("scripts")
         runner = scripts_dir.joinpath("run-sdk-live-canaries.mjs").read_text()

@@ -561,6 +561,30 @@ def local_retry_client(responses: Iterable[RunInfraResponse]) -> Dict[str, Any]:
     }
 
 
+class LocalTimeoutTransport:
+    def __init__(self) -> None:
+        self.calls: List[Any] = []
+
+    def __call__(self, request: Any) -> RunInfraResponse:
+        self.calls.append(request)
+        raise TimeoutError("timed out")
+
+
+def local_timeout_client() -> Dict[str, Any]:
+    transport = LocalTimeoutTransport()
+    return {
+        "client": RunInfra(
+            api_key="sk-ri-live-canary-local",
+            base_url="http://localhost:1/v1",
+            max_retries=0,
+            retry_base_seconds=0,
+            timeout_seconds=1,
+            transport=transport,
+        ),
+        "calls": transport.calls,
+    }
+
+
 def assert_retry_call_count(calls: List[Any], expected: int, label: str) -> Dict[str, Any]:
     if len(calls) != expected:
         raise AssertionError(f"{label} expected {expected} local calls, got {len(calls)}")
@@ -883,6 +907,7 @@ def main() -> int:
     record("error.request.invalid_options", [], _invalid_request_options)
     record("request.client_request_id.local", [], _request_client_request_id_local)
     record("request.custom_headers.local", [], _request_custom_headers_local)
+    record("request.timeout.local", [], _request_timeout_local)
     record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], lambda: _unsupported_body_parameter(client(), llm_model))
     record("retry.safety.get.local", [], _retry_safety_get_local)
     record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
@@ -1562,6 +1587,39 @@ def _request_custom_headers_local() -> Dict[str, Any]:
             "rejectedOverride": "authorization",
         }
     raise AssertionError("custom Authorization header override unexpectedly succeeded")
+
+
+def _request_timeout_local() -> Dict[str, Any]:
+    local = local_timeout_client()
+    try:
+        local["client"].responses.create(
+            model="runinfra-local-request-options-model",
+            input="local request option canary",
+            request_options={
+                "timeout_seconds": 0.05,
+                "max_retries": 0,
+            },
+        )
+    except BaseException as error:  # noqa: BLE001
+        if not isinstance(error, RunInfraTimeoutError) or getattr(error, "type", None) != "timeout_error":
+            raise AssertionError(f"request.timeout.local expected RunInfraTimeoutError, got {error.__class__.__name__}")
+        if len(local["calls"]) != 1:
+            raise AssertionError(f"request.timeout.local expected 1 local call, got {len(local['calls'])}")
+        call = local["calls"][0]
+        if getattr(call, "timeout_seconds", None) != 0.05:
+            raise AssertionError("request.timeout.local did not pass per-request timeout to transport")
+        assert_request_body_does_not_contain(
+            call,
+            ["timeoutMs", "timeout_seconds", "timeoutSeconds"],
+            "request.timeout.local",
+        )
+        return {
+            "errorType": getattr(error, "type", None),
+            "errorName": error.__class__.__name__,
+            "attempts": len(local["calls"]),
+            "timeoutSeconds": call.timeout_seconds,
+        }
+    raise AssertionError("request timeout unexpectedly succeeded")
 
 
 def _retry_safety_get_local() -> Dict[str, Any]:

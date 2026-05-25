@@ -754,6 +754,45 @@ function localRetryClient(responses) {
   };
 }
 
+function localTimeoutClient() {
+  const calls = [];
+  const aborts = [];
+  return {
+    aborts,
+    calls,
+    client: client({
+      apiKey: "sk-ri-live-canary-local",
+      baseURL: "http://localhost:1/v1",
+      maxRetries: 0,
+      retryBaseMs: 0,
+      timeoutMs: 1000,
+      fetch: (url, init = {}) => {
+        const startedAt = performance.now();
+        calls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body, signal: init.signal });
+        if (!init.signal) {
+          return Promise.reject(new Error("local timeout canary expected AbortSignal"));
+        }
+        return new Promise((_resolve, reject) => {
+          const guard = setTimeout(
+            () => reject(new Error("local timeout canary did not observe per-request abort")),
+            250,
+          );
+          const abort = () => {
+            clearTimeout(guard);
+            aborts.push(performance.now() - startedAt);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          };
+          if (init.signal?.aborted) {
+            abort();
+            return;
+          }
+          init.signal?.addEventListener("abort", abort, { once: true });
+        });
+      },
+    }),
+  };
+}
+
 function headerValue(headers, name) {
   const lower = name.toLowerCase();
   if (headers instanceof Headers) return headers.get(name);
@@ -1560,6 +1599,33 @@ await record("request.custom_headers.local", [], async () => {
     return { ...evidence, requestId: response._request_id, customHeader: "present", rejectedOverride: "authorization" };
   }
   throw new Error("custom Authorization header override unexpectedly succeeded");
+});
+
+await record("request.timeout.local", [], async () => {
+  const { client: local, calls, aborts } = localTimeoutClient();
+  try {
+    await local.responses.create(
+      { model: "runinfra-local-request-options-model", input: "local request option canary" },
+      { timeoutMs: 5, maxRetries: 0 },
+    );
+  } catch (error) {
+    if (!(error instanceof RunInfraTimeoutError) || error.type !== "timeout_error") {
+      throw new Error(`request.timeout.local expected RunInfraTimeoutError, got ${error?.name ?? typeof error}`);
+    }
+    if (calls.length !== 1) {
+      throw new Error(`request.timeout.local expected 1 local call, got ${calls.length}`);
+    }
+    if (aborts.length !== 1 || aborts[0] > 250) {
+      throw new Error(`request.timeout.local expected prompt per-request abort, got ${aborts[0] ?? "none"}`);
+    }
+    assertRequestBodyDoesNotContain(
+      calls[0],
+      ["timeoutMs", "timeout_seconds", "timeoutSeconds"],
+      "request.timeout.local",
+    );
+    return { errorType: error.type, errorName: error.name, attempts: calls.length, timeoutMs: 5, signalObserved: true };
+  }
+  throw new Error("request timeout unexpectedly succeeded");
 });
 
 await record("error.body.unsupported_parameter", ["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"], async () => {

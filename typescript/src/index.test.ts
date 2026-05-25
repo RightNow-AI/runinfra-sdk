@@ -2480,6 +2480,30 @@ class RunInfra:
       .toContain(row);
   });
 
+  it("keeps child canaries in parity for local timeout coverage", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { publicSurfaceCoverage } =
+      await import("../../scripts/live-canary-surface-coverage.mjs") as {
+        publicSurfaceCoverage: Array<{ surface: string; rows: string[] }>;
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const row = "request.timeout.local";
+
+    expect(expectedRows).toContain(row);
+    expect(runner).toContain(`["${row}", () => []]`);
+    expect(typescriptCanary).toContain(`record("${row}"`);
+    expect(typescriptCanary).toContain("localTimeoutClient");
+    expect(pythonCanary).toContain(`"${row}"`);
+    expect(pythonCanary).toContain("local_timeout_client");
+    expect(liveCanaries).toContain(row);
+    expect(liveCanaries).toContain("per-request timeout");
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "request option validation")?.rows)
+      .toContain(row);
+  });
+
   it("documents public-repo production promotion without stale monorepo commands", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
     const agentNotes = readFileSync(new URL("../../AGENT-NOTES.md", import.meta.url), "utf8");

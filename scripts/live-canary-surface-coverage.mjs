@@ -110,7 +110,12 @@ export const publicSurfaceCoverage = [
   { surface: "webhook delivery create/list absence", rows: ["webhooks.delivery_surface.absent"] },
   {
     surface: "request option validation",
-    rows: ["error.request.invalid_options", "request.client_request_id.local", "request.custom_headers.local"],
+    rows: [
+      "error.request.invalid_options",
+      "request.client_request_id.local",
+      "request.custom_headers.local",
+      "request.timeout.local",
+    ],
   },
   { surface: "unsupported body parameter handling", rows: ["error.body.unsupported_parameter"] },
   { surface: "authentication error mapping", rows: ["error.auth.invalid_key"] },

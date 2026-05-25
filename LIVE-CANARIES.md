@@ -214,6 +214,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `error.request.invalid_options`
 - `request.client_request_id.local`
 - `request.custom_headers.local`
+- `request.timeout.local`
 - `error.body.unsupported_parameter`
 - `retry.safety.get.local`
 - `retry.safety.post.requires_idempotency.local`
@@ -300,7 +301,9 @@ are sent once even when an idempotency key is present.
 Local request-option rows do not call the production gateway; they prove
 user-supplied client request IDs and custom request headers are sent as headers,
 are not serialized into JSON request bodies, and cannot override
-SDK-controlled credential or tracing headers.
+SDK-controlled credential or tracing headers. Local per-request timeout rows
+also prove timeout options are applied without serializing timeout option names
+into JSON request bodies.
 Webhook signature rows use installed package artifacts and deterministic local
 payloads because they are verification helpers, not live delivery endpoints.
 
