@@ -612,3 +612,29 @@ Do not publish, push, deploy, rotate secrets, provision paid infra, or change pr
   - TS/Python request parameter surfaces are already closed around explicit typed parameters plus explicit `extraBody` escape hatches; unknown-field and extra-body canary rows cover this.
 - Current GA blockers remain external or live-input based, not a known local SDK code gap: trusted-publishing release has not happened, canonical registry install/import proof cannot pass, strict live multimodal inputs and deployed canary backends are missing, and promotion reports still correctly reject the candidate.
 - No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T12:31:19+03:00 - Agent 4
+- Ported the current production-gateway Responses unsupported-parameter fix onto a fresh RunPipe worktree based on current `origin/main`, not the stale broad gateway branch and not the dirty active RunPipe checkout.
+- RunPipe gateway worktree:
+  - Path: `C:\Users\jaber\RightNow-Full\RunPipe-sdk-gateway-current-20260526`
+  - Branch: `fix/sdk-gateway-contracts-current-20260526`
+  - Base before patch: `e348caca7c737df09ca26b0b2f3ac99d36498238`
+  - Local fix commit: `81095bde29b1287da459e5a565c1ca002cdcc2ce` (`fix: reject unsupported responses parameters`)
+  - Branch relation after commit: `0` behind / `1` ahead of `origin/main`
+- The gateway adapter now rejects reserved or unsupported top-level `/v1/responses` body parameters before converting to chat completions. This includes the live SDK canary probe `runinfra_unsupported_parameter_probe` and stateful Responses fields the gateway does not implement, such as `previous_response_id`, `conversation`, `background`, `include`, `store`, and `n`.
+- The flat `/v1/responses` route and the pipeline-scoped `/api/v1/{pipelineId}/responses` route now preserve the specific `unsupported_parameter` error type. The pipeline-scoped route also returns v1 trace headers on that new early failure path.
+- Followed TDD:
+  - Helper regression first failed because `responsesRequestToChatCompletion()` silently returned `ok: true` for unsupported fields.
+  - Pipeline route regression first failed because the request returned `200` and proxied.
+  - Flat route regression first failed because it returned `invalid_request_error` instead of `unsupported_parameter`.
+  - All three passed after the scoped gateway fix.
+- Verification passed:
+  - Baseline focused tests before the patch were green after `pnpm install --frozen-lockfile`.
+  - `pnpm exec vitest run lib/api/responses-compat.test.ts app/api/v1/[...path]/route.test.ts app/api/v1/workspace-flat.test.ts`: `3` files, `184` tests passed.
+  - `pnpm typecheck` passed.
+  - `git diff --check` passed, with only Windows LF/CRLF warnings.
+  - `pnpm lint` exited `0` with existing repository warnings.
+  - Independent read-only subagent review found no real bugs or regressions in the scoped diff.
+- Broader repo caveat: full `pnpm test` on current RunPipe `origin/main` still fails in unrelated analytics/runbook/deployment-canary suites outside the six touched SDK-gateway files. Do not treat that full-suite run as proof this patch is bad or as proof the full RunPipe repo is currently release-clean.
+- Rechecked RunPod inventory read-only after the gateway commit. Sanitized result: one existing LLM serverless canary endpoint still exists (`runinfra-sdk-canary-llm-mpiw58hc`, endpoint id `xag4fq146bsff0`, L4/vLLM, model `Qwen/Qwen2.5-0.5B-Instruct`, min workers `0`, max workers `1`), no pods exist, and there are still no embedding, image, TTS, ASR, or voice-pipeline canary endpoints. Do not copy raw RunPod MCP endpoint output into commits or chat because worker environment fields include provider-managed secrets.
+- No push, deploy, production merge, registry publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed. This commit is only a local RunPipe gateway fix candidate until it is pushed, reviewed, merged to main, deployed, and then proven by the live SDK canary row `error.body.unsupported_parameter`.
