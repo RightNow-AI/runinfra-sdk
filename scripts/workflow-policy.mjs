@@ -366,6 +366,15 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
         !/pip install --upgrade build pytest twine/u.test(workflows),
     },
     {
+      label: "publish artifact build installs Python tooling before TypeScript tests",
+      ok: jobHasCommandBetween(
+        buildArtifactsJob,
+        "python -m pip install -r python/requirements-dev.txt",
+        "Setup Python",
+        ["Test TypeScript"],
+      ),
+    },
+    {
       label: "CI tests every supported Node major",
       ok: jobHasMatrixVersions(ciTypeScriptJob, "node-version", ["18", "20", "22", "24"]),
     },
