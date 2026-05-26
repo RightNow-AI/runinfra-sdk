@@ -1,11 +1,22 @@
 const expectedActionRevisions = [
-  "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
   "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
   "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405",
-  "pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
+  "pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1",
   "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
   "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
   "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b",
+];
+
+const invalidActionRevisions = [
+  "pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
+];
+
+const publicGitCheckoutCommands = [
+  "git init .",
+  "git remote add origin \"https://github.com/${GITHUB_REPOSITORY}.git\"",
+  "git -c credential.helper= fetch --no-tags --prune --depth=1 origin \"${GITHUB_REF}\"",
+  "git checkout --detach \"${GITHUB_SHA}\"",
+  "git config --global --add safe.directory \"$GITHUB_WORKSPACE\"",
 ];
 
 function jobBlock(workflow, jobName) {
@@ -77,6 +88,14 @@ function jobHasCommandBetween(job, command, afterMarker, beforeMarkers) {
     const markerIndex = job.indexOf(marker);
     return markerIndex === -1 || commandIndex < markerIndex;
   });
+}
+
+function jobUsesUnauthenticatedPublicGitCheckout(job) {
+  return publicGitCheckoutCommands.every((command) => job.includes(command));
+}
+
+function jobsUseUnauthenticatedPublicGitCheckout(jobs) {
+  return jobs.every((job) => jobUsesUnauthenticatedPublicGitCheckout(job));
 }
 
 function escapeRegExp(value) {
@@ -182,6 +201,23 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     {
       label: "workflows do not reference long-lived registry tokens",
       ok: !/(NODE_AUTH_TOKEN|NPM_TOKEN|PYPI_API_TOKEN|TWINE_PASSWORD)/u.test(workflows),
+    },
+    {
+      label: "workflows avoid invalid action revisions",
+      ok: invalidActionRevisions.every((action) => !workflows.includes(action)),
+    },
+    {
+      label: "workflows use unauthenticated public git checkout",
+      ok:
+        !/uses:\s*actions\/checkout@/u.test(workflows) &&
+        jobsUseUnauthenticatedPublicGitCheckout([
+          ciTypeScriptJob,
+          ciPythonJob,
+          buildArtifactsJob,
+          promotionGateJob,
+          publishNpmJob,
+          publishPypiJob,
+        ]),
     },
     {
       label: "workflows do not carry old live-canary bypass controls",

@@ -20,7 +20,15 @@ jobs:
         node-version: [18, 20, 22, 24]
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Checkout repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c credential.helper= fetch --no-tags --prune --depth=1 origin "${GITHUB_REF}"
+          git checkout --detach "${GITHUB_SHA}"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Verify workflow policy
         run: node scripts/verify-workflow-policy.mjs
@@ -34,7 +42,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
         with:
           version: 10.30.3
           run_install: false
@@ -85,7 +93,15 @@ jobs:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Checkout repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -c credential.helper= fetch --no-tags --prune --depth=1 origin "${GITHUB_REF}"
+          git checkout --detach "${GITHUB_SHA}"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Setup Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405

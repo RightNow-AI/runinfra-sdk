@@ -3113,12 +3113,16 @@ class RunInfra:
     const nodeLabel = "CI tests every supported Node major";
     const pythonLabel = "CI tests every supported Python minor";
     const requiredContextsLabel = "CI preserves protected required status contexts";
+    const validActionRevisionsLabel = "workflows avoid invalid action revisions";
+    const publicCheckoutLabel = "workflows use unauthenticated public git checkout";
 
     expect(packageJson.engines?.node).toBe(">=18 <25");
     const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
     expect(checks.find((check) => check.label === nodeLabel)?.ok).toBe(true);
     expect(checks.find((check) => check.label === pythonLabel)?.ok).toBe(true);
     expect(checks.find((check) => check.label === requiredContextsLabel)?.ok).toBe(true);
+    expect(checks.find((check) => check.label === validActionRevisionsLabel)?.ok).toBe(true);
+    expect(checks.find((check) => check.label === publicCheckoutLabel)?.ok).toBe(true);
 
     const withoutNode18 = ci.replace("node-version: [18, 20, 22, 24]", "node-version: [20, 22, 24]");
     expect(withoutNode18).not.toBe(ci);
@@ -3147,6 +3151,22 @@ class RunInfra:
     expect(withoutPythonFailureExit).not.toBe(ci);
     expect(evaluateWorkflowPolicy({ publish, ci: withoutPythonFailureExit, hasCustomCodeqlWorkflow: false })
       .find((check) => check.label === requiredContextsLabel)?.ok).toBe(false);
+
+    const withInvalidPnpmAction = ci.replace(
+      "pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1",
+      "pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
+    );
+    expect(withInvalidPnpmAction).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withInvalidPnpmAction, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === validActionRevisionsLabel)?.ok).toBe(false);
+
+    const withTokenCheckout = ci.replace(
+      "git -c credential.helper= fetch --no-tags --prune --depth=1 origin \"${GITHUB_REF}\"",
+      "uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+    );
+    expect(withTokenCheckout).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withTokenCheckout, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === publicCheckoutLabel)?.ok).toBe(false);
   });
 
   it("keeps Python test tooling compatible with the declared Python floor", () => {
