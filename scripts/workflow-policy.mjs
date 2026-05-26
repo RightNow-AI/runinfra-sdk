@@ -32,12 +32,20 @@ function jobHasEnvironment(job, environment) {
   return new RegExp(`(^|\\r?\\n)    environment:\\s*${environment}\\s*(?:\\r?\\n|$)`, "u").test(job);
 }
 
+function jobDoesNotHaveEnvironment(job) {
+  return job !== "" && !/(^|\r?\n)    environment:/u.test(job);
+}
+
 function jobHasName(job, name) {
   return new RegExp(`(^|\\r?\\n)    name:\\s*${escapeRegExp(name)}\\s*(?:\\r?\\n|$)`, "u").test(job);
 }
 
 function jobHasAlwaysCondition(job) {
   return /(^|\r?\n)    if:\s*always\(\)\s*(?:\r?\n|$)/u.test(job);
+}
+
+function jobIfCondition(job) {
+  return job.match(/(^|\r?\n)    if:\s*(.+?)\s*(?:\r?\n|$)/u)?.[2] ?? "";
 }
 
 function jobFailsOnNeedResult(job, jobName) {
@@ -116,6 +124,10 @@ function jobHasMatrixVersions(job, key, expectedVersions) {
   return matrixPattern.test(job) && setupPattern.test(job);
 }
 
+function jobHasRegistryPublishCommand(job) {
+  return /\b(?:npm\s+publish|pnpm\s+publish|yarn\s+npm\s+publish|twine\s+upload|python\s+-m\s+twine\s+upload)\b/u.test(job);
+}
+
 function stepBlockForCommand(job, command) {
   const commandIndex = job.indexOf(command);
   if (commandIndex === -1) return "";
@@ -163,6 +175,8 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
   const ciPythonRequiredJob = jobBlock(ci, "python-required");
   const buildArtifactsJob = jobBlock(publish, "build-artifacts");
   const promotionGateJob = jobBlock(publish, "promotion-gate");
+  const dryRunNpmJob = jobBlock(publish, "dry-run-npm");
+  const dryRunPypiJob = jobBlock(publish, "dry-run-pypi");
   const publishNpmJob = jobBlock(publish, "publish-npm");
   const publishPypiJob = jobBlock(publish, "publish-pypi");
   const workflows = `${publish}\n${ci}`;
@@ -178,6 +192,10 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
   const promotedArtifactLayoutCommand = "node scripts/verify-promoted-artifacts.mjs artifacts";
   const downloadPromotedArtifactsAction = "uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
   const githubSecurityStatusCommand = "node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk";
+  const dryRunNpmCondition = jobIfCondition(dryRunNpmJob);
+  const dryRunPypiCondition = jobIfCondition(dryRunPypiJob);
+  const publishNpmCondition = jobIfCondition(publishNpmJob);
+  const publishPypiCondition = jobIfCondition(publishPypiJob);
 
   return [
     {
@@ -225,6 +243,8 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
           ciPythonJob,
           buildArtifactsJob,
           promotionGateJob,
+          dryRunNpmJob,
+          dryRunPypiJob,
           publishNpmJob,
           publishPypiJob,
         ]),
@@ -271,6 +291,37 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
       ok:
         /Verify published npm install\/import[\s\S]*?github\.event\.inputs\.dry_run != 'true'[\s\S]*?verify-clean-installs\.mjs --package typescript --mode registry/u.test(publishNpmJob) &&
         /Verify published PyPI install\/import[\s\S]*?github\.event\.inputs\.dry_run != 'true'[\s\S]*?verify-clean-installs\.mjs --package python --mode registry/u.test(publishPypiJob),
+    },
+    {
+      label: "dry-run publish verification avoids protected registry environments",
+      ok:
+        jobDoesNotHaveEnvironment(dryRunNpmJob) &&
+        jobDoesNotHaveEnvironment(dryRunPypiJob) &&
+        jobHasReadOnlyContentsPermission(dryRunNpmJob) &&
+        jobHasReadOnlyContentsPermission(dryRunPypiJob) &&
+        !jobHasOidcPermission(dryRunNpmJob) &&
+        !jobHasOidcPermission(dryRunPypiJob) &&
+        jobHasEnvironment(publishNpmJob, "npm") &&
+        jobHasEnvironment(publishPypiJob, "pypi") &&
+        dryRunNpmCondition.includes("github.ref == 'refs/heads/main'") &&
+        dryRunPypiCondition.includes("github.ref == 'refs/heads/main'") &&
+        dryRunNpmCondition.includes("github.event.inputs.dry_run == 'true'") &&
+        dryRunPypiCondition.includes("github.event.inputs.dry_run == 'true'") &&
+        publishNpmCondition.includes("github.event.inputs.dry_run != 'true'") &&
+        publishPypiCondition.includes("github.event.inputs.dry_run != 'true'") &&
+        jobNeeds(dryRunNpmJob, "build-artifacts") &&
+        jobNeeds(dryRunNpmJob, "promotion-gate") &&
+        jobNeeds(dryRunPypiJob, "build-artifacts") &&
+        jobNeeds(dryRunPypiJob, "promotion-gate") &&
+        dryRunNpmJob.includes("node scripts/verify-clean-installs.mjs --package typescript --mode artifact --npm-tarball artifacts/npm-local/runinfra-sdk-*.tgz") &&
+        dryRunPypiJob.includes("node scripts/verify-clean-installs.mjs --package python --mode artifact --python-wheel artifacts/python-local/runinfra-*-py3-none-any.whl --python-sdist artifacts/python-local/runinfra-*.tar.gz") &&
+        dryRunNpmJob.includes("Dry run - would have published:") &&
+        dryRunPypiJob.includes("Dry run - would have published:") &&
+        !jobHasRegistryPublishCommand(buildArtifactsJob) &&
+        !jobHasRegistryPublishCommand(promotionGateJob) &&
+        !jobHasRegistryPublishCommand(dryRunNpmJob) &&
+        !jobHasRegistryPublishCommand(dryRunPypiJob) &&
+        !dryRunPypiJob.includes("pypa/gh-action-pypi-publish"),
     },
     {
       label: "publish workflow gates real publishes on strict promotion reports",
@@ -332,7 +383,9 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
       label: "non-publishing promotion jobs use read-only contents permission",
       ok:
         jobHasReadOnlyContentsPermission(buildArtifactsJob) &&
-        jobHasReadOnlyContentsPermission(promotionGateJob, ["security-events"]),
+        jobHasReadOnlyContentsPermission(promotionGateJob, ["security-events"]) &&
+        jobHasReadOnlyContentsPermission(dryRunNpmJob) &&
+        jobHasReadOnlyContentsPermission(dryRunPypiJob),
     },
     {
       label: "publish workflow verifies downloaded promoted artifact layout",
@@ -340,6 +393,12 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
         jobHasCommandBetween(promotionGateJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
           "Prepare exact artifacts and canary fixtures",
           strictArtifactCommand,
+        ]) &&
+        jobHasCommandBetween(dryRunNpmJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
+          "Verify exact npm artifact contents (no leaks)",
+        ]) &&
+        jobHasCommandBetween(dryRunPypiJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
+          "Verify exact Python artifacts (no leaks)",
         ]) &&
         jobHasCommandBetween(publishNpmJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
           "Verify exact npm artifact contents (no leaks)",
@@ -417,8 +476,10 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     {
       label: "publish jobs are branch-locked to main",
       ok:
-        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(publishNpmJob) &&
-        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(publishPypiJob),
+        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(dryRunNpmCondition) &&
+        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(dryRunPypiCondition) &&
+        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(publishNpmCondition) &&
+        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(publishPypiCondition),
     },
     {
       label: "workflow actions are SHA pinned",

@@ -3250,6 +3250,45 @@ class RunInfra:
       .toBe(false);
   });
 
+  it("lets dry-run publish verification complete without protected registry environments", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const label = "dry-run publish verification avoids protected registry environments";
+
+    expect(evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(true);
+
+    const withoutDryRunNpm = publish.replace(
+      /  dry-run-npm:[\s\S]*?(?=\r?\n  [a-zA-Z0-9_-]+:\r?\n)/u,
+      "",
+    );
+    expect(withoutDryRunNpm).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: withoutDryRunNpm, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const realPublishWithoutDryRunGuard = publish.replace(
+      "    if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.dry_run != 'true' && (github.event.inputs.package == 'typescript' || github.event.inputs.package == 'both') }}",
+      "    if: ${{ github.ref == 'refs/heads/main' && (github.event.inputs.package == 'typescript' || github.event.inputs.package == 'both') }}",
+    );
+    expect(realPublishWithoutDryRunGuard).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: realPublishWithoutDryRunGuard, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const realPublishWithoutEnvironment = publish.replace("    environment: npm\n", "");
+    expect(realPublishWithoutEnvironment).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: realPublishWithoutEnvironment, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const dryRunPypiUpload = publish.replace(
+      "          twine check artifacts/python-local/*",
+      "          twine upload artifacts/python-local/*",
+    );
+    expect(dryRunPypiUpload).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: dryRunPypiUpload, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+  });
+
   it("requires real publish to pass strict promotion reports for the exact package artifacts", async () => {
     const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
     const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
