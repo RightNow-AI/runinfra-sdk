@@ -251,9 +251,11 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `retry.safety.get.local`
 - `retry.safety.post.requires_idempotency.local`
 - `retry.safety.post.with_idempotency.local`
+- `retry.safety.post.non_replayable_json.no_retry.local`
 - `retry.safety.stream.no_retry.local`
 - `retry.safety.audio_binary.no_retry.local`
 - `retry.safety.audio_multipart.no_retry.local`
+- `retry.safety.voice_binary.no_retry.local`
 - `webhooks.delivery_surface.absent`
 - `webhooks.verify_signature.local`
 - `webhooks.construct_event.local`
@@ -334,8 +336,10 @@ generated silence is not accepted as GA proof.
 Local retry-safety rows do not call the production gateway; they run against
 deterministic local HTTP responses from the installed SDK package. They prove
 safe GET requests retry transient failures, charge-bearing JSON POSTs retry only
-with an idempotency key, and streaming, binary TTS, and multipart ASR requests
-are sent once even when an idempotency key is present.
+with an idempotency key on replay-safe helpers, non-replayable JSON helpers
+such as embeddings and images are not retried, and streaming, binary TTS,
+multipart ASR, and binary voice-pipeline requests are sent once even when an
+idempotency key is present.
 Local request-option rows do not call the production gateway; they prove
 user-supplied client request IDs and custom request headers are sent as headers,
 are not serialized into JSON request bodies, and cannot override

@@ -524,9 +524,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "retry.safety.get.local",
             "retry.safety.post.requires_idempotency.local",
             "retry.safety.post.with_idempotency.local",
+            "retry.safety.post.non_replayable_json.no_retry.local",
             "retry.safety.stream.no_retry.local",
             "retry.safety.audio_binary.no_retry.local",
             "retry.safety.audio_multipart.no_retry.local",
+            "retry.safety.voice_binary.no_retry.local",
         )
 
         for row in rows:

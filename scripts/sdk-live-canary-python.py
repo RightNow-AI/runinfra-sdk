@@ -559,11 +559,12 @@ class LocalRetryTransport:
         return self.responses.pop(0)
 
 
-def local_retry_client(responses: Iterable[RunInfraResponse]) -> Dict[str, Any]:
+def local_retry_client(responses: Iterable[RunInfraResponse], *, pipeline_id: Optional[str] = None) -> Dict[str, Any]:
     transport = LocalRetryTransport(responses)
     return {
         "client": RunInfra(
             api_key="sk-ri-live-canary-local",
+            pipeline_id=pipeline_id,
             base_url="http://localhost:1/v1",
             max_retries=1,
             retry_base_seconds=0,
@@ -1011,9 +1012,11 @@ def main() -> int:
     record("retry.safety.get.local", [], _retry_safety_get_local)
     record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
     record("retry.safety.post.with_idempotency.local", [], _retry_safety_post_with_idempotency_local)
+    record("retry.safety.post.non_replayable_json.no_retry.local", [], _retry_safety_post_non_replayable_json_no_retry_local)
     record("retry.safety.stream.no_retry.local", [], _retry_safety_stream_no_retry_local)
     record("retry.safety.audio_binary.no_retry.local", [], _retry_safety_audio_binary_no_retry_local)
     record("retry.safety.audio_multipart.no_retry.local", [], _retry_safety_audio_multipart_no_retry_local)
+    record("retry.safety.voice_binary.no_retry.local", [], _retry_safety_voice_binary_no_retry_local)
     record("webhooks.delivery_surface.absent", [], _webhooks_delivery_surface_absent)
     record("webhooks.verify_signature.local", [], _webhooks_verify_signature_local)
     record("webhooks.construct_event.local", [], _webhooks_construct_event_local)
@@ -2232,6 +2235,56 @@ def _retry_safety_post_with_idempotency_local() -> Dict[str, Any]:
     }
 
 
+def _retry_safety_post_non_replayable_json_no_retry_local() -> Dict[str, Any]:
+    checks = (
+        (
+            "embeddings",
+            "idem-local-embeddings-json-no-retry",
+            [
+                local_retry_failure("req-local-retry-embeddings-json-no-retry"),
+                local_retry_response({"object": "list", "data": []}, 200, "req-local-retry-embeddings-json-unexpected"),
+            ],
+            lambda client, request_options: client.embeddings.create(
+                model="runinfra-local-embedding-model",
+                input="local retry canary",
+                request_options=request_options,
+            ),
+        ),
+        (
+            "images",
+            "idem-local-images-json-no-retry",
+            [
+                local_retry_failure("req-local-retry-images-json-no-retry"),
+                local_retry_response({"created": 1, "data": []}, 200, "req-local-retry-images-json-unexpected"),
+            ],
+            lambda client, request_options: client.images.generate(
+                model="runinfra-local-image-model",
+                prompt="local retry canary",
+                request_options=request_options,
+            ),
+        ),
+    )
+    for surface, idempotency_key, responses, run in checks:
+        row_label = f"retry.safety.post.non_replayable_json.no_retry.local {surface}"
+        local = local_retry_client(responses)
+        try:
+            run(
+                local["client"],
+                {
+                    "idempotency_key": idempotency_key,
+                    "max_retries": 1,
+                    "retry_base_seconds": 0,
+                },
+            )
+        except BaseException as error:  # noqa: BLE001
+            assert_idempotency_header(local["calls"], idempotency_key, row_label)
+            assert_retryable_error(error, row_label)
+            assert_retry_call_count(local["calls"], 1, row_label)
+            continue
+        raise AssertionError(f"{surface} JSON POST unexpectedly retried into success")
+    return {"attemptsPerSurface": 1, "surfaces": "embeddings,images"}
+
+
 def _retry_safety_stream_no_retry_local() -> Dict[str, Any]:
     local = local_retry_client([local_retry_failure("req-local-retry-stream-no-retry")])
     try:
@@ -2304,6 +2357,33 @@ def _retry_safety_audio_multipart_no_retry_local() -> Dict[str, Any]:
             **assert_retryable_error(error, "retry.safety.audio_multipart.no_retry.local"),
         }
     raise AssertionError("multipart audio POST unexpectedly retried into success")
+
+
+def _retry_safety_voice_binary_no_retry_local() -> Dict[str, Any]:
+    local = local_retry_client(
+        [
+            local_retry_failure("req-local-retry-voice-binary-no-retry"),
+            local_retry_response({"text": "unexpected retry success"}, 200, "req-local-retry-voice-binary-unexpected"),
+        ],
+        pipeline_id="pipe-local-retry-voice",
+    )
+    try:
+        local["client"].voice.pipeline.create(
+            audio=b"\x01\x02\x03",
+            mime_type="audio/wav",
+            request_options={
+                "idempotency_key": "idem-local-voice-binary-no-retry",
+                "max_retries": 1,
+                "retry_base_seconds": 0,
+            },
+        )
+    except BaseException as error:  # noqa: BLE001
+        assert_idempotency_header(local["calls"], "idem-local-voice-binary-no-retry", "retry.safety.voice_binary.no_retry.local")
+        return {
+            **assert_retry_call_count(local["calls"], 1, "retry.safety.voice_binary.no_retry.local"),
+            **assert_retryable_error(error, "retry.safety.voice_binary.no_retry.local"),
+        }
+    raise AssertionError("voice pipeline POST unexpectedly retried into success")
 
 
 def _webhooks_delivery_surface_absent() -> Dict[str, str]:

@@ -2666,9 +2666,11 @@ class RunInfra:
       "retry.safety.get.local",
       "retry.safety.post.requires_idempotency.local",
       "retry.safety.post.with_idempotency.local",
+      "retry.safety.post.non_replayable_json.no_retry.local",
       "retry.safety.stream.no_retry.local",
       "retry.safety.audio_binary.no_retry.local",
       "retry.safety.audio_multipart.no_retry.local",
+      "retry.safety.voice_binary.no_retry.local",
     ];
 
     for (const row of rows) {
@@ -4382,12 +4384,13 @@ with open(report, "w", encoding="utf-8") as handle:
       });
       expect(invalidFormatResult.status).toBe(1);
       const invalidFormatReport = JSON.parse(readFileSync(invalidFormatReportPath, "utf8")) as {
-        readiness?: { rows?: Array<{ name: string; missing?: string[] }> };
+        readiness?: { env?: Record<string, string>; missing?: string[]; rows?: Array<{ name: string; missing?: string[] }> };
       };
       expect(
         invalidFormatReport.readiness?.rows?.find((row) => row.name === "openai.params.audio.speech")?.missing,
       ).toContain("RUNINFRA_TTS_RESPONSE_FORMAT mp3, opus, aac, flac, wav, or pcm");
-      expect(JSON.stringify(invalidFormatReport)).not.toContain("json");
+      expect(JSON.stringify(invalidFormatReport.readiness?.env ?? {})).not.toContain("json");
+      expect(JSON.stringify(invalidFormatReport.readiness?.missing ?? [])).not.toContain('"json"');
       expect(report.expectedRows).toContain("openai.params.images");
       expect(
         report.readiness?.rows?.find((row) => row.name === "openai.params.images")?.missing,

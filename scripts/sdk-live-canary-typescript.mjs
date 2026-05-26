@@ -2205,6 +2205,49 @@ await record("retry.safety.post.with_idempotency.local", [], async () => {
   };
 });
 
+await record("retry.safety.post.non_replayable_json.no_retry.local", [], async () => {
+  const checks = [
+    {
+      surface: "embeddings",
+      idempotencyKey: "idem-local-embeddings-json-no-retry",
+      responses: [
+        localRetryFailure("req-local-retry-embeddings-json-no-retry"),
+        localRetryJsonResponse({ object: "list", data: [] }, 200, "req-local-retry-embeddings-json-unexpected"),
+      ],
+      run: (local, idempotencyKey) => local.embeddings.create(
+        { model: "runinfra-local-embedding-model", input: "local retry canary" },
+        { idempotencyKey, maxRetries: 1, retryBaseMs: 0 },
+      ),
+    },
+    {
+      surface: "images",
+      idempotencyKey: "idem-local-images-json-no-retry",
+      responses: [
+        localRetryFailure("req-local-retry-images-json-no-retry"),
+        localRetryJsonResponse({ created: 1, data: [] }, 200, "req-local-retry-images-json-unexpected"),
+      ],
+      run: (local, idempotencyKey) => local.images.generate(
+        { model: "runinfra-local-image-model", prompt: "local retry canary" },
+        { idempotencyKey, maxRetries: 1, retryBaseMs: 0 },
+      ),
+    },
+  ];
+  for (const check of checks) {
+    const rowLabel = `retry.safety.post.non_replayable_json.no_retry.local ${check.surface}`;
+    const { client: local, calls } = localRetryClient(check.responses);
+    try {
+      await check.run(local, check.idempotencyKey);
+    } catch (error) {
+      assertIdempotencyHeader(calls, check.idempotencyKey, rowLabel);
+      assertRetryableError(error, rowLabel);
+      assertRetryCallCount(calls, 1, rowLabel);
+      continue;
+    }
+    throw new Error(`${check.surface} JSON POST unexpectedly retried into success`);
+  }
+  return { attemptsPerSurface: 1, surfaces: "embeddings,images" };
+});
+
 await record("retry.safety.stream.no_retry.local", [], async () => {
   const { client: local, calls } = localRetryClient([localRetryFailure("req-local-retry-stream-no-retry")]);
   try {
@@ -2260,6 +2303,27 @@ await record("retry.safety.audio_multipart.no_retry.local", [], async () => {
     return { ...assertRetryCallCount(calls, 1, "retry.safety.audio_multipart.no_retry.local"), ...evidence };
   }
   throw new Error("multipart audio POST unexpectedly retried into success");
+});
+
+await record("retry.safety.voice_binary.no_retry.local", [], async () => {
+  const { client: local, calls } = localRetryClient([
+    localRetryFailure("req-local-retry-voice-binary-no-retry"),
+    localRetryJsonResponse({ text: "unexpected retry success" }, 200, "req-local-retry-voice-binary-unexpected"),
+  ], { pipelineId: "pipe-local-retry-voice" });
+  try {
+    await local.voice.pipeline.create(
+      {
+        audio: new Uint8Array([1, 2, 3]),
+        mimeType: "audio/wav",
+      },
+      { idempotencyKey: "idem-local-voice-binary-no-retry", maxRetries: 1, retryBaseMs: 0 },
+    );
+  } catch (error) {
+    assertIdempotencyHeader(calls, "idem-local-voice-binary-no-retry", "retry.safety.voice_binary.no_retry.local");
+    const evidence = assertRetryableError(error, "retry.safety.voice_binary.no_retry.local");
+    return { ...assertRetryCallCount(calls, 1, "retry.safety.voice_binary.no_retry.local"), ...evidence };
+  }
+  throw new Error("voice pipeline POST unexpectedly retried into success");
 });
 
 await record("webhooks.delivery_surface.absent", [], async () => {
