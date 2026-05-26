@@ -3226,6 +3226,30 @@ class RunInfra:
     expect(requirements).not.toMatch(/^pytest==9\./mu);
   });
 
+  it("installs Python build tooling before publish workflow TypeScript tests", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const label = "publish artifact build installs Python tooling before TypeScript tests";
+
+    expect(evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(true);
+
+    const installCommand = "python -m pip install -r python/requirements-dev.txt";
+    const installIndex = publish.indexOf(installCommand);
+    const testIndex = publish.indexOf("      - name: Test TypeScript");
+    expect(installIndex).toBeGreaterThan(-1);
+    expect(testIndex).toBeGreaterThan(installIndex);
+
+    const driftedPublish = publish.replace(
+      /      - name: Install Python build \+ test tools\r?\n        run: python -m pip install -r python\/requirements-dev\.txt\r?\n\r?\n([\s\S]*?      - name: Verify npm artifact contents \(no leaks\)[\s\S]*?node scripts\/verify-npm-package\.mjs "\$TGZ"\r?\n)/u,
+      "$1\n      - name: Install Python build + test tools\n        run: python -m pip install -r python/requirements-dev.txt\n",
+    );
+    expect(driftedPublish).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: driftedPublish, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+  });
+
   it("requires real publish to pass strict promotion reports for the exact package artifacts", async () => {
     const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
     const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
