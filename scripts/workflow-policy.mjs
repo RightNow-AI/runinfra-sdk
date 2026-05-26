@@ -1,7 +1,6 @@
 const expectedActionRevisions = [
   "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
   "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405",
-  "pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1",
   "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
   "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
   "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b",
@@ -18,6 +17,8 @@ const publicGitCheckoutCommands = [
   "git checkout --detach \"${GITHUB_SHA}\"",
   "git config --global --add safe.directory \"$GITHUB_WORKSPACE\"",
 ];
+
+const pinnedPnpmInstallCommand = "npm install --global pnpm@10.30.3 --ignore-scripts --no-audit --no-fund";
 
 function jobBlock(workflow, jobName) {
   const start = workflow.indexOf(`  ${jobName}:`);
@@ -96,6 +97,10 @@ function jobUsesUnauthenticatedPublicGitCheckout(job) {
 
 function jobsUseUnauthenticatedPublicGitCheckout(jobs) {
   return jobs.every((job) => jobUsesUnauthenticatedPublicGitCheckout(job));
+}
+
+function jobInstallsPinnedPnpm(job) {
+  return job.includes(pinnedPnpmInstallCommand) && job.includes("pnpm --version");
 }
 
 function escapeRegExp(value) {
@@ -218,6 +223,13 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
           publishNpmJob,
           publishPypiJob,
         ]),
+    },
+    {
+      label: "workflows install pinned pnpm without an external action",
+      ok:
+        !/pnpm\/action-setup@/u.test(workflows) &&
+        jobInstallsPinnedPnpm(ciTypeScriptJob) &&
+        jobInstallsPinnedPnpm(buildArtifactsJob),
     },
     {
       label: "workflows do not carry old live-canary bypass controls",
@@ -343,6 +355,7 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     {
       label: "workflows use pinned Python build tooling",
       ok:
+        ciTypeScriptJob.includes("python -m pip install -r python/requirements-dev.txt") &&
         /pip install -r python\/requirements-dev\.txt/u.test(ci) &&
         /pip install -r python\/requirements-dev\.txt/u.test(publish) &&
         !/pip install --upgrade build pytest twine/u.test(workflows),

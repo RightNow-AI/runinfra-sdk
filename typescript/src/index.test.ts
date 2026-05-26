@@ -805,6 +805,10 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_JOB: "typescript",
+        },
       });
 
       expect(result.status).toBe(1);
@@ -1191,9 +1195,40 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_JOB: "typescript",
+        },
       });
       expect(success.status, success.stdout + success.stderr).toBe(0);
       expect(success.stdout).toContain(`Verified promotion reports for SDK ${RUNINFRA_SDK_VERSION}`);
+
+      for (const [envName, leakedValue] of [
+        ["GITHUB_TOKEN", "promotion-sensitive-github-token"],
+        ["GH_TOKEN", "promotion-sensitive-gh-token"],
+      ] as const) {
+        writeFileSync(readinessPath, `${JSON.stringify({
+          ...readiness,
+          candidate: { ...readiness.candidate, [`leaked_${envName.toLowerCase()}`]: leakedValue },
+        }, null, 2)}\n`);
+        const leakedGitHubToken = spawnSync(process.execPath, [
+          ...promotionArgs,
+        ], {
+          cwd: new URL("..", import.meta.url),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            [envName]: leakedValue,
+          },
+        });
+
+        expect(leakedGitHubToken.status).toBe(1);
+        expect(`${leakedGitHubToken.stdout}${leakedGitHubToken.stderr}`).toContain(
+          "readiness report contains a sensitive environment value",
+        );
+        expect(`${leakedGitHubToken.stdout}${leakedGitHubToken.stderr}`).not.toContain(leakedValue);
+      }
+      writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
 
       writeFileSync(livePath, `${JSON.stringify({
         ...live,
@@ -3115,6 +3150,7 @@ class RunInfra:
     const requiredContextsLabel = "CI preserves protected required status contexts";
     const validActionRevisionsLabel = "workflows avoid invalid action revisions";
     const publicCheckoutLabel = "workflows use unauthenticated public git checkout";
+    const pinnedPnpmLabel = "workflows install pinned pnpm without an external action";
 
     expect(packageJson.engines?.node).toBe(">=18 <25");
     const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
@@ -3123,6 +3159,7 @@ class RunInfra:
     expect(checks.find((check) => check.label === requiredContextsLabel)?.ok).toBe(true);
     expect(checks.find((check) => check.label === validActionRevisionsLabel)?.ok).toBe(true);
     expect(checks.find((check) => check.label === publicCheckoutLabel)?.ok).toBe(true);
+    expect(checks.find((check) => check.label === pinnedPnpmLabel)?.ok).toBe(true);
 
     const withoutNode18 = ci.replace("node-version: [18, 20, 22, 24]", "node-version: [20, 22, 24]");
     expect(withoutNode18).not.toBe(ci);
@@ -3153,12 +3190,20 @@ class RunInfra:
       .find((check) => check.label === requiredContextsLabel)?.ok).toBe(false);
 
     const withInvalidPnpmAction = ci.replace(
-      "pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1",
-      "pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
+      "npm install --global pnpm@10.30.3 --ignore-scripts --no-audit --no-fund",
+      "uses: pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
     );
     expect(withInvalidPnpmAction).not.toBe(ci);
     expect(evaluateWorkflowPolicy({ publish, ci: withInvalidPnpmAction, hasCustomCodeqlWorkflow: false })
       .find((check) => check.label === validActionRevisionsLabel)?.ok).toBe(false);
+
+    const withDriftedPnpmVersion = ci.replace(
+      "npm install --global pnpm@10.30.3 --ignore-scripts --no-audit --no-fund",
+      "npm install --global pnpm@10.30.2 --ignore-scripts --no-audit --no-fund",
+    );
+    expect(withDriftedPnpmVersion).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withDriftedPnpmVersion, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === pinnedPnpmLabel)?.ok).toBe(false);
 
     const withTokenCheckout = ci.replace(
       "git -c credential.helper= fetch --no-tags --prune --depth=1 origin \"${GITHUB_REF}\"",
@@ -3177,6 +3222,7 @@ class RunInfra:
     expect(pyproject).toContain('requires = ["setuptools==82.0.1"]');
     expect(pyproject).not.toContain("setuptools>=");
     expect(requirements).toContain("pytest==8.4.2");
+    expect(requirements).toContain("typing_extensions==4.15.0");
     expect(requirements).not.toMatch(/^pytest==9\./mu);
   });
 
@@ -4757,6 +4803,8 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_API_KEY: "template-secret-api-key",
           RUNINFRA_LLM_MODEL: "template-secret-llm-model",
           RUNINFRA_ASR_EXPECTED_TEXT: "template-secret-transcript",
+          GITHUB_TOKEN: "template-secret-github-token",
+          GH_TOKEN: "template-secret-gh-token",
           NPM_TOKEN: "template-secret-npm-token",
         },
       });
@@ -4779,6 +4827,8 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(template).not.toContain("template-secret-api-key");
       expect(template).not.toContain("template-secret-llm-model");
       expect(template).not.toContain("template-secret-transcript");
+      expect(template).not.toContain("template-secret-github-token");
+      expect(template).not.toContain("template-secret-gh-token");
       expect(template).not.toContain("template-secret-npm-token");
       expect(result.stderr).not.toContain(templatePath);
     } finally {

@@ -17,8 +17,13 @@ import zipfile
 from collections import UserDict
 from email.utils import formatdate
 from pathlib import Path
-from typing import Literal, Union, get_overloads, get_type_hints
+from typing import Literal, Union, get_type_hints
 from unittest.mock import patch
+
+try:
+    from typing import get_overloads
+except ImportError:  # Python 3.9 and 3.10
+    from typing_extensions import get_overloads
 
 import runinfra
 from runinfra import (
