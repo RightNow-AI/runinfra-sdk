@@ -1,7 +1,7 @@
 {
   "name": "@runinfra/sdk",
-  "version": "0.1.3",
-  "description": "RunInfra SDK for optimized inference deployments (beta; LLM + embeddings tested, image/audio surfaces experimental)",
+  "version": "0.1.4",
+  "description": "RunInfra SDK for optimized inference deployments (beta; LLM and embeddings contract-tested, image/audio surfaces experimental)",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://runinfra.ai/docs/tools-sdks/runinfra-sdk",
   "repository": {
@@ -52,9 +52,15 @@
     "access": "public"
   },
   "sideEffects": false,
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.25.12",
+      "vite": "6.4.2"
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.7.5",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.3"
+    "vitest": "^3.2.4"
   }
 }

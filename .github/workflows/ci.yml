@@ -56,6 +56,7 @@ jobs:
         run: |
           pnpm pack
           node ../scripts/verify-npm-package.mjs runinfra-sdk-*.tgz
+          node ../scripts/verify-clean-installs.mjs --package typescript --mode artifact
 
   python:
     name: Python SDK
@@ -73,6 +74,11 @@ jobs:
       - name: Install build + test tools
         run: python -m pip install -r python/requirements-dev.txt
 
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22.14.0
+
       - name: Build sdist + wheel
         working-directory: python
         run: python -m build
@@ -87,6 +93,7 @@ jobs:
           python ../scripts/verify-python-package.py dist
           # twine-check (PyPI metadata sanity)
           twine check dist/*
+          node ../scripts/verify-clean-installs.mjs --package python --mode artifact
 
       - name: Test
         working-directory: python

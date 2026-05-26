@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const expectedFiles = new Set([
   "package/CHANGELOG.md",
@@ -20,21 +21,43 @@ const forbiddenPatterns = [
   /^package\/node_modules\//u,
   /^package\/\.github\//u,
   /^package\/\.npmrc$/u,
+  /^package\/\.pypirc$/u,
+  /^package\/\.netrc$/u,
+  /^package\/pip\.(?:conf|ini)$/u,
   /^package\/AGENT-NOTES\.md$/u,
 ];
 
-const forbiddenContentPatterns = [
-  /C:\\Users\\jaber/iu,
-  /RightNow-Full/iu,
-  /BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY/u,
-  /npm_[A-Za-z0-9]{20,}/u,
-  /pypi-[A-Za-z0-9_-]{40,}/u,
-  /ghp_[A-Za-z0-9_]{20,}/u,
-  /sk-ri-[A-Za-z0-9_-]{20,}/u,
-  /sourceMappingURL/u,
-  /sourcesContent/u,
-  /webpack:\/\//u,
-  /\.npmrc/u,
+const expectedPackageMetadata = {
+  name: "@runinfra/sdk",
+  version: JSON.parse(
+    readFileSync(new URL("../typescript/package.json", import.meta.url), "utf8"),
+  ).version,
+  type: "module",
+  main: "./dist/index.js",
+  module: "./dist/index.js",
+  types: "./dist/index.d.ts",
+  exports: {
+    ".": {
+      types: "./dist/index.d.ts",
+      import: "./dist/index.js",
+      default: "./dist/index.js",
+    },
+  },
+};
+const runtimeDependencyFields = [
+  "dependencies",
+  "optionalDependencies",
+  "peerDependencies",
+  "bundledDependencies",
+  "bundleDependencies",
+];
+const forbiddenLifecycleScripts = [
+  "preinstall",
+  "install",
+  "postinstall",
+  "prepare",
+  "prepublish",
+  "prepublishOnly",
 ];
 
 function patternToRegex(pattern) {
@@ -64,12 +87,20 @@ function expandInputs(inputs) {
   return expanded;
 }
 
-function listTarball(tarball) {
-  return execFileSync("tar", ["-tf", tarball], { encoding: "utf8" })
+function tarOutputLines(tarball, args) {
+  return execFileSync("tar", [...args, tarball], { encoding: "utf8" })
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .sort();
+    .filter(Boolean);
+}
+
+function listTarballEntries(tarball) {
+  const files = tarOutputLines(tarball, ["-tf"]);
+  const details = tarOutputLines(tarball, ["-tvf"]);
+  return files.map((file, index) => ({
+    file,
+    type: details[index]?.charAt(0) ?? "",
+  }));
 }
 
 function readTarballFile(tarball, file) {
@@ -79,28 +110,147 @@ function readTarballFile(tarball, file) {
   });
 }
 
+function duplicateFiles(files) {
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const file of files) {
+    if (seen.has(file)) duplicates.add(file);
+    seen.add(file);
+  }
+  return [...duplicates].sort();
+}
+
+function sameStringSet(actual, expected) {
+  if (actual.length !== expected.length) return false;
+  return actual.every((value, index) => value === expected[index]);
+}
+
+function hasEntries(value) {
+  if (value === undefined) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+function validatePackageMetadata(content) {
+  let metadata;
+  try {
+    metadata = JSON.parse(content);
+  } catch (error) {
+    return [`package.json must be valid JSON: ${error.message}`];
+  }
+
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return ["package.json must be a JSON object"];
+  }
+
+  const errors = [];
+  for (const [field, expected] of Object.entries(expectedPackageMetadata)) {
+    if (field === "exports") continue;
+    if (metadata[field] !== expected) {
+      errors.push(`package.json ${field} must be ${expected}`);
+    }
+  }
+
+  const packageExports = metadata.exports;
+  if (!packageExports || typeof packageExports !== "object" || Array.isArray(packageExports)) {
+    errors.push("package.json exports must be an object");
+    return errors;
+  }
+
+  const expectedExportKeys = Object.keys(expectedPackageMetadata.exports).sort();
+  const exportKeys = Object.keys(packageExports).sort();
+  if (!sameStringSet(exportKeys, expectedExportKeys)) {
+    errors.push('package.json exports must expose only "."');
+  }
+
+  const rootExport = packageExports["."];
+  if (!rootExport || typeof rootExport !== "object" || Array.isArray(rootExport)) {
+    errors.push('package.json exports["."] must be an object');
+    return errors;
+  }
+
+  const expectedRootExport = expectedPackageMetadata.exports["."];
+  const expectedRootExportKeys = Object.keys(expectedRootExport).sort();
+  const rootExportKeys = Object.keys(rootExport).sort();
+  if (!sameStringSet(rootExportKeys, expectedRootExportKeys)) {
+    errors.push('package.json exports["."] must expose only default, import, types');
+  }
+
+  for (const [field, expected] of Object.entries(expectedRootExport)) {
+    if (rootExport[field] !== expected) {
+      errors.push(`package.json exports["."].${field} must be ${expected}`);
+    }
+  }
+
+  for (const field of runtimeDependencyFields) {
+    if (hasEntries(metadata[field])) {
+      errors.push(`package.json ${field} must be absent or empty`);
+    }
+  }
+
+  if (metadata.scripts !== undefined) {
+    if (!metadata.scripts || typeof metadata.scripts !== "object" || Array.isArray(metadata.scripts)) {
+      errors.push("package.json scripts must be an object when present");
+    } else {
+      for (const script of forbiddenLifecycleScripts) {
+        if (script in metadata.scripts) {
+          errors.push(`package.json scripts.${script} is not allowed in published artifacts`);
+        }
+      }
+    }
+  }
+  return errors;
+}
+
 function verifyTarball(tarball) {
-  const actualFiles = listTarball(tarball);
+  const entries = listTarballEntries(tarball);
+  const actualFiles = entries.map((entry) => entry.file).sort();
   const actualSet = new Set(actualFiles);
   const missing = [...expectedFiles].filter((file) => !actualSet.has(file));
+  const duplicates = duplicateFiles(actualFiles);
+  const nonRegular = entries
+    .filter((entry) => entry.type !== "-")
+    .map((entry) => entry.file)
+    .sort();
   const unexpected = actualFiles.filter((file) => !expectedFiles.has(file));
   const forbidden = actualFiles.filter((file) =>
     forbiddenPatterns.some((pattern) => pattern.test(file)),
   );
   const forbiddenContent = [];
-  for (const file of actualFiles) {
+  const regularFiles = entries
+    .filter((entry) => entry.type === "-")
+    .map((entry) => entry.file)
+    .sort();
+  for (const file of regularFiles) {
     const content = readTarballFile(tarball, file);
-    const matchedPattern = forbiddenContentPatterns.find((pattern) => pattern.test(content));
-    if (matchedPattern) forbiddenContent.push(`${file}: ${matchedPattern}`);
+    const matchedPattern = findForbiddenContent(content);
+    if (matchedPattern) forbiddenContent.push(`${file}: ${matchedPattern.label}`);
   }
+  const metadataErrors = actualSet.has("package/package.json")
+    ? validatePackageMetadata(readTarballFile(tarball, "package/package.json"))
+    : [];
 
-  if (missing.length || unexpected.length || forbidden.length || forbiddenContent.length) {
+  if (
+    missing.length ||
+    duplicates.length ||
+    nonRegular.length ||
+    unexpected.length ||
+    forbidden.length ||
+    forbiddenContent.length ||
+    metadataErrors.length
+  ) {
     console.error(`Package content verification failed for ${tarball}`);
     if (missing.length) console.error(`Missing files:\n${missing.join("\n")}`);
+    if (duplicates.length) console.error(`Duplicate files:\n${duplicates.join("\n")}`);
+    if (nonRegular.length) console.error(`Non-regular files:\n${nonRegular.join("\n")}`);
     if (unexpected.length) console.error(`Unexpected files:\n${unexpected.join("\n")}`);
     if (forbidden.length) console.error(`Forbidden files:\n${forbidden.join("\n")}`);
     if (forbiddenContent.length) {
       console.error(`Forbidden content:\n${forbiddenContent.join("\n")}`);
+    }
+    if (metadataErrors.length) {
+      console.error(`Invalid package metadata:\n${metadataErrors.join("\n")}`);
     }
     process.exitCode = 1;
     return;

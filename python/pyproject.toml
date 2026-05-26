@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runinfra"
-version = "0.1.3"
-description = "RunInfra SDK for optimized inference deployments (beta; LLM + embeddings tested, image/audio surfaces experimental)"
+version = "0.1.4"
+description = "RunInfra SDK for optimized inference deployments (beta; LLM and embeddings contract-tested, image/audio surfaces experimental)"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "RunInfra" }]

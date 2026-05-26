@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const RUNINFRA_SDK_VERSION = "0.1.3";
+export const RUNINFRA_SDK_VERSION = "0.1.4";
 const MAX_AUTOMATIC_RETRY_AFTER_MS = 60_000;
 
 export interface RunInfraOptions {
@@ -21,6 +21,7 @@ export interface RunInfraRequestOptions {
   maxRetries?: number;
   retryBaseMs?: number;
   headers?: Record<string, string>;
+  extraBody?: Record<string, unknown>;
 }
 
 export interface ChatMessage {
@@ -30,11 +31,49 @@ export interface ChatMessage {
   tool_call_id?: string;
 }
 
-export interface ChatCompletionRequest extends Record<string, unknown> {
+export interface ChatCompletionRequest {
   model: string;
   messages: ChatMessage[];
   stream?: boolean;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  max_completion_tokens?: number;
+  stop?: string | string[];
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  user?: string;
+  metadata?: Record<string, unknown>;
+  stream_options?: { include_usage?: boolean } & Record<string, unknown>;
+  tools?: Array<Record<string, unknown>>;
+  tool_choice?: string | Record<string, unknown>;
+  response_format?: Record<string, unknown>;
+  seed?: number;
+  logprobs?: boolean;
+  top_logprobs?: number;
 }
+
+const CHAT_COMPLETION_REQUEST_KEYS = new Set([
+  "model",
+  "messages",
+  "stream",
+  "temperature",
+  "top_p",
+  "max_tokens",
+  "max_completion_tokens",
+  "stop",
+  "presence_penalty",
+  "frequency_penalty",
+  "user",
+  "metadata",
+  "stream_options",
+  "tools",
+  "tool_choice",
+  "response_format",
+  "seed",
+  "logprobs",
+  "top_logprobs",
+]);
 
 export interface ChatCompletionStreamEvent extends Record<string, unknown> {
   choices?: Array<
@@ -48,6 +87,7 @@ export interface ChatCompletionStreamEvent extends Record<string, unknown> {
 
 export interface RunInfraRequestMetadata extends Record<string, unknown> {
   _request_id?: string;
+  _idempotent_replay?: boolean;
 }
 
 export interface ChatCompletionResponse extends RunInfraRequestMetadata {
@@ -80,13 +120,36 @@ export interface ChatCompletionsCreate {
   ): Promise<ChatCompletionResponse | RunInfraStream<ChatCompletionStreamEvent>>;
 }
 
-export interface ResponsesCreateRequest extends Record<string, unknown> {
+/**
+ * Request shape for the current RunInfra Responses compatibility adapter.
+ * The gateway maps supported fields onto chat completions and rewraps the
+ * result; this is not a full stateful OpenAI Responses implementation.
+ */
+export interface ResponsesCreateRequest {
   model: string;
   input: string | Array<Record<string, unknown>>;
   instructions?: string;
   max_output_tokens?: number;
   stream?: boolean;
+  temperature?: number;
+  top_p?: number;
+  tools?: Array<Record<string, unknown>>;
+  tool_choice?: string | Record<string, unknown>;
+  response_format?: Record<string, unknown>;
 }
+
+const RESPONSES_CREATE_REQUEST_KEYS = new Set([
+  "model",
+  "input",
+  "instructions",
+  "max_output_tokens",
+  "stream",
+  "temperature",
+  "top_p",
+  "tools",
+  "tool_choice",
+  "response_format",
+]);
 
 export interface ResponsesStreamEvent extends Record<string, unknown> {
   type?: string;
@@ -96,6 +159,7 @@ export interface ResponsesStreamEvent extends Record<string, unknown> {
 export interface ResponsesCreateResponse extends RunInfraRequestMetadata {
   id?: string;
   object?: string;
+  created_at?: number;
   status?: string;
   model?: string;
   output_text?: string;
@@ -118,10 +182,21 @@ export interface ResponsesCreate {
   ): Promise<ResponsesCreateResponse | RunInfraStream<ResponsesStreamEvent>>;
 }
 
-export interface EmbeddingRequest extends Record<string, unknown> {
+export interface EmbeddingRequest {
   model: string;
   input: string | string[];
+  encoding_format?: "float" | string;
+  dimensions?: number;
+  user?: string;
 }
+
+const EMBEDDING_REQUEST_KEYS = new Set([
+  "model",
+  "input",
+  "encoding_format",
+  "dimensions",
+  "user",
+]);
 
 export interface EmbeddingObject extends Record<string, unknown> {
   object?: string;
@@ -136,7 +211,7 @@ export interface EmbeddingResponse extends RunInfraRequestMetadata {
   usage?: Record<string, unknown>;
 }
 
-export interface SpeechRequest extends Record<string, unknown> {
+export interface SpeechRequest {
   model: string;
   input: string;
   voice?: string;
@@ -144,13 +219,39 @@ export interface SpeechRequest extends Record<string, unknown> {
   ref_text?: string;
   task_type?: string;
   response_format?: string;
+  speed?: number;
 }
 
-export interface TranscriptionRequest extends Record<string, unknown> {
+const SPEECH_REQUEST_KEYS = new Set([
+  "model",
+  "input",
+  "voice",
+  "ref_audio",
+  "ref_text",
+  "task_type",
+  "response_format",
+  "speed",
+]);
+
+export interface TranscriptionRequest {
   model: string;
   file: Blob;
   filename?: string;
+  language?: string;
+  prompt?: string;
+  response_format?: "json" | "verbose_json" | string;
+  temperature?: number;
 }
+
+const TRANSCRIPTION_REQUEST_KEYS = new Set([
+  "model",
+  "file",
+  "filename",
+  "language",
+  "prompt",
+  "response_format",
+  "temperature",
+]);
 
 export interface TranscriptionResponse extends RunInfraRequestMetadata {
   text?: string;
@@ -159,10 +260,27 @@ export interface TranscriptionResponse extends RunInfraRequestMetadata {
   segments?: Array<Record<string, unknown>>;
 }
 
-export interface ImageGenerateRequest extends Record<string, unknown> {
+export interface ImageGenerateRequest {
   model: string;
   prompt: string;
+  n?: number;
+  size?: string;
+  response_format?: "url" | "b64_json" | string;
+  quality?: string;
+  style?: string;
+  user?: string;
 }
+
+const IMAGE_GENERATE_REQUEST_KEYS = new Set([
+  "model",
+  "prompt",
+  "n",
+  "size",
+  "response_format",
+  "quality",
+  "style",
+  "user",
+]);
 
 export interface ImageObject extends Record<string, unknown> {
   url?: string;
@@ -179,6 +297,11 @@ export interface VoicePipelineRequest {
   audio: Blob | ArrayBuffer | Uint8Array;
   mimeType?: string;
 }
+
+const VOICE_PIPELINE_REQUEST_KEYS = new Set([
+  "audio",
+  "mimeType",
+]);
 
 export interface VoicePipelineResponse extends RunInfraRequestMetadata {
   object?: string;
@@ -209,8 +332,6 @@ export interface ModelListResponse extends RunInfraRequestMetadata {
   object?: string;
   data: ModelObject[];
 }
-
-export type UnsupportedOperationRequest = Record<string, unknown>;
 
 export interface ConstructWebhookEventOptions {
   payload: string | Uint8Array | ArrayBuffer;
@@ -425,12 +546,14 @@ export class RunInfraAudioResponse {
   readonly requestId?: string;
   private readonly response: Response;
   private readonly readTimeoutMs?: number;
+  private readonly sensitiveValues: readonly string[];
 
-  constructor(response: Response, readTimeoutMs?: number) {
+  constructor(response: Response, readTimeoutMs?: number, sensitiveValues: readonly string[] = []) {
     this.response = response;
     this.contentType = response.headers.get("content-type") ?? "application/octet-stream";
     this.requestId = response.headers.get("x-request-id") ?? undefined;
     this.readTimeoutMs = readTimeoutMs;
+    this.sensitiveValues = sensitiveValues;
   }
 
   arrayBuffer(): Promise<ArrayBuffer> {
@@ -461,7 +584,7 @@ export class RunInfraAudioResponse {
       try {
         return await bodyRead;
       } catch (error) {
-        throw normalizeTransportError(error, this.requestId);
+        throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
       }
     }
 
@@ -477,7 +600,7 @@ export class RunInfraAudioResponse {
         }),
       ]);
     } catch (error) {
-      throw normalizeTransportError(error, this.requestId);
+      throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
     }
@@ -489,11 +612,13 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
   readonly response: Response;
   readonly requestId?: string;
   private readonly readTimeoutMs?: number;
+  private readonly sensitiveValues: readonly string[];
 
-  constructor(response: Response, readTimeoutMs?: number) {
+  constructor(response: Response, readTimeoutMs?: number, sensitiveValues: readonly string[] = []) {
     this.response = response;
     this.requestId = response.headers.get("x-request-id") ?? undefined;
     this.readTimeoutMs = readTimeoutMs;
+    this.sensitiveValues = sensitiveValues;
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<TEvent> {
@@ -573,8 +698,7 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
         if (parsed) yield parsed;
       }
     } catch (error) {
-      if (error instanceof RunInfraError) throw error;
-      throw normalizeTransportError(error, this.requestId);
+      throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
     } finally {
       if (!readerDone) {
         try {
@@ -592,13 +716,10 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
   }
 }
 
-function unsupportedOperation(message: string): Promise<never> {
-  return Promise.reject(new UnsupportedOperationError(message));
-}
-
 interface RequestOptions {
   method?: "GET" | "POST";
   body?: unknown;
+  typedBodyKeys?: ReadonlySet<string>;
   rawBody?: BodyInit;
   rawContentType?: string;
   accept?: string;
@@ -689,6 +810,14 @@ function normalizeBaseURL(baseURL: string, pipelineId?: string | null): string {
   return `${trimmed}/${encodeURIComponent(validatedPipelineId)}`;
 }
 
+function baseUrlLooksPipelineScoped(baseURL: string): boolean {
+  const parsed = new URL(baseURL);
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  const lastV1 = segments.lastIndexOf("v1");
+  if (lastV1 >= 0) return segments.length > lastV1 + 1;
+  return segments.length > 0;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -735,6 +864,21 @@ function withValidatedModel<TRequest extends { model: unknown }>(
     ...request,
     model: validateSdkModel(request.model),
   };
+}
+
+function validateRequestFields(
+  request: unknown,
+  allowedKeys: ReadonlySet<string>,
+  label: string,
+): asserts request is Record<string, unknown> {
+  if (!isPlainRecord(request)) {
+    throw invalidRequestOption(`${label} request must be an object`);
+  }
+  for (const key of Object.keys(request)) {
+    if (!allowedKeys.has(key)) {
+      throw invalidRequestOption(`Unknown ${label} request field: ${key}`);
+    }
+  }
 }
 
 function validateNonEmptyStringField(value: unknown, name: string): string {
@@ -807,6 +951,24 @@ function validateEmbeddingInput(value: unknown): void {
   throw invalidRequestOption("input must be a non-empty string or array of strings");
 }
 
+function validateEmbeddingResponseOptions(body: Record<string, unknown>): void {
+  if (body.encoding_format !== undefined && body.encoding_format !== "float") {
+    throw invalidRequestOption(
+      "embedding encoding_format must be float for native SDK typed responses",
+    );
+  }
+  if (
+    body.dimensions !== undefined &&
+    (
+      typeof body.dimensions !== "number" ||
+      !Number.isSafeInteger(body.dimensions) ||
+      body.dimensions <= 0
+    )
+  ) {
+    throw invalidRequestOption("embedding dimensions must be a positive integer");
+  }
+}
+
 function validateBlobFile(value: unknown): Blob {
   if (!(value instanceof Blob)) {
     throw invalidRequestOption("file must be a Blob");
@@ -844,13 +1006,6 @@ function validateMimeType(value: unknown, fallback = "audio/wav"): string {
   return validateSdkHeader(trimmed, "mimeType", 255);
 }
 
-function validateMultipartFieldName(value: string): string {
-  if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(value)) {
-    throw invalidRequestOption("multipart field names must be ASCII tokens");
-  }
-  return value;
-}
-
 function validateMultipartFilename(value: string): string {
   if (typeof value !== "string") {
     throw invalidRequestOption("filename must be a string");
@@ -877,6 +1032,27 @@ function validateMultipartFieldValue(value: unknown): string {
     throw invalidRequestOption("multipart field values must contain only finite numbers");
   }
   return String(value);
+}
+
+function validateTranscriptionResponseFormat(body: { response_format?: unknown }): void {
+  const responseFormat = body.response_format;
+  if (
+    responseFormat !== undefined &&
+    responseFormat !== "json" &&
+    responseFormat !== "verbose_json"
+  ) {
+    throw invalidRequestOption(
+      "audio transcription response_format must be json or verbose_json for native SDK typed responses",
+    );
+  }
+}
+
+function validateTranscriptionRequestKeys(request: TranscriptionRequest): void {
+  for (const key of Object.keys(request as unknown as Record<string, unknown>)) {
+    if (!TRANSCRIPTION_REQUEST_KEYS.has(key)) {
+      throw invalidRequestOption(`Unknown audio transcription request field: ${key}`);
+    }
+  }
 }
 
 const JSON_BODY_ERROR = "JSON request body must be JSON-serializable and contain only finite numbers";
@@ -916,6 +1092,31 @@ function sanitizeJsonValue(value: unknown, seen = new WeakSet<object>()): unknow
 
 function encodeJsonBody(payload: unknown): string {
   return JSON.stringify(sanitizeJsonValue(payload));
+}
+
+function mergeExtraJsonBody(
+  payload: unknown,
+  extraBody: unknown,
+  typedKeys: ReadonlySet<string> = new Set(),
+): unknown {
+  if (extraBody === undefined) return payload;
+  if (!isPlainRecord(extraBody)) {
+    throw invalidRequestOption("extraBody must be an object");
+  }
+  if (!isPlainRecord(payload)) {
+    throw invalidRequestOption("extraBody can only be used with JSON object request bodies");
+  }
+  const merged = { ...payload };
+  for (const [key, value] of Object.entries(extraBody)) {
+    if (!key.trim()) {
+      throw invalidRequestOption("extraBody keys must be non-empty strings");
+    }
+    if (typedKeys.has(key) || key in payload) {
+      throw invalidRequestOption(`extraBody must not override typed request field: ${key}`);
+    }
+    merged[key] = value;
+  }
+  return merged;
 }
 
 function invalidRequestOption(message: string): RunInfraError {
@@ -1019,6 +1220,7 @@ const REQUEST_OPTION_KEYS = new Set([
   "maxRetries",
   "retryBaseMs",
   "headers",
+  "extraBody",
 ]);
 
 function validateRequestOptions(requestOptions: unknown): RunInfraRequestOptions {
@@ -1176,24 +1378,25 @@ async function raiseForStatus(response: Response): Promise<void> {
   throw new RunInfraError(message, { status: response.status, type, requestId });
 }
 
-async function parseJsonResponse<TResponse>(response: Response): Promise<TResponse> {
+async function parseJsonResponse<TResponse>(
+  response: Response,
+  sensitiveValues: readonly string[] = [],
+): Promise<TResponse> {
   const requestId = response.headers.get("x-request-id") ?? undefined;
+  const idempotentReplay =
+    response.headers.get("x-runinfra-idempotent-replay")?.trim().toLowerCase() === "true";
   let payload: unknown;
   try {
     payload = await response.json();
   } catch (error) {
-    throw new ResponseBodyReadError(normalizeTransportError(error, requestId));
-  }
-  if (
-      requestId &&
-      payload &&
-      typeof payload === "object" &&
-      !Array.isArray(payload)
-  ) {
-    return { ...(payload as Record<string, unknown>), _request_id: requestId } as TResponse;
+    throw new ResponseBodyReadError(normalizeTransportError(error, requestId, sensitiveValues));
   }
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-    return payload as TResponse;
+    return {
+      ...(payload as Record<string, unknown>),
+      ...(requestId ? { _request_id: requestId } : {}),
+      ...(idempotentReplay ? { _idempotent_replay: true } : {}),
+    } as TResponse;
   }
   throw new RunInfraError(
     `RunInfra JSON response shape error: expected object, got ${jsonPayloadKind(payload)}.`,
@@ -1221,18 +1424,53 @@ class ResponseBodyReadError extends Error {
   }
 }
 
-function normalizeTransportError(error: unknown, requestId?: string): RunInfraError {
-  if (error instanceof RunInfraError) return error;
+function redactSensitiveValues(message: string, sensitiveValues: readonly string[] = []): string {
+  let redacted = message;
+  for (const value of sensitiveValues) {
+    if (value) redacted = redacted.split(value).join("[redacted]");
+  }
+  return redacted;
+}
+
+function redactRunInfraError(error: RunInfraError, sensitiveValues: readonly string[]): RunInfraError {
+  const message = redactSensitiveValues(error.message, sensitiveValues);
+  if (error instanceof AuthenticationError) return new AuthenticationError(message, error.status, error.requestId);
+  if (error instanceof PermissionDeniedError) return new PermissionDeniedError(message, error.status, error.requestId);
+  if (error instanceof RateLimitError) {
+    return new RateLimitError(message, error.status, error.requestId, error.retryAfterMs);
+  }
+  if (error instanceof InsufficientCreditsError) return new InsufficientCreditsError(message, error.status, error.requestId);
+  if (error instanceof DeploymentError) return new DeploymentError(message, error.status, error.requestId);
+  if (error instanceof ModelNotFoundError) return new ModelNotFoundError(message, error.status, error.requestId);
+  if (error instanceof RunInfraTimeoutError) return new RunInfraTimeoutError(message, error.requestId);
+  if (error instanceof RunInfraConnectionError) return new RunInfraConnectionError(message, error.requestId);
+  if (error instanceof RunInfraStreamParseError) return new RunInfraStreamParseError(message, error.requestId);
+  if (error instanceof UnsupportedOperationError) return new UnsupportedOperationError(message);
+  if (error instanceof WebhookVerificationError) return new WebhookVerificationError(message);
+  return new RunInfraError(message, {
+    status: error.status,
+    type: error.type,
+    requestId: error.requestId,
+    retryAfterMs: error.retryAfterMs,
+  });
+}
+
+function normalizeTransportError(
+  error: unknown,
+  requestId?: string,
+  sensitiveValues: readonly string[] = [],
+): RunInfraError {
+  if (error instanceof RunInfraError) return redactRunInfraError(error, sensitiveValues);
   if (
     error instanceof DOMException &&
     error.name === "AbortError"
   ) {
-    return new RunInfraTimeoutError(error.message, requestId);
+    return new RunInfraTimeoutError(redactSensitiveValues(error.message, sensitiveValues), requestId);
   }
   if (error instanceof Error && error.name === "AbortError") {
-    return new RunInfraTimeoutError(error.message, requestId);
+    return new RunInfraTimeoutError(redactSensitiveValues(error.message, sensitiveValues), requestId);
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactSensitiveValues(error instanceof Error ? error.message : String(error), sensitiveValues);
   return new RunInfraConnectionError(message, requestId);
 }
 
@@ -1254,7 +1492,7 @@ export class RunInfra {
   /**
    * Audio surfaces (text-to-speech + speech-to-text).
    *
-   * @experimental As of v0.1.3, these methods have NOT been verified end-to-end
+   * @experimental As of v0.1.4, these methods have NOT been verified end-to-end
    * against a live deployed pipeline in our canary suite. The HTTP envelope
    * matches the OpenAI Audio API contract and the request/response shapes are
    * stable, but you should test against your own deployed model before using
@@ -1277,7 +1515,7 @@ export class RunInfra {
   /**
    * Image generation surface.
    *
-   * @experimental As of v0.1.3, this method has NOT been verified end-to-end
+   * @experimental As of v0.1.4, this method has NOT been verified end-to-end
    * against a live deployed pipeline in our canary suite. The HTTP envelope
    * matches the OpenAI Images API contract, but you should test against your
    * own deployed model before using in production. Live-canary verification
@@ -1288,12 +1526,19 @@ export class RunInfra {
   };
 
   readonly webhooks: {
-    create: (request?: UnsupportedOperationRequest) => Promise<never>;
-    list: () => Promise<never>;
     verifySignature: typeof verifyWebhookSignature;
     constructEvent: typeof constructWebhookEvent;
   };
 
+  /**
+   * Voice pipeline surface.
+   *
+   * @experimental As of v0.1.4, this method has NOT been verified end-to-end
+   * against a live deployed pipeline in our canary suite. It requires a
+   * pipeline-scoped client and posts binary audio to `/pipeline`, but you
+   * should test against your own deployed pipeline before using in production.
+   * Live-canary verification is tracked for v1.0.0 GA.
+   */
   readonly voice: {
     pipeline: {
       create: (request: VoicePipelineRequest, options?: RunInfraRequestOptions) => Promise<VoicePipelineResponse>;
@@ -1302,6 +1547,7 @@ export class RunInfra {
 
   private readonly apiKey: string;
   private readonly baseURL: string;
+  private readonly hasPipelineScope: boolean;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly retryBaseMs: number;
@@ -1327,10 +1573,12 @@ export class RunInfra {
       );
     }
     this.apiKey = validatedApiKey;
-    this.baseURL = normalizeBaseURL(
+    const normalizedBaseURL = normalizeBaseURL(
       options.baseURL ?? "https://api.runinfra.ai/v1",
       options.pipelineId,
     );
+    this.baseURL = normalizedBaseURL;
+    this.hasPipelineScope = Boolean(options.pipelineId) || baseUrlLooksPipelineScoped(normalizedBaseURL);
     this.timeoutMs = validatePositiveNumber(options.timeoutMs ?? 120_000, "timeoutMs");
     this.maxRetries = validateNonNegativeInteger(options.maxRetries ?? 2, "maxRetries");
     this.retryBaseMs = validateNonNegativeNumber(options.retryBaseMs ?? 250, "retryBaseMs");
@@ -1343,11 +1591,13 @@ export class RunInfra {
       request: ChatCompletionRequest,
       requestOptions?: RunInfraRequestOptions,
     ) => {
+      validateRequestFields(request, CHAT_COMPLETION_REQUEST_KEYS, "chat completion");
       const body = withValidatedModel(request);
       validateChatMessages(body.messages);
       return this.request("/chat/completions", {
         method: "POST",
         body,
+        typedBodyKeys: CHAT_COMPLETION_REQUEST_KEYS,
         stream: body.stream === true,
       }, requestOptions);
     }) as ChatCompletionsCreate;
@@ -1359,21 +1609,26 @@ export class RunInfra {
     };
     this.embeddings = {
       create: (request, requestOptions) => {
+        validateRequestFields(request, EMBEDDING_REQUEST_KEYS, "embedding");
         const body = withValidatedModel(request);
         validateEmbeddingInput(body.input);
+        validateEmbeddingResponseOptions(body);
         return this.request("/embeddings", {
           method: "POST",
           body,
+          typedBodyKeys: EMBEDDING_REQUEST_KEYS,
         }, requestOptions);
       },
     };
     this.responses = {
       create: ((request: ResponsesCreateRequest, requestOptions?: RunInfraRequestOptions) => {
+        validateRequestFields(request, RESPONSES_CREATE_REQUEST_KEYS, "responses");
         const body = withValidatedModel(request);
         validateResponsesInput(body.input);
         return this.request("/responses", {
           method: "POST",
           body,
+          typedBodyKeys: RESPONSES_CREATE_REQUEST_KEYS,
           stream: body.stream === true,
         }, requestOptions);
       }) as ResponsesCreate,
@@ -1381,19 +1636,23 @@ export class RunInfra {
     this.audio = {
       speech: {
         create: async (request, requestOptions) => {
+          validateRequestFields(request, SPEECH_REQUEST_KEYS, "audio speech");
           const body = withValidatedModel(request);
           validateNonEmptyStringField(body.input, "input");
           validateSpeechReference(body);
           const response = await this.rawRequest("/audio/speech", {
             method: "POST",
             body,
+            typedBodyKeys: SPEECH_REQUEST_KEYS,
             binary: true,
           }, requestOptions);
-          return new RunInfraAudioResponse(response, this.requestTimeoutMs(requestOptions));
+          return new RunInfraAudioResponse(response, this.requestTimeoutMs(requestOptions), [this.apiKey]);
         },
       },
       transcriptions: {
         create: (request, requestOptions) => {
+          validateTranscriptionRequestKeys(request);
+          validateTranscriptionResponseFormat(request);
           const formData = new FormData();
           formData.append("model", validateSdkModel(request.model));
           formData.append(
@@ -1401,10 +1660,10 @@ export class RunInfra {
             validateBlobFile(request.file),
             validateMultipartFilename(request.filename ?? "audio.wav"),
           );
-          for (const [key, value] of Object.entries(request)) {
-            if (key === "model" || key === "file" || key === "filename") continue;
+          for (const key of ["language", "prompt", "response_format", "temperature"] as const) {
+            const value = request[key];
             if (value !== undefined && value !== null) {
-              formData.append(validateMultipartFieldName(key), validateMultipartFieldValue(value));
+              formData.append(key, validateMultipartFieldValue(value));
             }
           }
           return this.request("/audio/transcriptions", {
@@ -1425,29 +1684,29 @@ export class RunInfra {
     };
     this.images = {
       generate: (request, requestOptions) => {
+        validateRequestFields(request, IMAGE_GENERATE_REQUEST_KEYS, "image generation");
         const body = withValidatedModel(request);
         validateNonEmptyStringField(body.prompt, "prompt");
         return this.request("/images/generations", {
           method: "POST",
           body,
+          typedBodyKeys: IMAGE_GENERATE_REQUEST_KEYS,
         }, requestOptions);
       },
     };
     this.webhooks = {
       verifySignature: verifyWebhookSignature,
       constructEvent: constructWebhookEvent,
-      create: () =>
-        unsupportedOperation(
-          "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped.",
-        ),
-      list: () =>
-        unsupportedOperation(
-          "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped.",
-        ),
     };
     this.voice = {
       pipeline: {
         create: (request, requestOptions) => {
+          if (!this.hasPipelineScope) {
+            throw invalidRequestOption(
+              "voice pipeline requests require pipelineId or a pipeline-scoped baseURL",
+            );
+          }
+          validateRequestFields(request, VOICE_PIPELINE_REQUEST_KEYS, "voice pipeline");
           const audio = validateVoicePipelineAudio(request?.audio);
           return this.request("/pipeline", {
             method: "POST",
@@ -1482,7 +1741,7 @@ export class RunInfra {
   ): Promise<TResponse | RunInfraStream> {
     if (options.stream) {
       const response = await this.rawRequest(path, options, requestOptions);
-      return new RunInfraStream(response, this.requestTimeoutMs(requestOptions));
+      return new RunInfraStream(response, this.requestTimeoutMs(requestOptions), [this.apiKey]);
     }
     return this.sendWithRetry(path, options, requestOptions, parseJsonResponse<TResponse>);
   }
@@ -1507,7 +1766,7 @@ export class RunInfra {
     path: string,
     options: RequestOptions,
     requestOptions: RunInfraRequestOptions = {},
-    consumeResponse: (response: Response) => Promise<TResponse>,
+    consumeResponse: (response: Response, sensitiveValues: readonly string[]) => Promise<TResponse>,
   ): Promise<TResponse> {
     const validatedRequestOptions = validateRequestOptions(requestOptions);
     const clientRequestId = validateSdkIdentifierHeader(
@@ -1531,14 +1790,28 @@ export class RunInfra {
 
     let body: BodyInit | undefined;
     if (options.formData) {
+      if (validatedRequestOptions.extraBody !== undefined) {
+        throw invalidRequestOption("extraBody can only be used with JSON request bodies");
+      }
       body = options.formData;
     } else if (options.rawBody !== undefined) {
+      if (validatedRequestOptions.extraBody !== undefined) {
+        throw invalidRequestOption("extraBody can only be used with JSON request bodies");
+      }
       body = options.rawBody;
       headers["Content-Type"] = options.rawContentType ?? "application/octet-stream";
       if (options.accept) headers.Accept = options.accept;
     } else if (options.body !== undefined) {
       headers["Content-Type"] = "application/json";
-      body = encodeJsonBody(options.body);
+      body = encodeJsonBody(
+        mergeExtraJsonBody(
+          options.body,
+          validatedRequestOptions.extraBody,
+          options.typedBodyKeys,
+        ),
+      );
+    } else if (validatedRequestOptions.extraBody !== undefined) {
+      throw invalidRequestOption("extraBody can only be used with JSON request bodies");
     }
 
     let attempt = 0;
@@ -1582,7 +1855,7 @@ export class RunInfra {
           continue;
         }
         await raiseForStatus(response);
-        return await consumeResponse(response);
+        return await consumeResponse(response, [this.apiKey]);
       } catch (error) {
         if (error instanceof ResponseBodyReadError) {
           if (canRetry && attempt < maxRetries) {
@@ -1590,10 +1863,10 @@ export class RunInfra {
             await sleep(retryDelayMs(attempt, retryBaseMs));
             continue;
           }
-          throw error.error;
+          throw normalizeTransportError(error.error, error.error.requestId, [this.apiKey]);
         }
-        if (error instanceof RunInfraError) throw error;
-        if (!canRetry || attempt >= maxRetries) throw normalizeTransportError(error);
+        if (error instanceof RunInfraError) throw normalizeTransportError(error, error.requestId, [this.apiKey]);
+        if (!canRetry || attempt >= maxRetries) throw normalizeTransportError(error, undefined, [this.apiKey]);
         attempt += 1;
         await sleep(retryDelayMs(attempt, retryBaseMs));
       } finally {

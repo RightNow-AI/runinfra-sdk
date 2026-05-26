@@ -32,3 +32,11 @@ python/tests/__pycache__/
 .env
 .env.local
 .env.*.local
+
+# Local live-canary reports
+artifacts/
+.canary-tmp/
+.clean-install-tmp/
+
+# Local agent handoff notes
+AGENTS-GOALs/

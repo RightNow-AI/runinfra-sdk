@@ -3,6 +3,75 @@
 All notable changes to the `runinfra` Python SDK are documented here. This
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-05-23
+
+### Changed
+- Removed unshipped webhook delivery `create` / `list` methods from the
+  public `client.webhooks` surface. Local signature verification remains
+  available through `verify_signature`, `construct_event`,
+  `verify_webhook_signature`, and `construct_webhook_event`.
+- Replaced the live-canary unsupported-webhook rows with
+  `webhooks.delivery_surface.absent`, so source, artifact, and clean-install
+  gates prove the dead delivery methods are absent instead of merely
+  fail-closed.
+- Replaced arbitrary `**kwargs` on public request helpers with explicit
+  OpenAI-style keyword parameters plus an `extra_body` mapping for deliberate
+  gateway compatibility probes.
+- Kept `responses.create()` keyword parameters limited to the
+  gateway-supported Responses compatibility adapter fields; stateful OpenAI
+  Responses fields remain unsupported unless the gateway adds them.
+- Limited `extra_body` to JSON body helpers; multipart ASR uses explicit typed
+  parameters only, matching the TypeScript SDK's extension posture.
+- Documented concrete asyncio and FastAPI background-task patterns for the
+  sync-only Python client while keeping `AsyncRunInfra` out of the public
+  surface until it has full parity coverage.
+- Updated Responses adapter docs to list the typed `top_p`, `tools`,
+  `tool_choice`, and `response_format` fields.
+- Added Python overloads so `stream=True` calls on chat completions and
+  Responses statically narrow to `RunInfraStream` while non-stream calls keep
+  their typed response envelopes.
+- Hardened parent live-canary parity so strict reports fail when child reports
+  contain failed/skipped rows or inconsistent summary counts.
+- Hardened promotion readiness verification so forged or stale readiness
+  summaries cannot contradict the strict readiness rows.
+- Included `typescript/tsconfig.json` and `python/MANIFEST.in` in promotion
+  source digests so source-map or package-manifest changes require fresh
+  readiness and live-canary evidence before publish.
+- Corrected modality-status docs so chat/responses are not described as
+  strict-live green before fresh production artifact canaries pass.
+- Extended package leakage scanners to reject PyPI/Twine and pip credential
+  config material such as `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini`.
+- Added a local strict canary row proving user-supplied client request IDs are
+  sent as headers and do not leak into JSON request bodies.
+- Added a local strict canary row proving custom request headers are sent as
+  headers, do not leak into JSON bodies, and cannot override SDK credentials.
+- Added a local strict canary row proving per-request timeout options map to
+  timeout errors without leaking timeout option names into JSON bodies.
+- Added a local strict canary row proving explicit JSON `extra_body` extensions
+  are serialized deliberately, do not serialize SDK option names, reject typed
+  field overrides, and stay out of multipart ASR helpers.
+- Added a local strict canary row proving unknown direct request fields are
+  rejected before network sends and that unsupported JSON body probes must use
+  `extra_body`.
+- Added a local strict canary row proving the Python package exposes no browser
+  token helper surface while the TypeScript package enforces the browser
+  API-key guard.
+- Added a `[EXPERIMENTAL]` docstring to the public voice pipeline surface so
+  runtime help matches its not-yet-live-verified status.
+- Added a local strict canary row proving initial transport, response body read,
+  status error body, and stream read public errors redact the configured API
+  key while still sending it only as a bearer header. The Python canary also
+  verifies traceback output and explicit exception chains do not retain
+  unredacted causes.
+- Added a local strict canary row proving 429 rate-limit responses map to
+  `RateLimitError` with `retry_after_seconds` and request-id metadata.
+- Added a local strict canary row proving 402 insufficient-credits responses
+  map to `InsufficientCreditsError` with request-id metadata.
+
+### Compatibility
+- `UnsupportedOperationError` remains exported for older v0.1.x consumers, but
+  current public helpers do not raise it.
+
 ## [0.1.3] - 2026-05-23
 
 ### Security
@@ -35,9 +104,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The 0.1.0 release went out via a CI bypass that skipped live-canary
   verification for image/TTS/ASR modalities; "Production/Stable" was
   inaccurate. PyPI listing now reflects beta state honestly.
-- **`description`**: now states "beta; LLM + embeddings tested, image/audio
-  surfaces experimental" so the registry listing accurately reflects
-  verification state.
+- **`description`**: now states "beta; LLM and embeddings contract-tested,
+  image/audio surfaces experimental" so the registry listing avoids implying
+  live multimodal GA proof.
 - **`Issues` URL**: now points at `RightNow-AI/runinfra-sdk` (the public source
   repo). Previous value pointed at the non-existent `RunPipe` slug.
 
@@ -59,7 +128,8 @@ trusted-publisher rule on PyPI. Verify the project's publisher chain at
 https://pypi.org/manage/project/runinfra/publishing/.
 
 ### Known beta gaps
-- Live-canary coverage is currently restricted to LLM + embeddings. Image,
+- Live-canary coverage is currently partial for LLM and blocked for embeddings
+  until the strict promotion artifacts include a deployed embedding target. Image,
   TTS, and ASR surfaces are runnable but not yet verified end-to-end.
 - Webhook delivery routes are not shipped; `client.webhooks.create` /
   `.list()` raise `UnsupportedOperationError`. Local signature verification
