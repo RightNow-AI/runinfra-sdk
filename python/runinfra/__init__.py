@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import json
 import hashlib
 import hmac
@@ -13,19 +14,20 @@ import urllib.request
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from collections.abc import Mapping as MappingABC
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, TypedDict, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Mapping, Optional, Sequence, TypedDict, Union, overload
 
 
 JsonDict = Dict[str, Any]
 Transport = Callable[["RunInfraRequest"], "RunInfraResponse"]
 ResponseBody = Union[bytes, Iterable[bytes]]
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 _MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 60.0
 _WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH = 8192
 
 
 class RunInfraRequestMetadata(TypedDict, total=False):
     _request_id: str
+    _idempotent_replay: bool
 
 
 class ModelObject(RunInfraRequestMetadata, total=False):
@@ -213,13 +215,20 @@ class AudioResponse:
 
 
 class RunInfraStream:
-    def __init__(self, body: ResponseBody, request_id: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        body: ResponseBody,
+        request_id: Optional[str] = None,
+        sensitive_values: Iterable[str] = (),
+    ) -> None:
         self._body = body
         self.request_id = request_id
+        self._sensitive_values = tuple(sensitive_values)
 
     def __iter__(self) -> Iterator[JsonDict]:
         buffer = ""
         data_lines: List[str] = []
+        decoder = codecs.getincrementaldecoder("utf-8")()
 
         def dispatch_event() -> Optional[JsonDict]:
             payload = "\n".join(data_lines).strip()
@@ -255,9 +264,10 @@ class RunInfraStream:
             chunks = self._body
             close_chunks = getattr(chunks, "close", None)
 
+        error_to_raise: Optional[RunInfraError] = None
         try:
             for chunk in chunks:
-                buffer += chunk.decode("utf-8", errors="replace")
+                buffer += decoder.decode(chunk, final=False)
                 lines = buffer.split("\n")
                 buffer = lines.pop() or ""
                 for line in lines:
@@ -265,6 +275,7 @@ class RunInfraStream:
                     if parsed is not None:
                         yield parsed
 
+            buffer += decoder.decode(b"", final=True)
             parsed = parse_line(buffer)
             if parsed is not None:
                 yield parsed
@@ -272,13 +283,19 @@ class RunInfraStream:
                 parsed = dispatch_event()
                 if parsed is not None:
                     yield parsed
-        except RunInfraError:
-            raise
+        except RunInfraError as exc:
+            error_to_raise = _redacted_runinfra_error(exc, self._sensitive_values)
         except Exception as exc:
-            raise _transport_error(exc, request_id=self.request_id) from exc
+            error_to_raise = _transport_error(
+                exc,
+                request_id=self.request_id,
+                sensitive_values=self._sensitive_values,
+            )
         finally:
             if callable(close_chunks):
                 close_chunks()
+        if error_to_raise is not None:
+            raise error_to_raise
 
 
 def _base_url_already_has_pipeline_id(base_url: str, pipeline_id: str) -> bool:
@@ -341,6 +358,16 @@ def _normalize_base_url(base_url: str, pipeline_id: Optional[str]) -> str:
     if _base_url_already_has_pipeline_id(base, validated_pipeline_id):
         return base
     return f"{base}/{urllib.parse.quote(validated_pipeline_id, safe='')}"
+
+
+def _base_url_looks_pipeline_scoped(base_url: str) -> bool:
+    parsed = urllib.parse.urlparse(base_url)
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    try:
+        last_v1 = len(segments) - 1 - list(reversed(segments)).index("v1")
+    except ValueError:
+        return len(segments) > 0
+    return len(segments) > last_v1 + 1
 
 
 def _default_transport(timeout: float) -> Transport:
@@ -523,10 +550,45 @@ def _validate_embedding_input(value: Any) -> None:
     raise _invalid_request_option("input must be a non-empty string or array of strings")
 
 
+def _validate_embedding_response_options(options: Mapping[str, Any]) -> None:
+    encoding_format = options.get("encoding_format")
+    if encoding_format is not None and encoding_format != "float":
+        raise _invalid_request_option(
+            "embedding encoding_format must be float for native SDK typed responses"
+        )
+    dimensions = options.get("dimensions")
+    if dimensions is not None and (
+        isinstance(dimensions, bool) or not isinstance(dimensions, int) or dimensions <= 0
+    ):
+        raise _invalid_request_option("embedding dimensions must be a positive integer")
+
+
+def _json_payload_with_extra(
+    fields: Mapping[str, object],
+    extra_body: Optional[Mapping[str, object]],
+) -> Dict[str, object]:
+    payload = {key: value for key, value in fields.items() if value is not None}
+    typed_keys = set(fields.keys())
+    if extra_body is None:
+        return payload
+    if not isinstance(extra_body, MappingABC):
+        raise _invalid_request_option("extra_body must be a mapping")
+    for key, value in extra_body.items():
+        if not isinstance(key, str) or not key.strip():
+            raise _invalid_request_option("extra_body keys must be non-empty strings")
+        if key in typed_keys:
+            raise _invalid_request_option(f"extra_body must not override typed request field: {key}")
+        payload[key] = value
+    return payload
+
+
 def _validated_audio_file(value: Any) -> bytes:
     if not isinstance(value, (bytes, bytearray)):
         raise _invalid_request_option("file must be bytes or bytearray")
-    return bytes(value)
+    data = bytes(value)
+    if len(data) == 0:
+        raise _invalid_request_option("file must not be empty")
+    return data
 
 
 def _validated_audio_bytes(value: Any, name: str = "audio") -> bytes:
@@ -786,16 +848,60 @@ def _is_timeout_error(error: BaseException) -> bool:
     return "timed out" in message or "timeout" in message
 
 
-def _transport_error(error: BaseException, request_id: Optional[str] = None) -> RunInfraError:
+def _redacted_error_message(error: BaseException, sensitive_values: Iterable[str] = ()) -> str:
+    message = str(error)
+    for value in sensitive_values:
+        if value:
+            message = message.replace(value, "[redacted]")
+    return message
+
+
+def _redacted_runinfra_error(
+    error: RunInfraError,
+    sensitive_values: Iterable[str] = (),
+) -> RunInfraError:
+    message = _redacted_error_message(error, sensitive_values)
+    if isinstance(error, RunInfraStreamParseError):
+        return RunInfraStreamParseError(message, request_id=error.request_id)
+    if isinstance(error, UnsupportedOperationError):
+        return UnsupportedOperationError(message)
+    if isinstance(error, WebhookVerificationError):
+        return WebhookVerificationError(message)
+    try:
+        return error.__class__(
+            message,
+            status=error.status,
+            error_type=error.type,
+            request_id=error.request_id,
+            retry_after_seconds=error.retry_after_seconds,
+        )
+    except TypeError:
+        return RunInfraError(
+            message,
+            status=error.status,
+            error_type=error.type,
+            request_id=error.request_id,
+            retry_after_seconds=error.retry_after_seconds,
+        )
+
+
+def _transport_error(
+    error: BaseException,
+    request_id: Optional[str] = None,
+    sensitive_values: Iterable[str] = (),
+) -> RunInfraError:
+    if isinstance(error, RunInfraError):
+        return _redacted_runinfra_error(error, sensitive_values)
+    message = _redacted_error_message(error, sensitive_values)
     if _is_timeout_error(error):
         return RunInfraTimeoutError(
-            str(error),
+            message,
             status=0,
             error_type="timeout_error",
             request_id=request_id,
         )
     return RunInfraConnectionError(
-        str(error),
+        message,
         status=0,
         error_type="connection_error",
         request_id=request_id,
@@ -815,6 +921,13 @@ def _request_id_from_headers(headers: Mapping[str, str]) -> Optional[str]:
     return None
 
 
+def _idempotent_replay_from_headers(headers: Mapping[str, str]) -> bool:
+    for key, value in headers.items():
+        if key.lower() == "x-runinfra-idempotent-replay":
+            return value.strip().lower() == "true"
+    return False
+
+
 def _error_from_response(response: RunInfraResponse) -> RunInfraError:
     message = f"RunInfra request failed with status {response.status}"
     error_type = "api_error"
@@ -829,7 +942,7 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
     except Exception:
         pass
 
-    request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+    request_id = _request_id_from_headers(response.headers)
     if response.status == 401:
         return AuthenticationError(message, status=response.status, error_type="auth_error", request_id=request_id)
     if response.status == 403:
@@ -860,14 +973,28 @@ def _json_body(payload: Mapping[str, Any]) -> bytes:
         ) from exc
 
 
-def _json_response(response: RunInfraResponse) -> Any:
-    payload = response.json()
+def _json_response(response: RunInfraResponse, sensitive_values: Iterable[str] = ()) -> Any:
+    request_id = _request_id_from_headers(response.headers)
+    error_to_raise: Optional[RunInfraError] = None
+    try:
+        payload = response.json()
+    except RunInfraError as exc:
+        error_to_raise = _redacted_runinfra_error(exc, sensitive_values)
+    except Exception as exc:
+        error_to_raise = _transport_error(
+            exc,
+            request_id=request_id,
+            sensitive_values=sensitive_values,
+        )
+    if error_to_raise is not None:
+        raise error_to_raise
     if isinstance(payload, dict):
-        request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+        metadata: Dict[str, Any] = {}
         if request_id:
-            return {**payload, "_request_id": request_id}
-        return payload
-    request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+            metadata["_request_id"] = request_id
+        if _idempotent_replay_from_headers(response.headers):
+            metadata["_idempotent_replay"] = True
+        return {**payload, **metadata} if metadata else payload
     raise RunInfraError(
         f"RunInfra JSON response shape error: expected object, got {_json_payload_kind(payload)}.",
         status=response.status,
@@ -919,6 +1046,14 @@ def _validated_multipart_field_value(value: Any) -> str:
     return str(value)
 
 
+def _validate_transcription_response_format(options: Mapping[str, Any]) -> None:
+    response_format = options.get("response_format")
+    if response_format is not None and response_format not in {"json", "verbose_json"}:
+        raise _invalid_request_option(
+            "audio transcription response_format must be json or verbose_json for native SDK typed responses"
+        )
+
+
 def _multipart_body(fields: Mapping[str, str], files: Mapping[str, tuple[str, bytes, str]]) -> tuple[bytes, str]:
     boundary = f"runinfra-{uuid.uuid4().hex}"
     chunks: List[bytes] = []
@@ -958,12 +1093,14 @@ class _Requester:
         *,
         api_key: str,
         base_url: str,
+        pipeline_scoped: bool,
         transport: Transport,
         max_retries: int,
         retry_base_seconds: float,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
+        self.pipeline_scoped = pipeline_scoped
         self.transport = transport
         self.max_retries = max_retries
         self.retry_base_seconds = retry_base_seconds
@@ -977,7 +1114,7 @@ class _Requester:
         body: Optional[bytes] = None,
         headers: Optional[Mapping[str, str]] = None,
         stream: bool = False,
-        idempotent_replay_safe: bool = True,
+        idempotent_replay_safe: bool = False,
         request_options: Optional[Mapping[str, Any]] = None,
     ) -> RunInfraResponse:
         request_options = _validated_request_options(request_options)
@@ -1042,6 +1179,7 @@ class _Requester:
             has_idempotency_key and has_replayable_json_body
         )
         while True:
+            error_to_raise: Optional[RunInfraError] = None
             try:
                 response = self.transport(
                     RunInfraRequest(
@@ -1058,15 +1196,17 @@ class _Requester:
                     attempt += 1
                     time.sleep(_retry_delay_seconds(attempt, retry_base_seconds))
                     continue
-                raise exc.error from exc
-            except RunInfraError:
-                raise
+                error_to_raise = _redacted_runinfra_error(exc.error, [self.api_key])
+            except RunInfraError as exc:
+                error_to_raise = _redacted_runinfra_error(exc, [self.api_key])
             except Exception as exc:
                 if can_retry and attempt < max_retries:
                     attempt += 1
                     time.sleep(_retry_delay_seconds(attempt, retry_base_seconds))
                     continue
-                raise _transport_error(exc) from exc
+                error_to_raise = _transport_error(exc, sensitive_values=[self.api_key])
+            if error_to_raise is not None:
+                raise error_to_raise
 
             if 200 <= response.status < 300:
                 return response
@@ -1075,30 +1215,159 @@ class _Requester:
                 _discard_response_body(response)
                 time.sleep(_retry_delay_seconds(attempt, retry_base_seconds, response))
                 continue
-            raise _error_from_response(response)
+            raise _redacted_runinfra_error(_error_from_response(response), [self.api_key])
 
 
 class _ChatCompletions:
     def __init__(self, requester: _Requester) -> None:
         self._requester = requester
 
-    def create(self, **kwargs: Any) -> Union[ChatCompletionResponse, RunInfraStream]:
-        request_options = kwargs.pop("request_options", None)
-        kwargs = {**kwargs, "model": _validated_model(kwargs.get("model"))}
-        _validate_chat_messages(kwargs.get("messages"))
-        stream = kwargs.get("stream") is True
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Mapping[str, object]],
+        stream: Literal[True],
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        stop: Optional[Union[str, Sequence[str]]] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        user: Optional[str] = None,
+        metadata: Optional[Mapping[str, object]] = None,
+        stream_options: Optional[Mapping[str, object]] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        seed: Optional[int] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> RunInfraStream: ...
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Mapping[str, object]],
+        stream: Literal[False] = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        stop: Optional[Union[str, Sequence[str]]] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        user: Optional[str] = None,
+        metadata: Optional[Mapping[str, object]] = None,
+        stream_options: Optional[Mapping[str, object]] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        seed: Optional[int] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> ChatCompletionResponse: ...
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Mapping[str, object]],
+        stream: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        stop: Optional[Union[str, Sequence[str]]] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        user: Optional[str] = None,
+        metadata: Optional[Mapping[str, object]] = None,
+        stream_options: Optional[Mapping[str, object]] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        seed: Optional[int] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> Union[ChatCompletionResponse, RunInfraStream]: ...
+
+    def create(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Mapping[str, object]],
+        stream: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        max_completion_tokens: Optional[int] = None,
+        stop: Optional[Union[str, Sequence[str]]] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        user: Optional[str] = None,
+        metadata: Optional[Mapping[str, object]] = None,
+        stream_options: Optional[Mapping[str, object]] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        seed: Optional[int] = None,
+        logprobs: Optional[bool] = None,
+        top_logprobs: Optional[int] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> Union[ChatCompletionResponse, RunInfraStream]:
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "messages": messages,
+                "stream": True if stream else None,
+                "temperature": temperature,
+                "top_p": top_p,
+                "max_tokens": max_tokens,
+                "max_completion_tokens": max_completion_tokens,
+                "stop": stop,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "user": user,
+                "metadata": metadata,
+                "stream_options": stream_options,
+                "tools": tools,
+                "tool_choice": tool_choice,
+                "response_format": response_format,
+                "seed": seed,
+                "logprobs": logprobs,
+                "top_logprobs": top_logprobs,
+            },
+            extra_body,
+        )
+        _validate_chat_messages(payload.get("messages"))
+        is_stream = payload.get("stream") is True
         response = self._requester.request(
             "/chat/completions",
-            json_payload=kwargs,
-            stream=stream,
+            json_payload=payload,
+            stream=is_stream,
+            idempotent_replay_safe=True,
             request_options=request_options,
         )
-        if stream:
+        if is_stream:
             return RunInfraStream(
                 response.body,
-                response.headers.get("x-request-id") or response.headers.get("X-Request-Id"),
+                _request_id_from_headers(response.headers),
+                [self._requester.api_key],
             )
-        return _json_response(response)
+        return _json_response(response, [self._requester.api_key])
 
 
 class _Chat:
@@ -1110,23 +1379,112 @@ class _Responses:
     def __init__(self, requester: _Requester) -> None:
         self._requester = requester
 
-    def create(self, **kwargs: Any) -> Union[ResponsesCreateResponse, RunInfraStream]:
-        request_options = kwargs.pop("request_options", None)
-        kwargs = {**kwargs, "model": _validated_model(kwargs.get("model"))}
-        _validate_responses_input(kwargs.get("input"))
-        stream = kwargs.get("stream") is True
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        input: Union[str, Sequence[Mapping[str, object]]],
+        instructions: Optional[str] = None,
+        stream: Literal[True],
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> RunInfraStream: ...
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        input: Union[str, Sequence[Mapping[str, object]]],
+        instructions: Optional[str] = None,
+        stream: Literal[False] = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> ResponsesCreateResponse: ...
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        input: Union[str, Sequence[Mapping[str, object]]],
+        instructions: Optional[str] = None,
+        stream: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> Union[ResponsesCreateResponse, RunInfraStream]: ...
+
+    def create(
+        self,
+        *,
+        model: str,
+        input: Union[str, Sequence[Mapping[str, object]]],
+        instructions: Optional[str] = None,
+        stream: bool = False,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        tools: Optional[Sequence[Mapping[str, object]]] = None,
+        tool_choice: Optional[Union[str, Mapping[str, object]]] = None,
+        response_format: Optional[Mapping[str, object]] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> Union[ResponsesCreateResponse, RunInfraStream]:
+        """Create through RunInfra's Responses compatibility adapter.
+
+        The gateway maps supported fields onto chat completions and rewraps
+        the result; this is not a full stateful OpenAI Responses implementation.
+        """
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "input": input,
+                "instructions": instructions,
+                "stream": True if stream else None,
+                "temperature": temperature,
+                "top_p": top_p,
+                "max_output_tokens": max_output_tokens,
+                "tools": tools,
+                "tool_choice": tool_choice,
+                "response_format": response_format,
+            },
+            extra_body,
+        )
+        _validate_responses_input(payload.get("input"))
+        is_stream = payload.get("stream") is True
         response = self._requester.request(
             "/responses",
-            json_payload=kwargs,
-            stream=stream,
+            json_payload=payload,
+            stream=is_stream,
+            idempotent_replay_safe=True,
             request_options=request_options,
         )
-        if stream:
+        if is_stream:
             return RunInfraStream(
                 response.body,
-                response.headers.get("x-request-id") or response.headers.get("X-Request-Id"),
+                _request_id_from_headers(response.headers),
+                [self._requester.api_key],
             )
-        return _json_response(response)
+        return _json_response(response, [self._requester.api_key])
 
 
 class _Embeddings:
@@ -1138,15 +1496,29 @@ class _Embeddings:
         *,
         model: str,
         input: Union[str, Sequence[str]],
+        encoding_format: Optional[str] = None,
+        dimensions: Optional[int] = None,
+        user: Optional[str] = None,
         request_options: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any,
+        extra_body: Optional[Mapping[str, object]] = None,
     ) -> EmbeddingResponse:
         _validate_embedding_input(input)
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "input": input,
+                "encoding_format": encoding_format,
+                "dimensions": dimensions,
+                "user": user,
+            },
+            extra_body,
+        )
+        _validate_embedding_response_options(payload)
         return _json_response(self._requester.request(
             "/embeddings",
-            json_payload={"model": _validated_model(model), "input": input, **kwargs},
+            json_payload=payload,
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Speech:
@@ -1159,20 +1531,33 @@ class _Speech:
         model: str,
         input: str,
         voice: Optional[str] = None,
+        response_format: Optional[str] = None,
+        speed: Optional[float] = None,
+        ref_audio: Optional[str] = None,
+        ref_text: Optional[str] = None,
+        task_type: Optional[str] = None,
         request_options: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any,
+        extra_body: Optional[Mapping[str, object]] = None,
     ) -> AudioResponse:
         validated_input = _validated_non_empty_string(input, "input")
-        payload: Dict[str, Any] = {
-            "model": _validated_model(model),
-            "input": validated_input,
-            **kwargs,
-        }
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "input": validated_input,
+                "voice": voice,
+                "response_format": response_format,
+                "speed": speed,
+                "ref_audio": ref_audio,
+                "ref_text": ref_text,
+                "task_type": task_type,
+            },
+            extra_body,
+        )
         if voice is not None:
             payload["voice"] = _validated_non_empty_string(voice, "voice")
-        elif "ref_audio" in kwargs or "ref_text" in kwargs:
-            payload["ref_audio"] = _validated_non_empty_string(kwargs.get("ref_audio"), "ref_audio")
-            payload["ref_text"] = _validated_non_empty_string(kwargs.get("ref_text"), "ref_text")
+        elif ref_audio is not None or ref_text is not None:
+            payload["ref_audio"] = _validated_non_empty_string(ref_audio, "ref_audio")
+            payload["ref_text"] = _validated_non_empty_string(ref_text, "ref_text")
         else:
             raise _invalid_request_option(
                 "speech requests require either voice, or both ref_audio and ref_text"
@@ -1184,7 +1569,7 @@ class _Speech:
             request_options=request_options,
         )
         content_type = response.headers.get("content-type", response.headers.get("Content-Type", "application/octet-stream"))
-        request_id = response.headers.get("x-request-id") or response.headers.get("X-Request-Id")
+        request_id = _request_id_from_headers(response.headers)
         return AudioResponse(response.body, content_type, request_id)
 
 
@@ -1199,13 +1584,23 @@ class _Transcriptions:
         file: Union[bytes, bytearray],
         filename: str = "audio.wav",
         content_type: str = "audio/wav",
+        language: Optional[str] = None,
+        prompt: Optional[str] = None,
+        response_format: Optional[str] = None,
+        temperature: Optional[float] = None,
         request_options: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any,
     ) -> TranscriptionResponse:
-        fields = {
-            "model": _validated_model(model),
-            **{key: _validated_multipart_field_value(value) for key, value in kwargs.items()},
-        }
+        payload: Dict[str, object] = {"model": _validated_model(model)}
+        for key, value in {
+            "language": language,
+            "prompt": prompt,
+            "response_format": response_format,
+            "temperature": temperature,
+        }.items():
+            if value is not None:
+                payload[key] = value
+        _validate_transcription_response_format(payload)
+        fields = {key: _validated_multipart_field_value(value) for key, value in payload.items()}
         body, multipart_type = _multipart_body(
             fields,
             {"file": (filename, _validated_audio_file(file), content_type)},
@@ -1216,13 +1611,13 @@ class _Transcriptions:
             headers={"Content-Type": multipart_type},
             idempotent_replay_safe=False,
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Audio:
     """Audio surfaces (text-to-speech + speech-to-text).
 
-    [EXPERIMENTAL] As of v0.1.3, these methods have NOT been verified end-to-end
+    [EXPERIMENTAL] As of v0.1.4, these methods have NOT been verified end-to-end
     against a live deployed pipeline in the canary suite. The HTTP envelope
     matches the OpenAI Audio API contract and the request/response shapes are
     stable, but you should test against your own deployed model before using
@@ -1243,7 +1638,7 @@ class _Models:
             "/models",
             method="GET",
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
     def retrieve(self, model: str, *, request_options: Optional[Mapping[str, Any]] = None) -> ModelObject:
         encoded_model = urllib.parse.quote(_validated_identifier(model, "model"), safe="")
@@ -1251,13 +1646,13 @@ class _Models:
             f"/models/{encoded_model}",
             method="GET",
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Images:
     """Image generation surface.
 
-    [EXPERIMENTAL] As of v0.1.3, this method has NOT been verified end-to-end
+    [EXPERIMENTAL] As of v0.1.4, this method has NOT been verified end-to-end
     against a live deployed pipeline in the canary suite. The HTTP envelope
     matches the OpenAI Images API contract, but you should test against your
     own deployed model before using in production. Live-canary verification
@@ -1272,32 +1667,69 @@ class _Images:
         *,
         model: str,
         prompt: str,
+        n: Optional[int] = None,
+        size: Optional[str] = None,
+        response_format: Optional[str] = None,
+        quality: Optional[str] = None,
+        style: Optional[str] = None,
+        user: Optional[str] = None,
         request_options: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any,
+        extra_body: Optional[Mapping[str, object]] = None,
     ) -> ImageGenerationResponse:
         validated_prompt = _validated_non_empty_string(prompt, "prompt")
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "prompt": validated_prompt,
+                "n": n,
+                "size": size,
+                "response_format": response_format,
+                "quality": quality,
+                "style": style,
+                "user": user,
+            },
+            extra_body,
+        )
         return _json_response(self._requester.request(
             "/images/generations",
-            json_payload={"model": _validated_model(model), "prompt": validated_prompt, **kwargs},
+            json_payload=payload,
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Webhooks:
-    def verify_signature(self, **kwargs: Any) -> bool:
-        return verify_webhook_signature(**kwargs)
-
-    def construct_event(self, **kwargs: Any) -> Any:
-        return construct_webhook_event(**kwargs)
-
-    def create(self, **_kwargs: Any) -> Any:
-        raise UnsupportedOperationError(
-            "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped."
+    def verify_signature(
+        self,
+        *,
+        payload: Union[str, bytes, bytearray],
+        signature_header: str,
+        secret: str,
+        tolerance_seconds: float = 300,
+        now: Optional[float] = None,
+    ) -> bool:
+        return verify_webhook_signature(
+            payload=payload,
+            signature_header=signature_header,
+            secret=secret,
+            tolerance_seconds=tolerance_seconds,
+            now=now,
         )
 
-    def list(self) -> Any:
-        raise UnsupportedOperationError(
-            "RunInfra public webhooks are not available yet; delivery and signature verification endpoints are not shipped."
+    def construct_event(
+        self,
+        *,
+        payload: Union[str, bytes, bytearray],
+        signature_header: str,
+        secret: str,
+        tolerance_seconds: float = 300,
+        now: Optional[float] = None,
+    ) -> Any:
+        return construct_webhook_event(
+            payload=payload,
+            signature_header=signature_header,
+            secret=secret,
+            tolerance_seconds=tolerance_seconds,
+            now=now,
         )
 
 
@@ -1312,6 +1744,10 @@ class _VoicePipeline:
         mime_type: str = "audio/wav",
         request_options: Optional[Mapping[str, Any]] = None,
     ) -> VoicePipelineResponse:
+        if not self._requester.pipeline_scoped:
+            raise _invalid_request_option(
+                "voice pipeline requests require pipeline_id or a pipeline-scoped base_url"
+            )
         return _json_response(self._requester.request(
             "/pipeline",
             body=_validated_audio_bytes(audio),
@@ -1321,10 +1757,19 @@ class _VoicePipeline:
             },
             idempotent_replay_safe=False,
             request_options=request_options,
-        ))
+        ), [self._requester.api_key])
 
 
 class _Voice:
+    """Voice pipeline surface.
+
+    [EXPERIMENTAL] As of v0.1.4, this method has NOT been verified end-to-end
+    against a live deployed pipeline in the canary suite. It requires a
+    pipeline-scoped client and posts binary audio to `/pipeline`, but you
+    should test against your own deployed pipeline before using in production.
+    Live-canary verification is tracked for v1.0.0 GA.
+    """
+
     def __init__(self, requester: _Requester) -> None:
         self.pipeline = _VoicePipeline(requester)
 
@@ -1355,9 +1800,11 @@ class RunInfra:
         )
         if transport is not None and not callable(transport):
             raise _invalid_request_option("transport must be callable")
+        normalized_base_url = _normalize_base_url(base_url, pipeline_id)
         requester = _Requester(
             api_key=api_key,
-            base_url=_normalize_base_url(base_url, pipeline_id),
+            base_url=normalized_base_url,
+            pipeline_scoped=pipeline_id is not None or _base_url_looks_pipeline_scoped(normalized_base_url),
             transport=transport if transport is not None else _default_transport(timeout_seconds),
             max_retries=max_retries,
             retry_base_seconds=retry_base_seconds,
