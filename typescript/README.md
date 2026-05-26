@@ -216,6 +216,12 @@ const audio = await client.audio.speech.create({
 });
 ```
 
+`RunInfraAudioResponse.stream()` exposes the native `ReadableStream<Uint8Array>`
+from `fetch` without buffering it. Use it for large TTS responses when the caller
+owns `getReader()`, cancellation, and slow-consumer backpressure. The SDK does
+not auto-retry or replay binary TTS streams; use `arrayBuffer()` or `blob()` when
+you want SDK read-timeout wrapping for a finite body.
+
 ## Timeouts and retries
 
 ```ts

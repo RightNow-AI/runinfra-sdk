@@ -394,6 +394,17 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).not.toContain('voice: process.env.RUNINFRA_TTS_VOICE ?? "default"');
   });
 
+  it("documents TypeScript TTS stream ownership", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("RunInfraAudioResponse.stream()");
+    expect(readme).toMatch(/native\s+`ReadableStream<Uint8Array>`/u);
+    expect(readme).toMatch(
+      /the caller\s+owns `getReader\(\)`, cancellation, and slow-consumer backpressure/u,
+    );
+    expect(readme).toMatch(/The SDK does\s+not auto-retry or replay binary TTS streams/u);
+  });
+
   it("documents the OpenAI-compatible parameter subset and local response-shape guards", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
     const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
