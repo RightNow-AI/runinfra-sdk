@@ -20,6 +20,28 @@ function jobHasEnvironment(job, environment) {
   return new RegExp(`(^|\\r?\\n)    environment:\\s*${environment}\\s*(?:\\r?\\n|$)`, "u").test(job);
 }
 
+function jobHasName(job, name) {
+  return new RegExp(`(^|\\r?\\n)    name:\\s*${escapeRegExp(name)}\\s*(?:\\r?\\n|$)`, "u").test(job);
+}
+
+function jobHasAlwaysCondition(job) {
+  return /(^|\r?\n)    if:\s*always\(\)\s*(?:\r?\n|$)/u.test(job);
+}
+
+function jobFailsOnNeedResult(job, jobName) {
+  const comparison = new RegExp(
+    `(^|\\r?\\n)\\s*if \\[ "\\$\\{\\{\\s*needs\\.${escapeRegExp(jobName)}\\.result\\s*\\}\\}" != "success" \\]; then\\s*(?:\\r?\\n|$)`,
+    "u",
+  );
+  const match = comparison.exec(job);
+  if (!match) return false;
+
+  const rest = job.slice(match.index);
+  const fiIndex = rest.search(/(^|\r?\n)\s*fi\s*(?:\r?\n|$)/u);
+  const conditionalBlock = fiIndex === -1 ? rest : rest.slice(0, fiIndex);
+  return /(^|\r?\n)\s*exit\s+1\s*(?:\r?\n|$)/u.test(conditionalBlock);
+}
+
 function jobHasOidcPermission(job) {
   return /(^|\r?\n)    permissions:\r?\n(?:      [a-zA-Z0-9_-]+:\s*\S+\r?\n)*?      id-token:\s*write\s*(?:\r?\n|$)/u.test(job);
 }
@@ -108,6 +130,8 @@ function actionUses(workflows) {
 export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow }) {
   const ciTypeScriptJob = jobBlock(ci, "typescript");
   const ciPythonJob = jobBlock(ci, "python");
+  const ciTypeScriptRequiredJob = jobBlock(ci, "typescript-required");
+  const ciPythonRequiredJob = jobBlock(ci, "python-required");
   const buildArtifactsJob = jobBlock(publish, "build-artifacts");
   const promotionGateJob = jobBlock(publish, "promotion-gate");
   const publishNpmJob = jobBlock(publish, "publish-npm");
@@ -294,6 +318,20 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     {
       label: "CI tests every supported Python minor",
       ok: jobHasMatrixVersions(ciPythonJob, "python-version", ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]),
+    },
+    {
+      label: "CI preserves protected required status contexts",
+      ok:
+        jobHasName(ciTypeScriptRequiredJob, "TypeScript SDK") &&
+        jobNeeds(ciTypeScriptRequiredJob, "typescript") &&
+        jobHasAlwaysCondition(ciTypeScriptRequiredJob) &&
+        jobFailsOnNeedResult(ciTypeScriptRequiredJob, "typescript") &&
+        ciTypeScriptRequiredJob.includes("needs.typescript.result") &&
+        jobHasName(ciPythonRequiredJob, "Python SDK") &&
+        jobNeeds(ciPythonRequiredJob, "python") &&
+        jobHasAlwaysCondition(ciPythonRequiredJob) &&
+        jobFailsOnNeedResult(ciPythonRequiredJob, "python") &&
+        ciPythonRequiredJob.includes("needs.python.result"),
     },
     {
       label: "CI verifies SDK version synchronization",

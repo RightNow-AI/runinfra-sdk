@@ -3106,11 +3106,13 @@ class RunInfra:
     const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
     const nodeLabel = "CI tests every supported Node major";
     const pythonLabel = "CI tests every supported Python minor";
+    const requiredContextsLabel = "CI preserves protected required status contexts";
 
     expect(packageJson.engines?.node).toBe(">=18 <25");
     const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
     expect(checks.find((check) => check.label === nodeLabel)?.ok).toBe(true);
     expect(checks.find((check) => check.label === pythonLabel)?.ok).toBe(true);
+    expect(checks.find((check) => check.label === requiredContextsLabel)?.ok).toBe(true);
 
     const withoutNode18 = ci.replace("node-version: [18, 20, 22, 24]", "node-version: [20, 22, 24]");
     expect(withoutNode18).not.toBe(ci);
@@ -3124,6 +3126,21 @@ class RunInfra:
     expect(withoutPython39).not.toBe(ci);
     expect(evaluateWorkflowPolicy({ publish, ci: withoutPython39, hasCustomCodeqlWorkflow: false })
       .find((check) => check.label === pythonLabel)?.ok).toBe(false);
+
+    const withoutTypeScriptAggregate = ci.replace(/  typescript-required:[\s\S]*?(?=\n  [a-zA-Z0-9_-]+:\n)/u, "");
+    expect(withoutTypeScriptAggregate).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withoutTypeScriptAggregate, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === requiredContextsLabel)?.ok).toBe(false);
+
+    const withoutTypeScriptAlways = ci.replace("    if: always()\n    steps:", "    steps:");
+    expect(withoutTypeScriptAlways).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withoutTypeScriptAlways, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === requiredContextsLabel)?.ok).toBe(false);
+
+    const withoutPythonFailureExit = ci.replace('          if [ "${{ needs.python.result }}" != "success" ]; then', '          if [ "${{ needs.python.result }}" = "success" ]; then');
+    expect(withoutPythonFailureExit).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withoutPythonFailureExit, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === requiredContextsLabel)?.ok).toBe(false);
   });
 
   it("keeps Python test tooling compatible with the declared Python floor", () => {
