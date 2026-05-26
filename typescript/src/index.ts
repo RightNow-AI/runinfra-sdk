@@ -726,6 +726,7 @@ interface RequestOptions {
   formData?: FormData;
   binary?: boolean;
   stream?: boolean;
+  idempotentReplaySafe?: boolean;
 }
 
 function baseUrlAlreadyHasPipelineId(baseURL: string, pipelineId: string): boolean {
@@ -1602,6 +1603,7 @@ export class RunInfra {
         body,
         typedBodyKeys: CHAT_COMPLETION_REQUEST_KEYS,
         stream: body.stream === true,
+        idempotentReplaySafe: true,
       }, requestOptions);
     }) as ChatCompletionsCreate;
 
@@ -1633,6 +1635,7 @@ export class RunInfra {
           body,
           typedBodyKeys: RESPONSES_CREATE_REQUEST_KEYS,
           stream: body.stream === true,
+          idempotentReplaySafe: true,
         }, requestOptions);
       }) as ResponsesCreate,
     };
@@ -1820,7 +1823,11 @@ export class RunInfra {
     let attempt = 0;
     const method = options.method ?? "POST";
     const hasReplayableJsonBody =
-      options.body !== undefined && !options.stream && !options.binary && !options.formData;
+      options.body !== undefined &&
+      !options.stream &&
+      !options.binary &&
+      !options.formData &&
+      options.idempotentReplaySafe === true;
     const canRetry =
       method === "GET" ||
       (Boolean(validatedRequestOptions.idempotencyKey) && hasReplayableJsonBody);

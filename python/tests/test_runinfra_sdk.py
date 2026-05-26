@@ -216,11 +216,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertIn("responses.create()", readme)
         self.assertIn("non-streaming `chat.completions.create()`", readme)
-        self.assertIn("embeddings.create()", readme)
-        self.assertIn("images.generate()", readme)
-        self.assertIn("Streaming calls, binary TTS responses, and multipart ASR uploads are sent once", readme)
+        self.assertIn("Only `responses.create()` and non-streaming `chat.completions.create()`", readme)
+        self.assertNotIn("That covers `responses.create()`, non-streaming `chat.completions.create()`, `embeddings.create()`, and `images.generate()`", readme)
+        self.assertIn("Embeddings, images, streaming calls, binary TTS responses, and multipart ASR uploads are sent once", readme)
         self.assertIn("even when you provide an idempotency key", readme)
-        self.assertIn("The gateway still binds idempotency keys for TTS and ASR", readme)
+        self.assertNotIn("The gateway still binds idempotency keys for TTS and ASR", readme)
 
     def test_readme_documents_tts_voice_and_reference_audio_request_modes(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -2537,6 +2537,51 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertEqual(result["id"], "resp_123")
         self.assertEqual(len(retry_safe_transport.calls), 2)
+
+    def test_non_replayable_json_posts_do_not_retry_with_idempotency_key(self):
+        embeddings_transport = RecordingTransport(
+            json_response({"error": {"message": "busy"}}, status=503),
+            json_response({"object": "list", "data": []}),
+        )
+        embeddings_client = RunInfra(
+            api_key="sk-ri-test",
+            transport=embeddings_transport,
+            max_retries=1,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraError) as embeddings_error:
+            embeddings_client.embeddings.create(
+                model="bge-m3",
+                input="hello",
+                request_options={"idempotency_key": "idem-embeddings-123"},
+            )
+
+        self.assertEqual(embeddings_error.exception.status, 503)
+        self.assertEqual(len(embeddings_transport.calls), 1)
+        self.assertEqual(embeddings_transport.calls[0].headers["Idempotency-Key"], "idem-embeddings-123")
+
+        images_transport = RecordingTransport(
+            json_response({"error": {"message": "busy"}}, status=503),
+            json_response({"created": 1, "data": []}),
+        )
+        images_client = RunInfra(
+            api_key="sk-ri-test",
+            transport=images_transport,
+            max_retries=1,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraError) as images_error:
+            images_client.images.generate(
+                model="flux",
+                prompt="cat",
+                request_options={"idempotency_key": "idem-images-123"},
+            )
+
+        self.assertEqual(images_error.exception.status, 503)
+        self.assertEqual(len(images_transport.calls), 1)
+        self.assertEqual(images_transport.calls[0].headers["Idempotency-Key"], "idem-images-123")
 
     def test_streaming_posts_do_not_retry_with_idempotency_key(self):
         transport = RecordingTransport(

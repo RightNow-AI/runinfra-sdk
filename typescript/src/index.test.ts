@@ -374,11 +374,11 @@ describe("RunInfra TypeScript SDK", () => {
 
     expect(readme).toContain("responses.create()");
     expect(readme).toContain("non-streaming `chat.completions.create()`");
-    expect(readme).toContain("embeddings.create()");
-    expect(readme).toContain("images.generate()");
-    expect(readme).toContain("Streaming calls, binary TTS responses, and multipart ASR uploads are sent once");
+    expect(readme).toContain("Only `responses.create()` and non-streaming `chat.completions.create()`");
+    expect(readme).not.toContain("That covers `responses.create()`, non-streaming `chat.completions.create()`, `embeddings.create()`, and `images.generate()`");
+    expect(readme).toContain("Embeddings, images, streaming calls, binary TTS responses, and multipart ASR uploads are sent once");
     expect(readme).toContain("even when you provide an idempotency key");
-    expect(readme).toContain("The gateway still binds idempotency keys for TTS and ASR");
+    expect(readme).not.toContain("The gateway still binds idempotency keys for TTS and ASR");
   });
 
   it("documents TTS voice and reference-audio request modes", () => {
@@ -7493,6 +7493,52 @@ with open(report, "w", encoding="utf-8") as handle:
       ),
     ).resolves.toMatchObject({ id: "resp_123" });
     expect(withIdempotency).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry non-replayable JSON POSTs even when an idempotency key is provided", async () => {
+    const embeddingsFetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "busy" } }, { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse({ object: "list", data: [] }));
+    const embeddingsClient = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: embeddingsFetch,
+      maxRetries: 1,
+      retryBaseMs: 0,
+    });
+
+    await expect(
+      embeddingsClient.embeddings.create(
+        { model: "bge-m3", input: "hello" },
+        { idempotencyKey: "idem-embeddings-123" },
+      ),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(embeddingsFetch).toHaveBeenCalledTimes(1);
+    expect((embeddingsFetch.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
+      "Idempotency-Key": "idem-embeddings-123",
+    });
+
+    const imagesFetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "busy" } }, { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse({ created: 1, data: [] }));
+    const imagesClient = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: imagesFetch,
+      maxRetries: 1,
+      retryBaseMs: 0,
+    });
+
+    await expect(
+      imagesClient.images.generate(
+        { model: "flux", prompt: "cat" },
+        { idempotencyKey: "idem-images-123" },
+      ),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(imagesFetch).toHaveBeenCalledTimes(1);
+    expect((imagesFetch.mock.calls[0]?.[1] as RequestInit).headers).toMatchObject({
+      "Idempotency-Key": "idem-images-123",
+    });
   });
 
   it("does not retry streaming POSTs even when an idempotency key is provided", async () => {

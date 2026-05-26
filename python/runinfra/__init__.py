@@ -1114,7 +1114,7 @@ class _Requester:
         body: Optional[bytes] = None,
         headers: Optional[Mapping[str, str]] = None,
         stream: bool = False,
-        idempotent_replay_safe: bool = True,
+        idempotent_replay_safe: bool = False,
         request_options: Optional[Mapping[str, Any]] = None,
     ) -> RunInfraResponse:
         request_options = _validated_request_options(request_options)
@@ -1358,6 +1358,7 @@ class _ChatCompletions:
             "/chat/completions",
             json_payload=payload,
             stream=is_stream,
+            idempotent_replay_safe=True,
             request_options=request_options,
         )
         if is_stream:
@@ -1474,6 +1475,7 @@ class _Responses:
             "/responses",
             json_payload=payload,
             stream=is_stream,
+            idempotent_replay_safe=True,
             request_options=request_options,
         )
         if is_stream:
