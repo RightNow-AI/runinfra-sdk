@@ -2115,7 +2115,7 @@ throw new Error("failed loading /root/private/secret-project/config.json");
       mkdirSync(join(pythonPackageRoot, "runinfra"), { recursive: true });
       writeFileSync(join(pythonPackageRoot, "pyproject.toml"), `
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools==82.0.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -2175,7 +2175,7 @@ class RunInfra:
       mkdirSync(join(pythonPackageRoot, "runinfra"), { recursive: true });
       writeFileSync(join(pythonPackageRoot, "pyproject.toml"), `
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools==82.0.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -3118,6 +3118,8 @@ class RunInfra:
     const requirements = readFileSync(new URL("../../python/requirements-dev.txt", import.meta.url), "utf8");
 
     expect(pyproject).toContain('requires-python = ">=3.9"');
+    expect(pyproject).toContain('requires = ["setuptools==82.0.1"]');
+    expect(pyproject).not.toContain("setuptools>=");
     expect(requirements).toContain("pytest==8.4.2");
     expect(requirements).not.toMatch(/^pytest==9\./mu);
   });

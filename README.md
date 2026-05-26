@@ -167,8 +167,9 @@ built outputs.
 
 The artifact clean-install gate imports the npm tarball, the Python wheel, and
 an sdist-built Python wheel in separate disposable consumer environments. The
-sdist install uses the canonical PyPI index only for build-system requirements,
-and successful pip output is suppressed so CI logs do not expose local paths.
+sdist install uses the canonical PyPI index only for pinned build-system
+requirements, and successful pip output is suppressed so CI logs do not expose
+local paths.
 
 After the strict artifact live canary passes, verify that the readiness and
 live reports prove the same candidate source digest, that the live report

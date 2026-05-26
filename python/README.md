@@ -380,8 +380,9 @@ Dry runs build and scan artifacts but do not run live canaries or publish.
 
 The artifact clean-install gate imports the npm tarball, the Python wheel, and
 an sdist-built Python wheel in separate disposable consumer environments. The
-sdist install uses the canonical PyPI index only for build-system requirements,
-and successful pip output is suppressed so CI logs do not expose local paths.
+sdist install uses the canonical PyPI index only for pinned build-system
+requirements, and successful pip output is suppressed so CI logs do not expose
+local paths.
 
 CI canary fixtures should be scoped repository or environment secrets.
 `RUNINFRA_ASR_FIXTURE_BASE64` and
