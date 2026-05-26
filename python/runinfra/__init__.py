@@ -585,7 +585,10 @@ def _json_payload_with_extra(
 def _validated_audio_file(value: Any) -> bytes:
     if not isinstance(value, (bytes, bytearray)):
         raise _invalid_request_option("file must be bytes or bytearray")
-    return bytes(value)
+    data = bytes(value)
+    if len(data) == 0:
+        raise _invalid_request_option("file must not be empty")
+    return data
 
 
 def _validated_audio_bytes(value: Any, name: str = "audio") -> bytes:

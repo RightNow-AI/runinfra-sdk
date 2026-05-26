@@ -973,6 +973,9 @@ function validateBlobFile(value: unknown): Blob {
   if (!(value instanceof Blob)) {
     throw invalidRequestOption("file must be a Blob");
   }
+  if (value.size === 0) {
+    throw invalidRequestOption("file must not be empty");
+  }
   return value;
 }
 

@@ -2541,7 +2541,7 @@ class RunInfra:
     expect(readme).toContain("JSON request bodies must be serializable and contain only finite numbers");
     expect(readme).toContain("embedding input must be a non-empty string or array of non-empty strings");
     expect(readme).toContain("TTS input and image prompts must be non-empty strings");
-    expect(readme).toContain("ASR file must be a Blob");
+    expect(readme).toContain("ASR file must be a non-empty Blob");
     expect(readme).toContain("ASR multipart filenames are validated");
     expect(readme).not.toContain("ASR multipart filenames and extra form field names and values");
   });
@@ -6148,6 +6148,13 @@ with open(report, "w", encoding="utf-8") as handle:
         file: undefined as unknown as Blob,
       }),
       "file must be a Blob",
+    );
+    await expectInvalidPayload(
+      () => client.audio.transcriptions.create({
+        model: "whisper",
+        file: new Blob([], { type: "audio/wav" }),
+      }),
+      "file must not be empty",
     );
     await expectInvalidPayload(
       () => client.images.generate({ model: "flux", prompt: "   " }),

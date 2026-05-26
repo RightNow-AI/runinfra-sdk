@@ -431,7 +431,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("JSON request bodies must be serializable and contain only finite numbers", readme)
         self.assertIn("embedding input must be a non-empty string or array of non-empty strings", readme)
         self.assertIn("TTS input and image prompts must be non-empty strings", readme)
-        self.assertIn("ASR file must be bytes or bytearray", readme)
+        self.assertIn("ASR file must be non-empty bytes or bytearray", readme)
         self.assertIn("ASR multipart filenames and content types", readme)
         self.assertIn("`extra_body` is only accepted on JSON body helpers", readme)
 
@@ -2211,6 +2211,27 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("multipart/form-data", request.headers["Content-Type"])
         self.assertIn(b'name="model"', request.body)
         self.assertIn(b'name="file"; filename="clip.wav"', request.body)
+
+    def test_transcription_rejects_empty_audio_before_network(self):
+        transport = RecordingTransport(json_response({"text": "hello"}))
+        client = RunInfra(
+            api_key="sk-ri-test",
+            pipeline_id="pipe-asr",
+            transport=transport,
+        )
+
+        for file_value in (b"", bytearray()):
+            with self.subTest(file_type=type(file_value).__name__):
+                with self.assertRaises(RunInfraError) as raised:
+                    client.audio.transcriptions.create(
+                        model="whisper-large-v3",
+                        file=file_value,
+                        filename="clip.wav",
+                    )
+                self.assertEqual(raised.exception.type, "invalid_request_options")
+                self.assertEqual(str(raised.exception), "file must not be empty")
+
+        self.assertEqual(transport.calls, [])
 
     def test_transcription_rejects_unsafe_multipart_metadata_before_network(self):
         transport = RecordingTransport(json_response({"text": "hello"}))
