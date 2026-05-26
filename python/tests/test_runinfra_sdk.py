@@ -538,10 +538,16 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             self.assertIn(row, live_canaries)
 
         self.assertIn("localRetryClient", typescript_canary)
+        self.assertIn("localRetryTransportError", typescript_canary)
+        self.assertIn('failureModes: "http_503,transport_error"', typescript_canary)
         self.assertIn("assertRetryCallCount", typescript_canary)
         self.assertIn("local_retry_client", python_canary)
+        self.assertIn("local_retry_transport_error", python_canary)
+        self.assertIn('"failureModes": "http_503,transport_error"', python_canary)
         self.assertIn("assert_retry_call_count", python_canary)
         self.assertIn("Local retry-safety rows", live_canaries)
+        self.assertIn("retryable HTTP status", live_canaries)
+        self.assertIn("transport exceptions", live_canaries)
         self.assertIn("do not call the production gateway", live_canaries)
 
     def test_child_canaries_cover_local_client_request_id_row(self):

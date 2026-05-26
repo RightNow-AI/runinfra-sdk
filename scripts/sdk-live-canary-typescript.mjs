@@ -736,6 +736,10 @@ function localRetryFailure(requestId) {
   );
 }
 
+function localRetryTransportError() {
+  return new TypeError("transient local transport retry probe");
+}
+
 function localRetryClient(responses, options = {}) {
   const calls = [];
   const queued = [...responses];
@@ -752,6 +756,7 @@ function localRetryClient(responses, options = {}) {
         calls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
         const response = queued.shift();
         if (!response) throw new Error("local retry canary exhausted fake responses");
+        if (response instanceof Error) throw response;
         return response;
       },
     }),
@@ -1162,6 +1167,15 @@ function assertRetryableError(error, label) {
   }
   assertRequestId(error.requestId, label);
   return { errorStatus: error.status, errorType: error.type, requestId: error.requestId };
+}
+
+function assertTransportConnectionError(error, label) {
+  if (!(error instanceof RunInfraConnectionError) || error.status !== 0 || error.type !== "connection_error") {
+    throw new Error(
+      `${label} expected local transport RunInfraConnectionError, got ${error?.status ?? error?.name ?? typeof error}`,
+    );
+  }
+  return { transportErrorStatus: error.status, transportErrorType: error.type };
 }
 
 function assertRateLimitError(error, label, expectedRetryAfterMs) {
@@ -2209,11 +2223,27 @@ await record("retry.safety.post.non_replayable_json.no_retry.local", [], async (
   const checks = [
     {
       surface: "embeddings",
+      failureMode: "http_503",
       idempotencyKey: "idem-local-embeddings-json-no-retry",
       responses: [
         localRetryFailure("req-local-retry-embeddings-json-no-retry"),
         localRetryJsonResponse({ object: "list", data: [] }, 200, "req-local-retry-embeddings-json-unexpected"),
       ],
+      assertError: assertRetryableError,
+      run: (local, idempotencyKey) => local.embeddings.create(
+        { model: "runinfra-local-embedding-model", input: "local retry canary" },
+        { idempotencyKey, maxRetries: 1, retryBaseMs: 0 },
+      ),
+    },
+    {
+      surface: "embeddings",
+      failureMode: "transport_error",
+      idempotencyKey: "idem-local-embeddings-json-transport-no-retry",
+      responses: [
+        localRetryTransportError(),
+        localRetryJsonResponse({ object: "list", data: [] }, 200, "req-local-retry-embeddings-json-transport-unexpected"),
+      ],
+      assertError: assertTransportConnectionError,
       run: (local, idempotencyKey) => local.embeddings.create(
         { model: "runinfra-local-embedding-model", input: "local retry canary" },
         { idempotencyKey, maxRetries: 1, retryBaseMs: 0 },
@@ -2221,11 +2251,27 @@ await record("retry.safety.post.non_replayable_json.no_retry.local", [], async (
     },
     {
       surface: "images",
+      failureMode: "http_503",
       idempotencyKey: "idem-local-images-json-no-retry",
       responses: [
         localRetryFailure("req-local-retry-images-json-no-retry"),
         localRetryJsonResponse({ created: 1, data: [] }, 200, "req-local-retry-images-json-unexpected"),
       ],
+      assertError: assertRetryableError,
+      run: (local, idempotencyKey) => local.images.generate(
+        { model: "runinfra-local-image-model", prompt: "local retry canary" },
+        { idempotencyKey, maxRetries: 1, retryBaseMs: 0 },
+      ),
+    },
+    {
+      surface: "images",
+      failureMode: "transport_error",
+      idempotencyKey: "idem-local-images-json-transport-no-retry",
+      responses: [
+        localRetryTransportError(),
+        localRetryJsonResponse({ created: 1, data: [] }, 200, "req-local-retry-images-json-transport-unexpected"),
+      ],
+      assertError: assertTransportConnectionError,
       run: (local, idempotencyKey) => local.images.generate(
         { model: "runinfra-local-image-model", prompt: "local retry canary" },
         { idempotencyKey, maxRetries: 1, retryBaseMs: 0 },
@@ -2233,19 +2279,24 @@ await record("retry.safety.post.non_replayable_json.no_retry.local", [], async (
     },
   ];
   for (const check of checks) {
-    const rowLabel = `retry.safety.post.non_replayable_json.no_retry.local ${check.surface}`;
+    const rowLabel = `retry.safety.post.non_replayable_json.no_retry.local ${check.surface} ${check.failureMode}`;
     const { client: local, calls } = localRetryClient(check.responses);
     try {
       await check.run(local, check.idempotencyKey);
     } catch (error) {
       assertIdempotencyHeader(calls, check.idempotencyKey, rowLabel);
-      assertRetryableError(error, rowLabel);
+      check.assertError(error, rowLabel);
       assertRetryCallCount(calls, 1, rowLabel);
       continue;
     }
-    throw new Error(`${check.surface} JSON POST unexpectedly retried into success`);
+    throw new Error(`${check.surface} JSON POST ${check.failureMode} unexpectedly retried into success`);
   }
-  return { attemptsPerSurface: 1, surfaces: "embeddings,images" };
+  return {
+    attemptsPerSurface: 1,
+    transportAttemptsPerSurface: 1,
+    surfaces: "embeddings,images",
+    failureModes: "http_503,transport_error",
+  };
 });
 
 await record("retry.safety.stream.no_retry.local", [], async () => {
@@ -2306,24 +2357,50 @@ await record("retry.safety.audio_multipart.no_retry.local", [], async () => {
 });
 
 await record("retry.safety.voice_binary.no_retry.local", [], async () => {
-  const { client: local, calls } = localRetryClient([
-    localRetryFailure("req-local-retry-voice-binary-no-retry"),
-    localRetryJsonResponse({ text: "unexpected retry success" }, 200, "req-local-retry-voice-binary-unexpected"),
-  ], { pipelineId: "pipe-local-retry-voice" });
-  try {
-    await local.voice.pipeline.create(
-      {
-        audio: new Uint8Array([1, 2, 3]),
-        mimeType: "audio/wav",
-      },
-      { idempotencyKey: "idem-local-voice-binary-no-retry", maxRetries: 1, retryBaseMs: 0 },
-    );
-  } catch (error) {
-    assertIdempotencyHeader(calls, "idem-local-voice-binary-no-retry", "retry.safety.voice_binary.no_retry.local");
-    const evidence = assertRetryableError(error, "retry.safety.voice_binary.no_retry.local");
-    return { ...assertRetryCallCount(calls, 1, "retry.safety.voice_binary.no_retry.local"), ...evidence };
+  const checks = [
+    {
+      failureMode: "http_503",
+      idempotencyKey: "idem-local-voice-binary-no-retry",
+      responses: [
+        localRetryFailure("req-local-retry-voice-binary-no-retry"),
+        localRetryJsonResponse({ text: "unexpected retry success" }, 200, "req-local-retry-voice-binary-unexpected"),
+      ],
+      assertError: assertRetryableError,
+    },
+    {
+      failureMode: "transport_error",
+      idempotencyKey: "idem-local-voice-binary-transport-no-retry",
+      responses: [
+        localRetryTransportError(),
+        localRetryJsonResponse({ text: "unexpected retry success" }, 200, "req-local-retry-voice-binary-transport-unexpected"),
+      ],
+      assertError: assertTransportConnectionError,
+    },
+  ];
+  let httpEvidence = {};
+  for (const check of checks) {
+    const rowLabel = `retry.safety.voice_binary.no_retry.local ${check.failureMode}`;
+    const { client: local, calls } = localRetryClient(check.responses, { pipelineId: "pipe-local-retry-voice" });
+    try {
+      await local.voice.pipeline.create(
+        {
+          audio: new Uint8Array([1, 2, 3]),
+          mimeType: "audio/wav",
+        },
+        { idempotencyKey: check.idempotencyKey, maxRetries: 1, retryBaseMs: 0 },
+      );
+    } catch (error) {
+      assertIdempotencyHeader(calls, check.idempotencyKey, rowLabel);
+      const callEvidence = assertRetryCallCount(calls, 1, rowLabel);
+      const errorEvidence = check.assertError(error, rowLabel);
+      if (check.failureMode === "http_503") {
+        httpEvidence = { ...callEvidence, ...errorEvidence };
+      }
+      continue;
+    }
+    throw new Error(`voice pipeline POST ${check.failureMode} unexpectedly retried into success`);
   }
-  throw new Error("voice pipeline POST unexpectedly retried into success");
+  return { ...httpEvidence, transportAttempts: 1, failureModes: "http_503,transport_error" };
 });
 
 await record("webhooks.delivery_surface.absent", [], async () => {

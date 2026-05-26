@@ -337,9 +337,11 @@ Local retry-safety rows do not call the production gateway; they run against
 deterministic local HTTP responses from the installed SDK package. They prove
 safe GET requests retry transient failures, charge-bearing JSON POSTs retry only
 with an idempotency key on replay-safe helpers, non-replayable JSON helpers
-such as embeddings and images are not retried, and streaming, binary TTS,
-multipart ASR, and binary voice-pipeline requests are sent once even when an
-idempotency key is present.
+such as embeddings and images are not retried across retryable HTTP status
+responses and transport exceptions, and streaming, binary TTS, multipart ASR,
+and binary voice-pipeline requests are sent once even when an idempotency key is
+present. The binary voice-pipeline row covers retryable HTTP status responses
+and transport exceptions.
 Local request-option rows do not call the production gateway; they prove
 user-supplied client request IDs and custom request headers are sent as headers,
 are not serialized into JSON request bodies, and cannot override

@@ -2681,10 +2681,16 @@ class RunInfra:
     }
 
     expect(typescriptCanary).toContain("localRetryClient");
+    expect(typescriptCanary).toContain("localRetryTransportError");
+    expect(typescriptCanary).toContain('failureModes: "http_503,transport_error"');
     expect(typescriptCanary).toContain("assertRetryCallCount");
     expect(pythonCanary).toContain("local_retry_client");
+    expect(pythonCanary).toContain("local_retry_transport_error");
+    expect(pythonCanary).toContain('"failureModes": "http_503,transport_error"');
     expect(pythonCanary).toContain("assert_retry_call_count");
     expect(liveCanaries).toContain("Local retry-safety rows");
+    expect(liveCanaries).toContain("retryable HTTP status");
+    expect(liveCanaries).toContain("transport exceptions");
     expect(liveCanaries).toContain("do not call the production gateway");
   });
 
@@ -3127,12 +3133,12 @@ class RunInfra:
     expect(evaluateWorkflowPolicy({ publish, ci: withoutPython39, hasCustomCodeqlWorkflow: false })
       .find((check) => check.label === pythonLabel)?.ok).toBe(false);
 
-    const withoutTypeScriptAggregate = ci.replace(/  typescript-required:[\s\S]*?(?=\n  [a-zA-Z0-9_-]+:\n)/u, "");
+    const withoutTypeScriptAggregate = ci.replace(/  typescript-required:[\s\S]*?(?=\r?\n  [a-zA-Z0-9_-]+:\r?\n)/u, "");
     expect(withoutTypeScriptAggregate).not.toBe(ci);
     expect(evaluateWorkflowPolicy({ publish, ci: withoutTypeScriptAggregate, hasCustomCodeqlWorkflow: false })
       .find((check) => check.label === requiredContextsLabel)?.ok).toBe(false);
 
-    const withoutTypeScriptAlways = ci.replace("    if: always()\n    steps:", "    steps:");
+    const withoutTypeScriptAlways = ci.replace(/    if: always\(\)\r?\n    steps:/u, "    steps:");
     expect(withoutTypeScriptAlways).not.toBe(ci);
     expect(evaluateWorkflowPolicy({ publish, ci: withoutTypeScriptAlways, hasCustomCodeqlWorkflow: false })
       .find((check) => check.label === requiredContextsLabel)?.ok).toBe(false);
@@ -5236,6 +5242,7 @@ with open(report, "w", encoding="utf-8") as handle:
   it("blocks strict live-canary preflight on excessive timeout readiness inputs", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-timeout-bound-"));
     const reportPath = join(tmp, "readiness.json");
+    const timeoutValue = "600.12345678987654321";
     try {
       const result = spawnSync(process.execPath, [
         "../scripts/run-sdk-live-canaries.mjs",
@@ -5251,7 +5258,7 @@ with open(report, "w", encoding="utf-8") as handle:
         env: {
           ...process.env,
           RUNINFRA_API_KEY: "preflight-api-key-placeholder",
-          RUNINFRA_CANARY_TIMEOUT_SECONDS: "601",
+          RUNINFRA_CANARY_TIMEOUT_SECONDS: timeoutValue,
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
           RUNINFRA_EMBEDDING_DIMENSIONS: "128",
@@ -5274,6 +5281,7 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(result.status).toBe(1);
       const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
         readiness?: {
+          env?: Record<string, string>;
           missing?: string[];
           rows?: Array<{ name: string; missing?: string[] }>;
         };
@@ -5282,7 +5290,13 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(
         report.readiness?.rows?.find((row) => row.name === "models.list")?.missing,
       ).toEqual(["RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number <= 600"]);
-      expect(JSON.stringify(report)).not.toContain("601");
+      expect(report.readiness?.env?.RUNINFRA_CANARY_TIMEOUT_SECONDS).toBe("set_redacted");
+      expect(report.readiness?.missing?.join("\n")).not.toContain(timeoutValue);
+      expect(
+        report.readiness?.rows?.flatMap((row) => row.missing ?? []).join("\n"),
+      ).not.toContain(timeoutValue);
+      expect(JSON.stringify(report)).not.toContain(timeoutValue);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(timeoutValue);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -5481,6 +5495,7 @@ with open(report, "w", encoding="utf-8") as handle:
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-canary-timeout-bound-"));
     const reportPath = join(tmp, "live-canary.json");
     const timeoutError = "RUNINFRA_CANARY_TIMEOUT_SECONDS positive finite number <= 600";
+    const timeoutValue = "600.12345678987654321";
     try {
       const result = spawnSync(process.execPath, [
         "../scripts/run-sdk-live-canaries.mjs",
@@ -5493,20 +5508,23 @@ with open(report, "w", encoding="utf-8") as handle:
         encoding: "utf8",
         env: {
           ...process.env,
-          RUNINFRA_CANARY_TIMEOUT_SECONDS: "601",
+          RUNINFRA_CANARY_TIMEOUT_SECONDS: timeoutValue,
         },
       });
 
       expect(result.status).toBe(1);
       const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        env?: Record<string, string>;
         parity?: { status?: string; errors?: string[] };
         reports?: unknown[];
       };
       expect(report.parity?.status).toBe("failed");
       expect(report.parity?.errors).toContain(timeoutError);
       expect(report.reports).toEqual([]);
-      expect(JSON.stringify(report)).not.toContain("601");
-      expect(`${result.stdout}${result.stderr}`).not.toContain("601");
+      expect(report.env?.RUNINFRA_CANARY_TIMEOUT_SECONDS).toBe("set_redacted");
+      expect(report.parity?.errors?.join("\n")).not.toContain(timeoutValue);
+      expect(JSON.stringify(report)).not.toContain(timeoutValue);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(timeoutValue);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
