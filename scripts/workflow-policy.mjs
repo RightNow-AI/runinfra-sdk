@@ -128,7 +128,12 @@ function stepBlockForCommand(job, command) {
 
 function stepCommandHasGithubToken(job, command) {
   const step = stepBlockForCommand(job, command);
-  return /(^|\r?\n)        env:\r?\n(?:          [A-Z0-9_]+:\s*.*\r?\n)*?          GITHUB_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}\s*(?:\r?\n|$)/u.test(step);
+  const envLineIndex = step.split(/\r?\n/u).findIndex((line) => line === "        env:");
+  if (envLineIndex === -1) return false;
+  return step
+    .split(/\r?\n/u)
+    .slice(envLineIndex + 1)
+    .some((line) => line.trim() === "GITHUB_TOKEN: ${{ github.token }}");
 }
 
 function actionUses(workflows) {

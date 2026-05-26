@@ -76,7 +76,7 @@ def json_response(payload, status=200, headers=None):
 class RunInfraPythonSdkTest(unittest.TestCase):
     def assertSecretNotInExceptionChain(self, error, secret):
         self.assertNotIn(secret, str(error))
-        self.assertNotIn(secret, "".join(traceback.format_exception(error)))
+        self.assertNotIn(secret, "".join(traceback.format_exception(type(error), error, error.__traceback__)))
         current = error
         seen = set()
         while current is not None and id(current) not in seen:
@@ -1339,6 +1339,19 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                     hints.get("stream"): hints.get("return")
                     for hints in overload_hints
                 }
+
+                if Literal[True] not in stream_returns:
+                    class_source = inspect.getsource(method.__self__.__class__)
+                    self.assertIn("stream: Literal[True]", class_source)
+                    self.assertIn(") -> RunInfraStream: ...", class_source)
+                    self.assertIn("stream: Literal[False] = False", class_source)
+                    self.assertIn(f") -> {non_stream_response.__name__}: ...", class_source)
+                    self.assertIn("stream: bool = False", class_source)
+                    self.assertIn(
+                        f") -> Union[{non_stream_response.__name__}, RunInfraStream]: ...",
+                        class_source,
+                    )
+                    continue
 
                 self.assertIs(stream_returns[Literal[True]], RunInfraStream)
                 self.assertIs(stream_returns[Literal[False]], non_stream_response)

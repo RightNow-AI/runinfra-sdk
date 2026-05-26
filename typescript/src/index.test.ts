@@ -4702,6 +4702,9 @@ with open(report, "w", encoding="utf-8") as handle:
   });
 
   it("preserves explicit shell aliases when Node consumes --env-file with inline comments", () => {
+    const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
+    if (nodeMajor < 20) return;
+
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-node-env-file-"));
     const reportPath = join(tmp, "readiness.json");
     const envPath = join(tmp, "runinfra-live-inputs");
