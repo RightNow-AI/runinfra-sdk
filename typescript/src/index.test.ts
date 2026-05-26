@@ -2866,6 +2866,7 @@ class RunInfra:
     expect(manifest.sourceDigestFileLabels).toEqual(expect.arrayContaining([
       "typescript/tsconfig.json",
       "python/MANIFEST.in",
+      "python/requirements-dev.txt",
     ]));
     expect(tsconfig.compilerOptions?.sourceMap).not.toBe(true);
     expect(tsconfig.compilerOptions?.inlineSourceMap).not.toBe(true);
@@ -3081,6 +3082,44 @@ class RunInfra:
     expect(
       readFileSync(new URL("../../scripts/verify-workflow-policy.mjs", import.meta.url), "utf8"),
     ).not.toContain("RUNINFRA_WORKFLOW_POLICY");
+  });
+
+  it("requires CI to exercise every declared runtime support line", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const packageJson = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { engines?: { node?: string } };
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const nodeLabel = "CI tests every supported Node major";
+    const pythonLabel = "CI tests every supported Python minor";
+
+    expect(packageJson.engines?.node).toBe(">=18 <25");
+    const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
+    expect(checks.find((check) => check.label === nodeLabel)?.ok).toBe(true);
+    expect(checks.find((check) => check.label === pythonLabel)?.ok).toBe(true);
+
+    const withoutNode18 = ci.replace("node-version: [18, 20, 22, 24]", "node-version: [20, 22, 24]");
+    expect(withoutNode18).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withoutNode18, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === nodeLabel)?.ok).toBe(false);
+
+    const withoutPython39 = ci.replace(
+      'python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]',
+      'python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]',
+    );
+    expect(withoutPython39).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withoutPython39, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === pythonLabel)?.ok).toBe(false);
+  });
+
+  it("keeps Python test tooling compatible with the declared Python floor", () => {
+    const pyproject = readFileSync(new URL("../../python/pyproject.toml", import.meta.url), "utf8");
+    const requirements = readFileSync(new URL("../../python/requirements-dev.txt", import.meta.url), "utf8");
+
+    expect(pyproject).toContain('requires-python = ">=3.9"');
+    expect(requirements).toContain("pytest==8.4.2");
+    expect(requirements).not.toMatch(/^pytest==9\./mu);
   });
 
   it("requires real publish to pass strict promotion reports for the exact package artifacts", async () => {

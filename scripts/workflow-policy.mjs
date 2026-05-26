@@ -57,6 +57,19 @@ function jobHasCommandBetween(job, command, afterMarker, beforeMarkers) {
   });
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function jobHasMatrixVersions(job, key, expectedVersions) {
+  const valuePattern = expectedVersions
+    .map((version) => `"?${escapeRegExp(version)}"?`)
+    .join("\\s*,\\s*");
+  const matrixPattern = new RegExp(`${escapeRegExp(key)}:\\s*\\[\\s*${valuePattern}\\s*\\]`, "u");
+  const setupPattern = new RegExp(`${escapeRegExp(key)}:\\s*\\$\\{\\{\\s*matrix\\.${escapeRegExp(key)}\\s*\\}\\}`, "u");
+  return matrixPattern.test(job) && setupPattern.test(job);
+}
+
 function stepBlockForCommand(job, command) {
   const commandIndex = job.indexOf(command);
   if (commandIndex === -1) return "";
@@ -93,6 +106,8 @@ function actionUses(workflows) {
 }
 
 export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow }) {
+  const ciTypeScriptJob = jobBlock(ci, "typescript");
+  const ciPythonJob = jobBlock(ci, "python");
   const buildArtifactsJob = jobBlock(publish, "build-artifacts");
   const promotionGateJob = jobBlock(publish, "promotion-gate");
   const publishNpmJob = jobBlock(publish, "publish-npm");
@@ -271,6 +286,14 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
         /pip install -r python\/requirements-dev\.txt/u.test(ci) &&
         /pip install -r python\/requirements-dev\.txt/u.test(publish) &&
         !/pip install --upgrade build pytest twine/u.test(workflows),
+    },
+    {
+      label: "CI tests every supported Node major",
+      ok: jobHasMatrixVersions(ciTypeScriptJob, "node-version", ["18", "20", "22", "24"]),
+    },
+    {
+      label: "CI tests every supported Python minor",
+      ok: jobHasMatrixVersions(ciPythonJob, "python-version", ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]),
     },
     {
       label: "CI verifies SDK version synchronization",
