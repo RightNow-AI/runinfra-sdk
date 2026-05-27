@@ -24,6 +24,7 @@ export const expectedRows = [
   "responses.stream.stalled_read.local",
   "embeddings.create",
   "openai.params.embeddings",
+  "error.embeddings.unsupported_dimensions",
   "images.generate",
   "openai.params.images",
   "audio.speech.create",

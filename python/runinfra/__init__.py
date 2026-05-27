@@ -143,12 +143,16 @@ class RunInfraError(Exception):
         error_type: str,
         request_id: Optional[str] = None,
         retry_after_seconds: Optional[float] = None,
+        code: Optional[str] = None,
+        param: Optional[str] = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.type = error_type
         self.request_id = request_id
         self.retry_after_seconds = retry_after_seconds
+        self.code = code
+        self.param = param
 
 
 class AuthenticationError(RunInfraError):
@@ -856,11 +860,24 @@ def _redacted_error_message(error: BaseException, sensitive_values: Iterable[str
     return message
 
 
+def _redacted_error_metadata(value: Optional[str], sensitive_values: Iterable[str] = ()) -> Optional[str]:
+    if value is None:
+        return None
+    redacted = value
+    for sensitive_value in sensitive_values:
+        if sensitive_value:
+            redacted = redacted.replace(sensitive_value, "[redacted]")
+    return redacted
+
+
 def _redacted_runinfra_error(
     error: RunInfraError,
     sensitive_values: Iterable[str] = (),
 ) -> RunInfraError:
-    message = _redacted_error_message(error, sensitive_values)
+    sensitive = tuple(sensitive_values)
+    message = _redacted_error_message(error, sensitive)
+    code = _redacted_error_metadata(error.code, sensitive)
+    param = _redacted_error_metadata(error.param, sensitive)
     if isinstance(error, RunInfraStreamParseError):
         return RunInfraStreamParseError(message, request_id=error.request_id)
     if isinstance(error, UnsupportedOperationError):
@@ -874,6 +891,8 @@ def _redacted_runinfra_error(
             error_type=error.type,
             request_id=error.request_id,
             retry_after_seconds=error.retry_after_seconds,
+            code=code,
+            param=param,
         )
     except TypeError:
         return RunInfraError(
@@ -882,6 +901,8 @@ def _redacted_runinfra_error(
             error_type=error.type,
             request_id=error.request_id,
             retry_after_seconds=error.retry_after_seconds,
+            code=code,
+            param=param,
         )
 
 
@@ -931,6 +952,8 @@ def _idempotent_replay_from_headers(headers: Mapping[str, str]) -> bool:
 def _error_from_response(response: RunInfraResponse) -> RunInfraError:
     message = f"RunInfra request failed with status {response.status}"
     error_type = "api_error"
+    code: Optional[str] = None
+    param: Optional[str] = None
     try:
         body = response.json()
         if isinstance(body, dict) and isinstance(body.get("error"), dict):
@@ -939,18 +962,50 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
                 message = error["message"]
             if isinstance(error.get("type"), str):
                 error_type = error["type"]
+            if isinstance(error.get("code"), str):
+                code = error["code"]
+            if isinstance(error.get("param"), str):
+                param = error["param"]
     except Exception:
         pass
 
     request_id = _request_id_from_headers(response.headers)
     if response.status == 401:
-        return AuthenticationError(message, status=response.status, error_type="auth_error", request_id=request_id)
+        return AuthenticationError(
+            message,
+            status=response.status,
+            error_type="auth_error",
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
     if response.status == 403:
-        return PermissionDeniedError(message, status=response.status, error_type="permission_denied", request_id=request_id)
+        return PermissionDeniedError(
+            message,
+            status=response.status,
+            error_type="permission_denied",
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
     if response.status == 402:
-        return InsufficientCreditsError(message, status=response.status, error_type="insufficient_credits", request_id=request_id)
+        return InsufficientCreditsError(
+            message,
+            status=response.status,
+            error_type="insufficient_credits",
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
     if response.status == 404 or error_type == "model_not_found":
-        return ModelNotFoundError(message, status=response.status, error_type="model_not_found", request_id=request_id)
+        return ModelNotFoundError(
+            message,
+            status=response.status,
+            error_type="model_not_found",
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
     if response.status == 429:
         return RateLimitError(
             message,
@@ -958,10 +1013,26 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
             error_type="rate_limit_error",
             request_id=request_id,
             retry_after_seconds=_retry_after_seconds(response),
+            code=code,
+            param=param,
         )
     if error_type == "deployment_error":
-        return DeploymentError(message, status=response.status, error_type=error_type, request_id=request_id)
-    return RunInfraError(message, status=response.status, error_type=error_type, request_id=request_id)
+        return DeploymentError(
+            message,
+            status=response.status,
+            error_type=error_type,
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
+    return RunInfraError(
+        message,
+        status=response.status,
+        error_type=error_type,
+        request_id=request_id,
+        code=code,
+        param=param,
+    )
 
 
 def _json_body(payload: Mapping[str, Any]) -> bytes:
