@@ -121,6 +121,7 @@ and all-passed rows.
 | `RUNINFRA_API_KEY` | Workspace-scoped canary key for flat `/v1/*` routes |
 | `RUNINFRA_BASE_URL` | Optional, defaults to `https://api.runinfra.ai/v1` |
 | `RUNINFRA_CANARY_TIMEOUT_SECONDS` | Optional positive per-request canary timeout for both SDKs, defaults to 120 and must be <= 600 |
+| `RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS` | Optional positive parent-side timeout for each child canary process, defaults to 720 and must be <= 1800 |
 | `RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS` | Optional non-negative integer delay from 0 to 5000 after each consumed SSE event in slow-consumer rows, defaults to 25 |
 | `RUNINFRA_LLM_MODEL` | Model for chat, responses, streaming, and idempotency rows |
 | `RUNINFRA_EMBEDDING_MODEL` | Model for embeddings row |

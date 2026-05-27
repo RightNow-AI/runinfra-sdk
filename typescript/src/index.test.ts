@@ -4328,6 +4328,73 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
+  it("bounds parent live-canary child execution and writes a failure report when a child stalls", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-child-timeout-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const rowsJson = JSON.stringify(expectedRows);
+    try {
+      mkdirSync(join(tmp, "scripts"), { recursive: true });
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-typescript.mjs"), `
+setInterval(() => {
+  try {
+    process.kill(process.ppid, 0);
+  } catch {
+    process.exit(0);
+  }
+}, 25);
+await new Promise(() => {});
+`);
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-python.py"), `
+import json
+import os
+import sys
+expected_rows = ${rowsJson}
+report = sys.argv[sys.argv.index("--report") + 1]
+os.makedirs(os.path.dirname(report), exist_ok=True)
+with open(report, "w", encoding="utf-8") as handle:
+    json.dump({
+        "language": "python",
+        "sdkVersion": "${RUNINFRA_SDK_VERSION}",
+        "strict": False,
+        "baseURL": "https://api.runinfra.ai/v1",
+        "summary": {"passed": len(expected_rows), "failed": 0, "skipped": 0},
+        "results": [{"name": name, "status": "passed"} for name in expected_rows],
+    }, handle)
+`);
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        timeout: 2_500,
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+          RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS: "0.2",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+        reports?: Array<{ language?: string; error?: string }>;
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain("typescript child canary timed out");
+      expect(report.reports?.find((child) => child.language === "typescript")?.error).toBe("child canary timed out");
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("removes parent live-canary temporary child reports when final report writing fails", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-report-write-failure-"));
     const reportParent = join(tmp, "not-a-directory");
