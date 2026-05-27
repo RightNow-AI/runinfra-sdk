@@ -284,7 +284,7 @@ Every request includes `X-RunInfra-SDK: typescript`, `X-RunInfra-SDK-Version`, a
 
 When `idempotencyKey` is provided, the SDK sends it as `Idempotency-Key`. Use a unique value for each logical retry-safe operation. Idempotency keys must be non-blank, ASCII, 255 characters or less, and must not contain secrets or personal data.
 
-Successful JSON object responses include `_request_id` when the gateway returns `x-request-id`. Streaming responses expose the same value as `stream.requestId`, malformed stream frames raise `RunInfraStreamParseError` with that request id, and binary audio responses expose it as `response.requestId`. Log that value with production errors and customer support reports.
+Successful JSON object responses include `_request_id` when the gateway returns `x-request-id`. Streaming responses expose the same value as `stream.requestId`, malformed stream frames raise `RunInfraStreamParseError` with that request id, and binary audio responses expose it as `response.requestId`. Gateway errors expose `requestId`, `type`, and, when returned by the API, OpenAI-style `code` and `param` metadata such as `unsupported_parameter` and `dimensions`. Log the request id with production errors and customer support reports.
 
 ## Webhook verification
 

@@ -250,7 +250,6 @@ const relevantEnv = [
   "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS",
   "RUNINFRA_LLM_MODEL",
   "RUNINFRA_EMBEDDING_MODEL",
-  "RUNINFRA_EMBEDDING_DIMENSIONS",
   "RUNINFRA_IMAGE_MODEL",
   "RUNINFRA_IMAGE_SIZE",
   "RUNINFRA_IMAGE_RESPONSE_FORMAT",
@@ -292,7 +291,6 @@ function buildStrictLiveCanaryEnvTemplate() {
     "# Text, chat, responses, streaming, embeddings, and images.",
     "RUNINFRA_LLM_MODEL=",
     "RUNINFRA_EMBEDDING_MODEL=",
-    "RUNINFRA_EMBEDDING_DIMENSIONS=",
     "RUNINFRA_IMAGE_MODEL=",
     "RUNINFRA_IMAGE_SIZE=",
     "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -403,11 +401,6 @@ const missingEnvPatchEntries = [
     section: "Text, chat, responses, streaming, embeddings, and images.",
     triggers: ["RUNINFRA_EMBEDDING_MODEL"],
     assignments: [{ key: "RUNINFRA_EMBEDDING_MODEL" }],
-  },
-  {
-    section: "Text, chat, responses, streaming, embeddings, and images.",
-    triggers: ["RUNINFRA_EMBEDDING_DIMENSIONS", "RUNINFRA_EMBEDDING_DIMENSIONS positive integer"],
-    assignments: [{ key: "RUNINFRA_EMBEDDING_DIMENSIONS" }],
   },
   {
     section: "Text, chat, responses, streaming, embeddings, and images.",
@@ -757,12 +750,6 @@ function missingEnv(names) {
   return names.filter((name) => !env(name));
 }
 
-function positiveIntegerRequirement(name) {
-  const value = env(name);
-  if (!value) return [name];
-  return /^[1-9][0-9]*$/u.test(value) ? [] : [`${name} positive integer`];
-}
-
 function optionalCanaryTimeoutRequirement() {
   const name = "RUNINFRA_CANARY_TIMEOUT_SECONDS";
   const value = env(name);
@@ -942,10 +929,8 @@ const rowReadinessRequirements = [
   ["responses.stream.disconnect.local", () => []],
   ["responses.stream.stalled_read.local", () => []],
   ["embeddings.create", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])],
-  ["openai.params.embeddings", () => [
-    ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"]),
-    ...positiveIntegerRequirement("RUNINFRA_EMBEDDING_DIMENSIONS"),
-  ]],
+  ["openai.params.embeddings", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])],
+  ["error.embeddings.unsupported_dimensions", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])],
   ["images.generate", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"])],
   ["openai.params.images", () => [
     ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL", "RUNINFRA_IMAGE_SIZE"]),

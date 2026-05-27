@@ -439,6 +439,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("A `RUNINFRA_BASE_URL` equal to `https://api.runinfra.ai/v1` is recorded as production");
     expect(liveCanaries).toContain("any other custom `RUNINFRA_BASE_URL`");
     expect(liveCanaries).toContain("custom base URLs before spawning child canaries");
+    expect(readme).toContain("Gateway errors expose `requestId`, `type`, and, when returned by the API");
+    expect(readme).toContain("OpenAI-style `code` and `param` metadata");
     expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
     expect(readme).toContain("forwards the supported request through the chat-completions serving path");
     expect(readme).toContain(
@@ -2465,6 +2467,38 @@ class RunInfra:
     expect(readme).toContain("`extraBody` cannot override typed request fields");
     expect(typescriptCanary).toContain("extraBody: {");
     expect(typescriptCanary).toContain("runinfra_unsupported_parameter_probe");
+  });
+
+  it("keeps unsupported embedding dimensions canaries tied to exact error code and parameter", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { publicSurfaceCoverage } =
+      await import("../../scripts/live-canary-surface-coverage.mjs") as {
+        publicSurfaceCoverage: Array<{ surface: string; rows: string[] }>;
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const row = "error.embeddings.unsupported_dimensions";
+
+    expect(expectedRows).toContain(row);
+    expect(runner).toContain(`["${row}", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])]`);
+    expect(typescriptCanary).toContain(`record("${row}"`);
+    expect(typescriptCanary).toContain("status: 400");
+    expect(typescriptCanary).toContain('type: "invalid_request_error"');
+    expect(typescriptCanary).toContain('code: "unsupported_parameter"');
+    expect(typescriptCanary).toContain('param: "dimensions"');
+    expect(pythonCanary).toContain(`"${row}"`);
+    expect(pythonCanary).toContain("expected_status=400");
+    expect(pythonCanary).toContain('expected_type="invalid_request_error"');
+    expect(pythonCanary).toContain('expected_code="unsupported_parameter"');
+    expect(pythonCanary).toContain('expected_param="dimensions"');
+    expect(liveCanaries).toContain(row);
+    expect(liveCanaries).toContain("unsupported-parameter error for embedding `dimensions`");
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "unsupported body parameter handling")?.rows)
+      .toContain(row);
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "client.embeddings.create")?.rows)
+      .toContain(row);
   });
 
   it("keeps child canaries in parity for local unknown request field coverage", async () => {
@@ -4645,7 +4679,6 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_API_KEY: fakeKey,
           TEST_MODEL: "llm-alias-model",
           TEST_EMBEDDING_MODEL: "embedding-alias-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "384",
           TEST_IMAGE_MODEL: "image-alias-model",
           RUNINFRA_IMAGE_SIZE: "1024x1024",
           RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
@@ -4699,7 +4732,6 @@ with open(report, "w", encoding="utf-8") as handle:
         `RUNINFRA_API_KEY=${fakeKey}`,
         "TEST_MODEL=llm-env-file-model",
         "TEST_EMBEDDING_MODEL=embedding-env-file-model",
-        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
         "TEST_IMAGE_MODEL=image-env-file-model",
         "RUNINFRA_IMAGE_SIZE=1024x1024",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -4778,7 +4810,6 @@ with open(report, "w", encoding="utf-8") as handle:
         "RUNINFRA_API_KEY=env-file-api-key-placeholder",
         "RUNINFRA_LLM_MODEL=llm-env-file-model",
         "RUNINFRA_EMBEDDING_MODEL=embedding-env-file-model",
-        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
         "RUNINFRA_IMAGE_MODEL=image-env-file-model",
         "RUNINFRA_IMAGE_SIZE=1024x1024",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -4844,7 +4875,6 @@ with open(report, "w", encoding="utf-8") as handle:
         "RUNINFRA_API_KEY=env-file-api-key-placeholder",
         "RUNINFRA_LLM_MODEL=llm-env-file-model",
         "RUNINFRA_EMBEDDING_MODEL=embedding-env-file-model",
-        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
         "RUNINFRA_IMAGE_MODEL=image-env-file-model",
         "RUNINFRA_IMAGE_SIZE=1024x1024",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -4947,7 +4977,7 @@ with open(report, "w", encoding="utf-8") as handle:
       const template = readFileSync(templatePath, "utf8");
       expect(template).toContain("RUNINFRA_API_KEY=");
       expect(template).toContain("RUNINFRA_LLM_MODEL=");
-      expect(template).toContain("RUNINFRA_EMBEDDING_DIMENSIONS=");
+      expect(template).not.toContain("RUNINFRA_EMBEDDING_DIMENSIONS=");
       expect(template).toContain("RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json");
       expect(template).toContain("RUNINFRA_TTS_RESPONSE_FORMAT=mp3");
       expect(template).toContain("RUNINFRA_ASR_RESPONSE_FORMAT=json");
@@ -5347,7 +5377,7 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
-  it("blocks strict live-canary preflight on invalid positive-integer readiness inputs", () => {
+  it("does not require embedding dimensions for strict live-canary preflight", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
     const reportPath = join(tmp, "readiness.json");
     try {
@@ -5367,11 +5397,15 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_API_KEY: "preflight-api-key-placeholder",
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "not-a-positive-integer",
           RUNINFRA_IMAGE_MODEL: "image-preflight-model",
+          RUNINFRA_IMAGE_SIZE: "1024x1024",
+          RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
           RUNINFRA_TTS_MODEL: "tts-preflight-model",
           RUNINFRA_TTS_VOICE: "voice-preflight",
+          RUNINFRA_TTS_RESPONSE_FORMAT: "mp3",
           RUNINFRA_ASR_MODEL: "asr-preflight-model",
+          RUNINFRA_ASR_LANGUAGE: "en",
+          RUNINFRA_ASR_RESPONSE_FORMAT: "json",
           RUNINFRA_ASR_FIXTURE_PATH: __filename,
           RUNINFRA_ASR_EXPECTED_TEXT: "hello",
           TEST_PIPELINE_ID: "pipeline-preflight",
@@ -5379,17 +5413,22 @@ with open(report, "w", encoding="utf-8") as handle:
         },
       });
 
-      expect(result.status).toBe(1);
+      expect(result.status, result.stderr).toBe(0);
       const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
         readiness?: {
+          status?: string;
           missing?: string[];
           rows?: Array<{ name: string; status: string; missing?: string[] }>;
         };
       };
-      expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+      expect(report.readiness?.status).toBe("ready");
+      expect(report.readiness?.missing).toEqual([]);
       expect(
         report.readiness?.rows?.find((row) => row.name === "openai.params.embeddings")?.missing,
-      ).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+      ).toEqual([]);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "error.embeddings.unsupported_dimensions")?.missing,
+      ).toEqual([]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -5417,7 +5456,6 @@ with open(report, "w", encoding="utf-8") as handle:
             RUNINFRA_CANARY_TIMEOUT_SECONDS: timeout,
             RUNINFRA_LLM_MODEL: "llm-preflight-model",
             RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-            RUNINFRA_EMBEDDING_DIMENSIONS: "128",
             RUNINFRA_IMAGE_MODEL: "image-preflight-model",
             RUNINFRA_TTS_MODEL: "tts-preflight-model",
             RUNINFRA_TTS_VOICE: "voice-preflight",
@@ -5464,7 +5502,6 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_CANARY_TIMEOUT_SECONDS: timeoutValue,
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "128",
           RUNINFRA_IMAGE_MODEL: "image-preflight-model",
           RUNINFRA_IMAGE_SIZE: "1024x1024",
           RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
@@ -5578,7 +5615,6 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_BASE_URL: unsafeBaseURL,
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "128",
           RUNINFRA_IMAGE_MODEL: "image-preflight-model",
           RUNINFRA_IMAGE_SIZE: "1024x1024",
           RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
@@ -7306,6 +7342,45 @@ with open(report, "w", encoding="utf-8") as handle:
     });
   });
 
+  it("preserves API error code and parameter metadata", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: "The embeddings parameter 'dimensions' is not supported.",
+            type: "invalid_request_error",
+            code: "unsupported_parameter",
+            param: "dimensions",
+          },
+        },
+        {
+          status: 400,
+          headers: { "x-request-id": "req-dimensions" },
+        },
+      ),
+    );
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+      maxRetries: 0,
+    });
+
+    await expect(
+      client.embeddings.create({
+        model: "bge-small",
+        input: "hello",
+        dimensions: 1,
+      }),
+    ).rejects.toMatchObject({
+      name: "RunInfraError",
+      status: 400,
+      type: "invalid_request_error",
+      code: "unsupported_parameter",
+      param: "dimensions",
+      requestId: "req-dimensions",
+    } satisfies Partial<RunInfraError>);
+  });
+
   it("rejects malformed JSON response shapes before returning user data", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       jsonResponse("OK.", { headers: { "x-request-id": "req-raw-text" } }),
@@ -7972,6 +8047,50 @@ with open(report, "w", encoding="utf-8") as handle:
       status: 401,
       requestId: "req-status-redact",
     });
+    await expect(client.models.list()).rejects.not.toThrow(apiKey);
+  });
+
+  it("redacts api keys from status error metadata fields", async () => {
+    const apiKey = "sk-ri-redact-local";
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "metadata redaction canary",
+            type: "invalid_request_error",
+            code: `unsupported_${apiKey}`,
+            param: `field_${apiKey}`,
+          },
+        }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json", "x-request-id": "req-status-metadata-redact" },
+        },
+      ),
+    );
+    const client = new RunInfra({
+      apiKey,
+      fetch: fetcher,
+      maxRetries: 0,
+      retryBaseMs: 0,
+    });
+
+    let raised: unknown;
+    try {
+      await client.models.list();
+    } catch (error) {
+      raised = error;
+    }
+
+    expect(raised).toMatchObject({
+      name: "RunInfraError",
+      type: "invalid_request_error",
+      status: 400,
+      requestId: "req-status-metadata-redact",
+      code: "unsupported_[redacted]",
+      param: "field_[redacted]",
+    });
+    expect(JSON.stringify(raised)).not.toContain(apiKey);
     await expect(client.models.list()).rejects.not.toThrow(apiKey);
   });
 

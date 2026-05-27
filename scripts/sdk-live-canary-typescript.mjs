@@ -82,6 +82,8 @@ function canaryDiagnostic(error) {
   const message = typeof error?.message === "string" ? error.message : "";
   if (message.includes("unexpectedly succeeded")) return "unexpected_success";
   if (message.includes("expected a clear 400/422 validation error")) return "invalid_error_shape";
+  if (message.includes("expected unsupported error code")) return "invalid_error_shape";
+  if (message.includes("expected unsupported parameter")) return "invalid_error_shape";
   if (message.includes("did not expose x-request-id")) return "missing_request_id";
   if (message.includes("did not emit a terminal event")) return "missing_terminal_event";
   if (message.includes("timed out")) return "timeout";
@@ -153,9 +155,12 @@ function assertRequestId(value, label) {
   }
 }
 
-function assertClearUnsupportedParameterError(error, label) {
+function assertClearUnsupportedParameterError(error, label, expected = {}) {
   if (!error || typeof error !== "object") throw error;
-  if (error.status !== 400 && error.status !== 422) {
+  if (expected.status !== undefined && error.status !== expected.status) {
+    throw new Error(`${label} expected validation error status ${expected.status}, got ${error.status ?? "unknown"}`);
+  }
+  if (expected.status === undefined && error.status !== 400 && error.status !== 422) {
     throw new Error(`${label} expected a clear 400/422 validation error, got ${error.status ?? "unknown"}`);
   }
   const allowedTypes = new Set([
@@ -167,18 +172,26 @@ function assertClearUnsupportedParameterError(error, label) {
     "unsupported_parameter",
     "validation_error",
   ]);
-  if (typeof error.type !== "string" || !allowedTypes.has(error.type)) {
+  if (expected.type && error.type !== expected.type) {
+    throw new Error(`${label} expected validation error type ${expected.type}, got ${error.type ?? "unknown"}`);
+  }
+  if (!expected.type && (typeof error.type !== "string" || !allowedTypes.has(error.type))) {
     throw new Error(`${label} expected an invalid-parameter error type, got ${error.type ?? "unknown"}`);
   }
+  if (expected.code && error.code !== expected.code) {
+    throw new Error(`${label} expected unsupported error code ${expected.code}, got ${error.code ?? "unknown"}`);
+  }
+  if (expected.param && error.param !== expected.param) {
+    throw new Error(`${label} expected unsupported parameter ${expected.param}, got ${error.param ?? "unknown"}`);
+  }
   assertRequestId(error.requestId, label);
-  return { errorType: error.type, errorStatus: error.status, requestId: error.requestId };
-}
-
-function requiredPositiveIntegerEnv(name) {
-  const value = env(name);
-  if (!value) throw new Error(`${name} missing`);
-  if (!/^[1-9][0-9]*$/u.test(value)) throw new Error(`${name} must be a positive integer`);
-  return Number(value);
+  return {
+    errorType: error.type,
+    errorStatus: error.status,
+    requestId: error.requestId,
+    ...(expected.code ? { errorCode: error.code } : {}),
+    ...(expected.param ? { errorParam: error.param } : {}),
+  };
 }
 
 function assertChatCompletionEnvelope(response, label) {
@@ -489,7 +502,6 @@ const relevantEnv = [
   "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS",
   "RUNINFRA_LLM_MODEL",
   "RUNINFRA_EMBEDDING_MODEL",
-  "RUNINFRA_EMBEDDING_DIMENSIONS",
   "RUNINFRA_IMAGE_MODEL",
   "RUNINFRA_IMAGE_SIZE",
   "RUNINFRA_IMAGE_RESPONSE_FORMAT",
@@ -1645,22 +1657,38 @@ await record("embeddings.create", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL
 await record("openai.params.embeddings", [
   "RUNINFRA_API_KEY",
   "RUNINFRA_EMBEDDING_MODEL",
-  "RUNINFRA_EMBEDDING_DIMENSIONS",
 ], async () => {
-  const dimensions = requiredPositiveIntegerEnv("RUNINFRA_EMBEDDING_DIMENSIONS");
   const response = await client().embeddings.create({
     model: embeddingModel,
     input: "runinfra sdk openai parameter canary",
     encoding_format: "float",
-    dimensions,
   });
   assertObject(response, "embeddings params response");
   assertEmbeddingsEnvelope(response, "embeddings params response");
   assertRequestId(response._request_id, "openai.params.embeddings");
-  if (response.data[0].embedding.length !== dimensions) {
-    throw new Error("embeddings params response ignored requested dimensions");
-  }
   return { requestId: response._request_id, vectorLength: response.data[0].embedding.length };
+});
+
+await record("error.embeddings.unsupported_dimensions", [
+  "RUNINFRA_API_KEY",
+  "RUNINFRA_EMBEDDING_MODEL",
+], async () => {
+  try {
+    await client().embeddings.create({
+      model: embeddingModel,
+      input: "runinfra sdk unsupported embedding dimensions canary",
+      encoding_format: "float",
+      dimensions: 1,
+    });
+  } catch (error) {
+    return assertClearUnsupportedParameterError(error, "embedding dimensions", {
+      status: 400,
+      type: "invalid_request_error",
+      code: "unsupported_parameter",
+      param: "dimensions",
+    });
+  }
+  throw new Error("embedding dimensions unexpectedly succeeded");
 });
 
 await record("images.generate", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], async () => {

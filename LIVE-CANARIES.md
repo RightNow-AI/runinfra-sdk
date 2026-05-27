@@ -125,7 +125,6 @@ and all-passed rows.
 | `RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS` | Optional non-negative integer delay from 0 to 5000 after each consumed SSE event in slow-consumer rows, defaults to 25 |
 | `RUNINFRA_LLM_MODEL` | Model for chat, responses, streaming, and idempotency rows |
 | `RUNINFRA_EMBEDDING_MODEL` | Model for embeddings row |
-| `RUNINFRA_EMBEDDING_DIMENSIONS` | Positive integer embedding dimension count for the OpenAI parameter row |
 | `RUNINFRA_IMAGE_MODEL` | Model for image generation row |
 | `RUNINFRA_IMAGE_SIZE` | Image size for the OpenAI image parameter row |
 | `RUNINFRA_IMAGE_RESPONSE_FORMAT` | `url` or `b64_json` for the OpenAI image parameter row |
@@ -228,6 +227,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `responses.stream.stalled_read.local`
 - `embeddings.create`
 - `openai.params.embeddings`
+- `error.embeddings.unsupported_dimensions`
 - `images.generate`
 - `openai.params.images`
 - `audio.speech.create`
@@ -304,8 +304,10 @@ Responses streams: `chat.completions.stream.malformed_frame.local`,
 The OpenAI parameter rows prove chat sampling and metadata pass-through, chat
 `stream_options.include_usage` usage chunks with numeric token fields but
 without recording token counts, Responses instructions, metadata, temperature,
-output-token controls, embeddings `encoding_format: "float"` plus `dimensions`,
-exact image `response_format` output matching while sending an explicit image
+output-token controls, embeddings `encoding_format: "float"` support, a clear
+unsupported-parameter error for embedding `dimensions` until a deployed
+embedding backend advertises dimension reduction support, exact image
+`response_format` output matching while sending an explicit image
 `size` to the backend, TTS `response_format` request handling with a non-JSON
 binary audio response, and ASR `language`, fixed `prompt`, plus
 `response_format` request handling. The TTS parameter row does not claim exact

@@ -315,7 +315,7 @@ Every request includes `X-RunInfra-SDK: python`, `X-RunInfra-SDK-Version`, and `
 
 When `idempotency_key` is provided, the SDK sends it as `Idempotency-Key`. Use a unique value for each logical retry-safe operation. Idempotency keys must be non-blank, ASCII, 255 characters or less, and must not contain secrets or personal data.
 
-Successful JSON object responses include `_request_id` when the gateway returns `x-request-id`. Streaming responses expose the same value as `stream.request_id`, malformed stream frames raise `RunInfraStreamParseError` with that request id, and binary audio responses expose it as `audio.request_id`. Log that value with production errors and customer support reports.
+Successful JSON object responses include `_request_id` when the gateway returns `x-request-id`. Streaming responses expose the same value as `stream.request_id`, malformed stream frames raise `RunInfraStreamParseError` with that request id, and binary audio responses expose it as `audio.request_id`. Gateway errors expose `request_id`, `type`, and, when returned by the API, OpenAI-style `code` and `param` metadata such as `unsupported_parameter` and `dimensions`. Log the request id with production errors and customer support reports.
 
 The wheel ships `py.typed` so type checkers can inspect the package. Fixed-shape helpers expose `TypedDict` response contracts: `ModelListResponse`, `ModelObject`, `ResponsesCreateResponse`, `ChatCompletionResponse`, `EmbeddingResponse`, `TranscriptionResponse`, and `ImageGenerationResponse`. Stream-capable helpers are typed as either the JSON response contract or `RunInfraStream` when `stream=True`.
 
