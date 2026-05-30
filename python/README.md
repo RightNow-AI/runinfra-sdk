@@ -271,9 +271,9 @@ client = RunInfra(
 )
 ```
 
-The SDK retries transient transport failures and `408`, `409`, `429`, `500`, `502`, `503`, and `504` responses for safe `GET` requests. Charge-bearing `POST` inference requests retry only when you provide `idempotency_key`, and automatic POST retries are limited to non-streaming JSON calls whose gateway responses can be replayed safely. That covers `responses.create()`, non-streaming `chat.completions.create()`, `embeddings.create()`, and `images.generate()`. Streaming calls, binary TTS responses, and multipart ASR uploads are sent once even when you provide an idempotency key. The gateway still binds idempotency keys for TTS and ASR, so a manual retry with the same key will not run or charge a second inference after the first request settles. Automatic retries honor reasonable `Retry-After` values up to 60 seconds when the header is a plain integer second value or HTTP-date, then fall back to bounded exponential backoff. The SDK does not retry authentication errors, insufficient credits, or unsupported operations.
+The SDK retries transient transport failures and `408`, `409`, `429`, `500`, `502`, `503`, and `504` responses for safe `GET` requests. Charge-bearing `POST` inference requests retry only when you provide `idempotency_key`, and automatic POST retries are limited to non-streaming JSON calls whose gateway responses can be replayed safely. Only `responses.create()` and non-streaming `chat.completions.create()` are currently auto-retry replay-safe. Embeddings, images, streaming calls, binary TTS responses, and multipart ASR uploads are sent once even when you provide an idempotency key. Keep `max_retries=0` for any cost-sensitive operation whose gateway replay behavior has not been proven by the strict idempotency canary. Automatic retries honor reasonable `Retry-After` values up to 60 seconds when the header is a plain integer second value or HTTP-date, then fall back to bounded exponential backoff. The SDK does not retry authentication errors, insufficient credits, or unsupported operations.
 
-If the gateway successfully finishes a request but the response body is too large to replay from the idempotency cache, later calls with the same `idempotency_key` return `idempotency_replay_unavailable` without running or charging the inference again.
+For replay-safe operations, if the gateway successfully finishes a request but the response body is too large to replay from the idempotency cache, later calls with the same `idempotency_key` return `idempotency_replay_unavailable` without running or charging the inference again.
 
 `timeout_seconds` must be positive, `max_retries` must be a non-negative integer, and `retry_base_seconds` must be non-negative. Unknown per-request option keys are rejected so typos do not silently disable idempotency, tracing, timeout, or retry behavior. Python request option aliases cannot be mixed; choose either snake_case or camelCase for a given option. Invalid values raise `RunInfraError` with `type == "invalid_request_options"` before any network request is sent.
 
@@ -281,7 +281,7 @@ Python request helpers expose explicit OpenAI-style keyword parameters instead o
 
 ## Request validation
 
-Required request fields are validated before any network request is sent. The model must be a non-blank string, chat messages must be a non-empty array, each chat message must be an object with a non-empty role, Responses input must be a non-empty string or array, Responses input array items must be objects, JSON request bodies must be serializable and contain only finite numbers, embedding input must be a non-empty string or array of non-empty strings, TTS input and image prompts must be non-empty strings, and ASR file must be bytes or bytearray. ASR multipart filenames and content types are validated before the multipart body is built. Invalid request values raise `RunInfraError` with `type == "invalid_request_options"` and do not reach the gateway or billing path.
+Required request fields are validated before any network request is sent. The model must be a non-blank string, chat messages must be a non-empty array, each chat message must be an object with a non-empty role, Responses input must be a non-empty string or array, Responses input array items must be objects, JSON request bodies must be serializable and contain only finite numbers, embedding input must be a non-empty string or array of non-empty strings, TTS input and image prompts must be non-empty strings, and ASR file must be non-empty bytes or bytearray. ASR multipart filenames and content types are validated before the multipart body is built. Invalid request values raise `RunInfraError` with `type == "invalid_request_options"` and do not reach the gateway or billing path.
 
 Use per-request options when a call needs a shorter timeout, a trace ID, or a retry-safe idempotency key.
 Custom headers are for app metadata only. They cannot override SDK-controlled headers such as `Authorization`, `Content-Type`, `X-Client-Request-Id`, `Idempotency-Key`, `X-RunInfra-SDK`, or `X-RunInfra-SDK-Version`, and they cannot set transport or credential headers such as `Host`, `Cookie`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Proxy-Authorization`, `Api-Key`, `X-API-Key`, `X-Auth-Token`, or `X-Access-Token`.
@@ -315,7 +315,7 @@ Every request includes `X-RunInfra-SDK: python`, `X-RunInfra-SDK-Version`, and `
 
 When `idempotency_key` is provided, the SDK sends it as `Idempotency-Key`. Use a unique value for each logical retry-safe operation. Idempotency keys must be non-blank, ASCII, 255 characters or less, and must not contain secrets or personal data.
 
-Successful JSON object responses include `_request_id` when the gateway returns `x-request-id`. Streaming responses expose the same value as `stream.request_id`, malformed stream frames raise `RunInfraStreamParseError` with that request id, and binary audio responses expose it as `audio.request_id`. Log that value with production errors and customer support reports.
+Successful JSON object responses include `_request_id` when the gateway returns `x-request-id`. Streaming responses expose the same value as `stream.request_id`, malformed stream frames raise `RunInfraStreamParseError` with that request id, and binary audio responses expose it as `audio.request_id`. Gateway errors expose `request_id`, `type`, and, when returned by the API, OpenAI-style `code` and `param` metadata such as `unsupported_parameter` and `dimensions`. Log the request id with production errors and customer support reports.
 
 The wheel ships `py.typed` so type checkers can inspect the package. Fixed-shape helpers expose `TypedDict` response contracts: `ModelListResponse`, `ModelObject`, `ResponsesCreateResponse`, `ChatCompletionResponse`, `EmbeddingResponse`, `TranscriptionResponse`, and `ImageGenerationResponse`. Stream-capable helpers are typed as either the JSON response contract or `RunInfraStream` when `stream=True`.
 
@@ -380,8 +380,9 @@ Dry runs build and scan artifacts but do not run live canaries or publish.
 
 The artifact clean-install gate imports the npm tarball, the Python wheel, and
 an sdist-built Python wheel in separate disposable consumer environments. The
-sdist install uses the canonical PyPI index only for build-system requirements,
-and successful pip output is suppressed so CI logs do not expose local paths.
+sdist install uses the canonical PyPI index only for pinned build-system
+requirements, and successful pip output is suppressed so CI logs do not expose
+local paths.
 
 CI canary fixtures should be scoped repository or environment secrets.
 `RUNINFRA_ASR_FIXTURE_BASE64` and

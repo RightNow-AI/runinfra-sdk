@@ -1,12 +1,24 @@
 const expectedActionRevisions = [
-  "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
   "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
   "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405",
-  "pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
   "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
   "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
   "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b",
 ];
+
+const invalidActionRevisions = [
+  "pnpm/action-setup@ac6db6d3c1f721f886538a378a2d73e85697340a",
+];
+
+const publicGitCheckoutCommands = [
+  "git init .",
+  "git remote add origin \"https://github.com/${GITHUB_REPOSITORY}.git\"",
+  "git -c credential.helper= fetch --no-tags --prune --depth=1 origin \"${GITHUB_REF}\"",
+  "git checkout --detach \"${GITHUB_SHA}\"",
+  "git config --global --add safe.directory \"$GITHUB_WORKSPACE\"",
+];
+
+const pinnedPnpmInstallCommand = "npm install --global pnpm@10.30.3 --ignore-scripts --no-audit --no-fund";
 
 function jobBlock(workflow, jobName) {
   const start = workflow.indexOf(`  ${jobName}:`);
@@ -18,6 +30,36 @@ function jobBlock(workflow, jobName) {
 
 function jobHasEnvironment(job, environment) {
   return new RegExp(`(^|\\r?\\n)    environment:\\s*${environment}\\s*(?:\\r?\\n|$)`, "u").test(job);
+}
+
+function jobDoesNotHaveEnvironment(job) {
+  return job !== "" && !/(^|\r?\n)    environment:/u.test(job);
+}
+
+function jobHasName(job, name) {
+  return new RegExp(`(^|\\r?\\n)    name:\\s*${escapeRegExp(name)}\\s*(?:\\r?\\n|$)`, "u").test(job);
+}
+
+function jobHasAlwaysCondition(job) {
+  return /(^|\r?\n)    if:\s*always\(\)\s*(?:\r?\n|$)/u.test(job);
+}
+
+function jobIfCondition(job) {
+  return job.match(/(^|\r?\n)    if:\s*(.+?)\s*(?:\r?\n|$)/u)?.[2] ?? "";
+}
+
+function jobFailsOnNeedResult(job, jobName) {
+  const comparison = new RegExp(
+    `(^|\\r?\\n)\\s*if \\[ "\\$\\{\\{\\s*needs\\.${escapeRegExp(jobName)}\\.result\\s*\\}\\}" != "success" \\]; then\\s*(?:\\r?\\n|$)`,
+    "u",
+  );
+  const match = comparison.exec(job);
+  if (!match) return false;
+
+  const rest = job.slice(match.index);
+  const fiIndex = rest.search(/(^|\r?\n)\s*fi\s*(?:\r?\n|$)/u);
+  const conditionalBlock = fiIndex === -1 ? rest : rest.slice(0, fiIndex);
+  return /(^|\r?\n)\s*exit\s+1\s*(?:\r?\n|$)/u.test(conditionalBlock);
 }
 
 function jobHasOidcPermission(job) {
@@ -57,6 +99,35 @@ function jobHasCommandBetween(job, command, afterMarker, beforeMarkers) {
   });
 }
 
+function jobUsesUnauthenticatedPublicGitCheckout(job) {
+  return publicGitCheckoutCommands.every((command) => job.includes(command));
+}
+
+function jobsUseUnauthenticatedPublicGitCheckout(jobs) {
+  return jobs.every((job) => jobUsesUnauthenticatedPublicGitCheckout(job));
+}
+
+function jobInstallsPinnedPnpm(job) {
+  return job.includes(pinnedPnpmInstallCommand) && job.includes("pnpm --version");
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function jobHasMatrixVersions(job, key, expectedVersions) {
+  const valuePattern = expectedVersions
+    .map((version) => `"?${escapeRegExp(version)}"?`)
+    .join("\\s*,\\s*");
+  const matrixPattern = new RegExp(`${escapeRegExp(key)}:\\s*\\[\\s*${valuePattern}\\s*\\]`, "u");
+  const setupPattern = new RegExp(`${escapeRegExp(key)}:\\s*\\$\\{\\{\\s*matrix\\.${escapeRegExp(key)}\\s*\\}\\}`, "u");
+  return matrixPattern.test(job) && setupPattern.test(job);
+}
+
+function jobHasRegistryPublishCommand(job) {
+  return /\b(?:npm\s+publish|pnpm\s+publish|yarn\s+npm\s+publish|twine\s+upload|python\s+-m\s+twine\s+upload)\b/u.test(job);
+}
+
 function stepBlockForCommand(job, command) {
   const commandIndex = job.indexOf(command);
   if (commandIndex === -1) return "";
@@ -69,7 +140,12 @@ function stepBlockForCommand(job, command) {
 
 function stepCommandHasGithubToken(job, command) {
   const step = stepBlockForCommand(job, command);
-  return /(^|\r?\n)        env:\r?\n(?:          [A-Z0-9_]+:\s*.*\r?\n)*?          GITHUB_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}\s*(?:\r?\n|$)/u.test(step);
+  const envLineIndex = step.split(/\r?\n/u).findIndex((line) => line === "        env:");
+  if (envLineIndex === -1) return false;
+  return step
+    .split(/\r?\n/u)
+    .slice(envLineIndex + 1)
+    .some((line) => line.trim() === "GITHUB_TOKEN: ${{ github.token }}");
 }
 
 function actionUses(workflows) {
@@ -93,8 +169,14 @@ function actionUses(workflows) {
 }
 
 export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow }) {
+  const ciTypeScriptJob = jobBlock(ci, "typescript");
+  const ciPythonJob = jobBlock(ci, "python");
+  const ciTypeScriptRequiredJob = jobBlock(ci, "typescript-required");
+  const ciPythonRequiredJob = jobBlock(ci, "python-required");
   const buildArtifactsJob = jobBlock(publish, "build-artifacts");
   const promotionGateJob = jobBlock(publish, "promotion-gate");
+  const dryRunNpmJob = jobBlock(publish, "dry-run-npm");
+  const dryRunPypiJob = jobBlock(publish, "dry-run-pypi");
   const publishNpmJob = jobBlock(publish, "publish-npm");
   const publishPypiJob = jobBlock(publish, "publish-pypi");
   const workflows = `${publish}\n${ci}`;
@@ -110,6 +192,10 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
   const promotedArtifactLayoutCommand = "node scripts/verify-promoted-artifacts.mjs artifacts";
   const downloadPromotedArtifactsAction = "uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
   const githubSecurityStatusCommand = "node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk";
+  const dryRunNpmCondition = jobIfCondition(dryRunNpmJob);
+  const dryRunPypiCondition = jobIfCondition(dryRunPypiJob);
+  const publishNpmCondition = jobIfCondition(publishNpmJob);
+  const publishPypiCondition = jobIfCondition(publishPypiJob);
 
   return [
     {
@@ -143,6 +229,32 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     {
       label: "workflows do not reference long-lived registry tokens",
       ok: !/(NODE_AUTH_TOKEN|NPM_TOKEN|PYPI_API_TOKEN|TWINE_PASSWORD)/u.test(workflows),
+    },
+    {
+      label: "workflows avoid invalid action revisions",
+      ok: invalidActionRevisions.every((action) => !workflows.includes(action)),
+    },
+    {
+      label: "workflows use unauthenticated public git checkout",
+      ok:
+        !/uses:\s*actions\/checkout@/u.test(workflows) &&
+        jobsUseUnauthenticatedPublicGitCheckout([
+          ciTypeScriptJob,
+          ciPythonJob,
+          buildArtifactsJob,
+          promotionGateJob,
+          dryRunNpmJob,
+          dryRunPypiJob,
+          publishNpmJob,
+          publishPypiJob,
+        ]),
+    },
+    {
+      label: "workflows install pinned pnpm without an external action",
+      ok:
+        !/pnpm\/action-setup@/u.test(workflows) &&
+        jobInstallsPinnedPnpm(ciTypeScriptJob) &&
+        jobInstallsPinnedPnpm(buildArtifactsJob),
     },
     {
       label: "workflows do not carry old live-canary bypass controls",
@@ -179,6 +291,37 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
       ok:
         /Verify published npm install\/import[\s\S]*?github\.event\.inputs\.dry_run != 'true'[\s\S]*?verify-clean-installs\.mjs --package typescript --mode registry/u.test(publishNpmJob) &&
         /Verify published PyPI install\/import[\s\S]*?github\.event\.inputs\.dry_run != 'true'[\s\S]*?verify-clean-installs\.mjs --package python --mode registry/u.test(publishPypiJob),
+    },
+    {
+      label: "dry-run publish verification avoids protected registry environments",
+      ok:
+        jobDoesNotHaveEnvironment(dryRunNpmJob) &&
+        jobDoesNotHaveEnvironment(dryRunPypiJob) &&
+        jobHasReadOnlyContentsPermission(dryRunNpmJob) &&
+        jobHasReadOnlyContentsPermission(dryRunPypiJob) &&
+        !jobHasOidcPermission(dryRunNpmJob) &&
+        !jobHasOidcPermission(dryRunPypiJob) &&
+        jobHasEnvironment(publishNpmJob, "npm") &&
+        jobHasEnvironment(publishPypiJob, "pypi") &&
+        dryRunNpmCondition.includes("github.ref == 'refs/heads/main'") &&
+        dryRunPypiCondition.includes("github.ref == 'refs/heads/main'") &&
+        dryRunNpmCondition.includes("github.event.inputs.dry_run == 'true'") &&
+        dryRunPypiCondition.includes("github.event.inputs.dry_run == 'true'") &&
+        publishNpmCondition.includes("github.event.inputs.dry_run != 'true'") &&
+        publishPypiCondition.includes("github.event.inputs.dry_run != 'true'") &&
+        jobNeeds(dryRunNpmJob, "build-artifacts") &&
+        jobNeeds(dryRunNpmJob, "promotion-gate") &&
+        jobNeeds(dryRunPypiJob, "build-artifacts") &&
+        jobNeeds(dryRunPypiJob, "promotion-gate") &&
+        dryRunNpmJob.includes("node scripts/verify-clean-installs.mjs --package typescript --mode artifact --npm-tarball artifacts/npm-local/runinfra-sdk-*.tgz") &&
+        dryRunPypiJob.includes("node scripts/verify-clean-installs.mjs --package python --mode artifact --python-wheel artifacts/python-local/runinfra-*-py3-none-any.whl --python-sdist artifacts/python-local/runinfra-*.tar.gz") &&
+        dryRunNpmJob.includes("Dry run - would have published:") &&
+        dryRunPypiJob.includes("Dry run - would have published:") &&
+        !jobHasRegistryPublishCommand(buildArtifactsJob) &&
+        !jobHasRegistryPublishCommand(promotionGateJob) &&
+        !jobHasRegistryPublishCommand(dryRunNpmJob) &&
+        !jobHasRegistryPublishCommand(dryRunPypiJob) &&
+        !dryRunPypiJob.includes("pypa/gh-action-pypi-publish"),
     },
     {
       label: "publish workflow gates real publishes on strict promotion reports",
@@ -240,7 +383,9 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
       label: "non-publishing promotion jobs use read-only contents permission",
       ok:
         jobHasReadOnlyContentsPermission(buildArtifactsJob) &&
-        jobHasReadOnlyContentsPermission(promotionGateJob, ["security-events"]),
+        jobHasReadOnlyContentsPermission(promotionGateJob, ["security-events"]) &&
+        jobHasReadOnlyContentsPermission(dryRunNpmJob) &&
+        jobHasReadOnlyContentsPermission(dryRunPypiJob),
     },
     {
       label: "publish workflow verifies downloaded promoted artifact layout",
@@ -248,6 +393,12 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
         jobHasCommandBetween(promotionGateJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
           "Prepare exact artifacts and canary fixtures",
           strictArtifactCommand,
+        ]) &&
+        jobHasCommandBetween(dryRunNpmJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
+          "Verify exact npm artifact contents (no leaks)",
+        ]) &&
+        jobHasCommandBetween(dryRunPypiJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
+          "Verify exact Python artifacts (no leaks)",
         ]) &&
         jobHasCommandBetween(publishNpmJob, promotedArtifactLayoutCommand, downloadPromotedArtifactsAction, [
           "Verify exact npm artifact contents (no leaks)",
@@ -268,9 +419,41 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     {
       label: "workflows use pinned Python build tooling",
       ok:
+        ciTypeScriptJob.includes("python -m pip install -r python/requirements-dev.txt") &&
         /pip install -r python\/requirements-dev\.txt/u.test(ci) &&
         /pip install -r python\/requirements-dev\.txt/u.test(publish) &&
         !/pip install --upgrade build pytest twine/u.test(workflows),
+    },
+    {
+      label: "publish artifact build installs Python tooling before TypeScript tests",
+      ok: jobHasCommandBetween(
+        buildArtifactsJob,
+        "python -m pip install -r python/requirements-dev.txt",
+        "Setup Python",
+        ["Test TypeScript"],
+      ),
+    },
+    {
+      label: "CI tests every supported Node major",
+      ok: jobHasMatrixVersions(ciTypeScriptJob, "node-version", ["18", "20", "22", "24"]),
+    },
+    {
+      label: "CI tests every supported Python minor",
+      ok: jobHasMatrixVersions(ciPythonJob, "python-version", ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]),
+    },
+    {
+      label: "CI preserves protected required status contexts",
+      ok:
+        jobHasName(ciTypeScriptRequiredJob, "TypeScript SDK") &&
+        jobNeeds(ciTypeScriptRequiredJob, "typescript") &&
+        jobHasAlwaysCondition(ciTypeScriptRequiredJob) &&
+        jobFailsOnNeedResult(ciTypeScriptRequiredJob, "typescript") &&
+        ciTypeScriptRequiredJob.includes("needs.typescript.result") &&
+        jobHasName(ciPythonRequiredJob, "Python SDK") &&
+        jobNeeds(ciPythonRequiredJob, "python") &&
+        jobHasAlwaysCondition(ciPythonRequiredJob) &&
+        jobFailsOnNeedResult(ciPythonRequiredJob, "python") &&
+        ciPythonRequiredJob.includes("needs.python.result"),
     },
     {
       label: "CI verifies SDK version synchronization",
@@ -293,8 +476,10 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
     {
       label: "publish jobs are branch-locked to main",
       ok:
-        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(publishNpmJob) &&
-        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(publishPypiJob),
+        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(dryRunNpmCondition) &&
+        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(dryRunPypiCondition) &&
+        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(publishNpmCondition) &&
+        /github\.ref\s*==\s*'refs\/heads\/main'/u.test(publishPypiCondition),
     },
     {
       label: "workflow actions are SHA pinned",

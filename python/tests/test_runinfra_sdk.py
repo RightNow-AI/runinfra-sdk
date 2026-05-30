@@ -17,8 +17,13 @@ import zipfile
 from collections import UserDict
 from email.utils import formatdate
 from pathlib import Path
-from typing import Literal, Union, get_overloads, get_type_hints
+from typing import Literal, Union, get_type_hints
 from unittest.mock import patch
+
+try:
+    from typing import get_overloads
+except ImportError:  # Python 3.9 and 3.10
+    from typing_extensions import get_overloads
 
 import runinfra
 from runinfra import (
@@ -71,7 +76,7 @@ def json_response(payload, status=200, headers=None):
 class RunInfraPythonSdkTest(unittest.TestCase):
     def assertSecretNotInExceptionChain(self, error, secret):
         self.assertNotIn(secret, str(error))
-        self.assertNotIn(secret, "".join(traceback.format_exception(error)))
+        self.assertNotIn(secret, "".join(traceback.format_exception(type(error), error, error.__traceback__)))
         current = error
         seen = set()
         while current is not None and id(current) not in seen:
@@ -216,11 +221,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertIn("responses.create()", readme)
         self.assertIn("non-streaming `chat.completions.create()`", readme)
-        self.assertIn("embeddings.create()", readme)
-        self.assertIn("images.generate()", readme)
-        self.assertIn("Streaming calls, binary TTS responses, and multipart ASR uploads are sent once", readme)
+        self.assertIn("Only `responses.create()` and non-streaming `chat.completions.create()`", readme)
+        self.assertNotIn("That covers `responses.create()`, non-streaming `chat.completions.create()`, `embeddings.create()`, and `images.generate()`", readme)
+        self.assertIn("Embeddings, images, streaming calls, binary TTS responses, and multipart ASR uploads are sent once", readme)
         self.assertIn("even when you provide an idempotency key", readme)
-        self.assertIn("The gateway still binds idempotency keys for TTS and ASR", readme)
+        self.assertNotIn("The gateway still binds idempotency keys for TTS and ASR", readme)
 
     def test_readme_documents_tts_voice_and_reference_audio_request_modes(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -269,6 +274,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx", readme)
         self.assertIn("error.model.not_found", live_canaries)
         self.assertIn("error.body.unsupported_parameter", live_canaries)
+        self.assertIn("Gateway errors expose `request_id`, `type`, and, when returned by the API", readme)
+        self.assertIn("OpenAI-style `code` and `param` metadata", readme)
         self.assertIn("RunInfra `/v1/responses` is a chat-completions compatibility adapter.", readme)
         self.assertIn("forwards the supported request through the chat-completions serving path", readme)
         self.assertIn(
@@ -431,7 +438,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("JSON request bodies must be serializable and contain only finite numbers", readme)
         self.assertIn("embedding input must be a non-empty string or array of non-empty strings", readme)
         self.assertIn("TTS input and image prompts must be non-empty strings", readme)
-        self.assertIn("ASR file must be bytes or bytearray", readme)
+        self.assertIn("ASR file must be non-empty bytes or bytearray", readme)
         self.assertIn("ASR multipart filenames and content types", readme)
         self.assertIn("`extra_body` is only accepted on JSON body helpers", readme)
 
@@ -524,9 +531,11 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "retry.safety.get.local",
             "retry.safety.post.requires_idempotency.local",
             "retry.safety.post.with_idempotency.local",
+            "retry.safety.post.non_replayable_json.no_retry.local",
             "retry.safety.stream.no_retry.local",
             "retry.safety.audio_binary.no_retry.local",
             "retry.safety.audio_multipart.no_retry.local",
+            "retry.safety.voice_binary.no_retry.local",
         )
 
         for row in rows:
@@ -536,10 +545,16 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             self.assertIn(row, live_canaries)
 
         self.assertIn("localRetryClient", typescript_canary)
+        self.assertIn("localRetryTransportError", typescript_canary)
+        self.assertIn('failureModes: "http_503,transport_error"', typescript_canary)
         self.assertIn("assertRetryCallCount", typescript_canary)
         self.assertIn("local_retry_client", python_canary)
+        self.assertIn("local_retry_transport_error", python_canary)
+        self.assertIn('"failureModes": "http_503,transport_error"', python_canary)
         self.assertIn("assert_retry_call_count", python_canary)
         self.assertIn("Local retry-safety rows", live_canaries)
+        self.assertIn("retryable HTTP status", live_canaries)
+        self.assertIn("transport exceptions", live_canaries)
         self.assertIn("do not call the production gateway", live_canaries)
 
     def test_child_canaries_cover_local_client_request_id_row(self):
@@ -1326,6 +1341,19 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                     hints.get("stream"): hints.get("return")
                     for hints in overload_hints
                 }
+
+                if Literal[True] not in stream_returns:
+                    class_source = inspect.getsource(method.__self__.__class__)
+                    self.assertIn("stream: Literal[True]", class_source)
+                    self.assertIn(") -> RunInfraStream: ...", class_source)
+                    self.assertIn("stream: Literal[False] = False", class_source)
+                    self.assertIn(f") -> {non_stream_response.__name__}: ...", class_source)
+                    self.assertIn("stream: bool = False", class_source)
+                    self.assertIn(
+                        f") -> Union[{non_stream_response.__name__}, RunInfraStream]: ...",
+                        class_source,
+                    )
+                    continue
 
                 self.assertIs(stream_returns[Literal[True]], RunInfraStream)
                 self.assertIs(stream_returns[Literal[False]], non_stream_response)
@@ -2212,6 +2240,27 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn(b'name="model"', request.body)
         self.assertIn(b'name="file"; filename="clip.wav"', request.body)
 
+    def test_transcription_rejects_empty_audio_before_network(self):
+        transport = RecordingTransport(json_response({"text": "hello"}))
+        client = RunInfra(
+            api_key="sk-ri-test",
+            pipeline_id="pipe-asr",
+            transport=transport,
+        )
+
+        for file_value in (b"", bytearray()):
+            with self.subTest(file_type=type(file_value).__name__):
+                with self.assertRaises(RunInfraError) as raised:
+                    client.audio.transcriptions.create(
+                        model="whisper-large-v3",
+                        file=file_value,
+                        filename="clip.wav",
+                    )
+                self.assertEqual(raised.exception.type, "invalid_request_options")
+                self.assertEqual(str(raised.exception), "file must not be empty")
+
+        self.assertEqual(transport.calls, [])
+
     def test_transcription_rejects_unsafe_multipart_metadata_before_network(self):
         transport = RecordingTransport(json_response({"text": "hello"}))
         client = RunInfra(
@@ -2458,6 +2507,69 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.type, "deployment_error")
 
+    def test_errors_preserve_api_code_and_parameter_metadata(self):
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "The embeddings parameter 'dimensions' is not supported.",
+                        "type": "invalid_request_error",
+                        "code": "unsupported_parameter",
+                        "param": "dimensions",
+                    }
+                },
+                status=400,
+                headers={"x-request-id": "req-dimensions"},
+            )
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport, max_retries=0)
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.embeddings.create(
+                model="bge-small",
+                input="hello",
+                dimensions=1,
+            )
+
+        self.assertEqual(raised.exception.status, 400)
+        self.assertEqual(raised.exception.type, "invalid_request_error")
+        self.assertEqual(raised.exception.code, "unsupported_parameter")
+        self.assertEqual(raised.exception.param, "dimensions")
+        self.assertEqual(raised.exception.request_id, "req-dimensions")
+
+    def test_redacts_api_keys_from_status_error_metadata_fields(self):
+        api_key = "sk-ri-redact-local"
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "metadata redaction canary",
+                        "type": "invalid_request_error",
+                        "code": f"unsupported_{api_key}",
+                        "param": f"field_{api_key}",
+                    }
+                },
+                status=400,
+                headers={"x-request-id": "req-status-metadata-redact"},
+            )
+        )
+        client = RunInfra(
+            api_key=api_key,
+            transport=transport,
+            max_retries=0,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.status, 400)
+        self.assertEqual(raised.exception.type, "invalid_request_error")
+        self.assertEqual(raised.exception.code, "unsupported_[redacted]")
+        self.assertEqual(raised.exception.param, "field_[redacted]")
+        self.assertEqual(raised.exception.request_id, "req-status-metadata-redact")
+        self.assertSecretNotInExceptionChain(raised.exception, api_key)
+
     def test_request_options_can_disable_retries_for_cost_sensitive_calls(self):
         transport = RecordingTransport(
             json_response({"error": {"message": "busy"}}, status=503),
@@ -2516,6 +2628,51 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertEqual(result["id"], "resp_123")
         self.assertEqual(len(retry_safe_transport.calls), 2)
+
+    def test_non_replayable_json_posts_do_not_retry_with_idempotency_key(self):
+        embeddings_transport = RecordingTransport(
+            json_response({"error": {"message": "busy"}}, status=503),
+            json_response({"object": "list", "data": []}),
+        )
+        embeddings_client = RunInfra(
+            api_key="sk-ri-test",
+            transport=embeddings_transport,
+            max_retries=1,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraError) as embeddings_error:
+            embeddings_client.embeddings.create(
+                model="bge-m3",
+                input="hello",
+                request_options={"idempotency_key": "idem-embeddings-123"},
+            )
+
+        self.assertEqual(embeddings_error.exception.status, 503)
+        self.assertEqual(len(embeddings_transport.calls), 1)
+        self.assertEqual(embeddings_transport.calls[0].headers["Idempotency-Key"], "idem-embeddings-123")
+
+        images_transport = RecordingTransport(
+            json_response({"error": {"message": "busy"}}, status=503),
+            json_response({"created": 1, "data": []}),
+        )
+        images_client = RunInfra(
+            api_key="sk-ri-test",
+            transport=images_transport,
+            max_retries=1,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraError) as images_error:
+            images_client.images.generate(
+                model="flux",
+                prompt="cat",
+                request_options={"idempotency_key": "idem-images-123"},
+            )
+
+        self.assertEqual(images_error.exception.status, 503)
+        self.assertEqual(len(images_transport.calls), 1)
+        self.assertEqual(images_transport.calls[0].headers["Idempotency-Key"], "idem-images-123")
 
     def test_streaming_posts_do_not_retry_with_idempotency_key(self):
         transport = RecordingTransport(

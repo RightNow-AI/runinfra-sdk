@@ -42,8 +42,23 @@ export const publicSurfaceCoverage = [
       "idempotency.replay.responses",
     ],
   },
-  { surface: "client.embeddings.create", rows: ["embeddings.create", "openai.params.embeddings"] },
-  { surface: "client.images.generate", rows: ["images.generate", "openai.params.images"] },
+  {
+    surface: "client.embeddings.create",
+    rows: [
+      "embeddings.create",
+      "openai.params.embeddings",
+      "error.embeddings.unsupported_dimensions",
+      "retry.safety.post.non_replayable_json.no_retry.local",
+    ],
+  },
+  {
+    surface: "client.images.generate",
+    rows: [
+      "images.generate",
+      "openai.params.images",
+      "retry.safety.post.non_replayable_json.no_retry.local",
+    ],
+  },
   {
     surface: "client.audio.speech.create",
     rows: [
@@ -98,7 +113,13 @@ export const publicSurfaceCoverage = [
       "retry.safety.audio_multipart.no_retry.local",
     ],
   },
-  { surface: "client.voice.pipeline.create", rows: ["voice.pipeline.create"] },
+  {
+    surface: "client.voice.pipeline.create",
+    rows: [
+      "voice.pipeline.create",
+      "retry.safety.voice_binary.no_retry.local",
+    ],
+  },
   { surface: "client.webhooks.verifySignature", rows: ["webhooks.verify_signature.local"] },
   { surface: "client.webhooks.constructEvent", rows: ["webhooks.construct_event.local"] },
   { surface: "verifyWebhookSignature", rows: ["webhooks.verify_signature.export"] },
@@ -121,7 +142,12 @@ export const publicSurfaceCoverage = [
   },
   {
     surface: "unsupported body parameter handling",
-    rows: ["request.extra_body.local", "request.unknown_fields.local", "error.body.unsupported_parameter"],
+    rows: [
+      "request.extra_body.local",
+      "request.unknown_fields.local",
+      "error.body.unsupported_parameter",
+      "error.embeddings.unsupported_dimensions",
+    ],
   },
   { surface: "browser API-key guard", rows: ["browser.api_key_guard.local"] },
   { surface: "API-key redaction", rows: ["security.api_key_redaction.local"] },
@@ -135,6 +161,7 @@ export const publicSurfaceCoverage = [
       "error.rate_limit.local",
       "security.api_key_redaction.local",
       "error.body.unsupported_parameter",
+      "error.embeddings.unsupported_dimensions",
     ],
   },
 ];

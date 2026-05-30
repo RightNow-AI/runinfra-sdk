@@ -6,6 +6,7 @@ export const sourceDigestFileLabels = [
   "typescript/src/index.ts",
   "python/pyproject.toml",
   "python/MANIFEST.in",
+  "python/requirements-dev.txt",
   "python/README.md",
   "python/CHANGELOG.md",
   "python/runinfra/__init__.py",

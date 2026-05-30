@@ -37,3 +37,6 @@ python/tests/__pycache__/
 artifacts/
 .canary-tmp/
 .clean-install-tmp/
+
+# Local agent handoff notes
+AGENTS-GOALs/

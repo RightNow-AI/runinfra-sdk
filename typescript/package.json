@@ -27,7 +27,7 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "engines": {
-    "node": ">=18"
+    "node": ">=18 <25"
   },
   "exports": {
     ".": {

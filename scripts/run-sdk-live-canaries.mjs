@@ -246,10 +246,10 @@ const relevantEnv = [
   "RUNINFRA_API_KEY",
   "RUNINFRA_BASE_URL",
   "RUNINFRA_CANARY_TIMEOUT_SECONDS",
+  "RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS",
   "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS",
   "RUNINFRA_LLM_MODEL",
   "RUNINFRA_EMBEDDING_MODEL",
-  "RUNINFRA_EMBEDDING_DIMENSIONS",
   "RUNINFRA_IMAGE_MODEL",
   "RUNINFRA_IMAGE_SIZE",
   "RUNINFRA_IMAGE_RESPONSE_FORMAT",
@@ -285,12 +285,12 @@ function buildStrictLiveCanaryEnvTemplate() {
     `RUNINFRA_BASE_URL=${productionBaseURL}`,
     "RUNINFRA_API_KEY=",
     "RUNINFRA_CANARY_TIMEOUT_SECONDS=120",
+    "RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS=720",
     "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS=25",
     "",
     "# Text, chat, responses, streaming, embeddings, and images.",
     "RUNINFRA_LLM_MODEL=",
     "RUNINFRA_EMBEDDING_MODEL=",
-    "RUNINFRA_EMBEDDING_DIMENSIONS=",
     "RUNINFRA_IMAGE_MODEL=",
     "RUNINFRA_IMAGE_SIZE=",
     "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -384,6 +384,11 @@ const missingEnvPatchEntries = [
   },
   {
     section: "Gateway and execution controls.",
+    triggers: ["RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS positive finite number <= 1800"],
+    assignments: [{ key: "RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS", value: "720" }],
+  },
+  {
+    section: "Gateway and execution controls.",
     triggers: ["RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS non-negative integer <= 5000"],
     assignments: [{ key: "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS", value: "25" }],
   },
@@ -396,11 +401,6 @@ const missingEnvPatchEntries = [
     section: "Text, chat, responses, streaming, embeddings, and images.",
     triggers: ["RUNINFRA_EMBEDDING_MODEL"],
     assignments: [{ key: "RUNINFRA_EMBEDDING_MODEL" }],
-  },
-  {
-    section: "Text, chat, responses, streaming, embeddings, and images.",
-    triggers: ["RUNINFRA_EMBEDDING_DIMENSIONS", "RUNINFRA_EMBEDDING_DIMENSIONS positive integer"],
-    assignments: [{ key: "RUNINFRA_EMBEDDING_DIMENSIONS" }],
   },
   {
     section: "Text, chat, responses, streaming, embeddings, and images.",
@@ -743,15 +743,11 @@ const idempotencyEvidenceFieldRequirementMessage =
   "RUNINFRA_CANARY_IDEMPOTENCY_EVIDENCE_FIELD dot-separated response field paths";
 const idempotencyEvidenceFieldPattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/u;
 const maxCanaryTimeoutSeconds = 600;
+const defaultChildCanaryTimeoutSeconds = 720;
+const maxChildCanaryTimeoutSeconds = 1800;
 
 function missingEnv(names) {
   return names.filter((name) => !env(name));
-}
-
-function positiveIntegerRequirement(name) {
-  const value = env(name);
-  if (!value) return [name];
-  return /^[1-9][0-9]*$/u.test(value) ? [] : [`${name} positive integer`];
 }
 
 function optionalCanaryTimeoutRequirement() {
@@ -766,6 +762,28 @@ function optionalCanaryTimeoutRequirement() {
     parsed > maxCanaryTimeoutSeconds
   ) {
     return [`${name} positive finite number <= ${maxCanaryTimeoutSeconds}`];
+  }
+  return [];
+}
+
+function optionalChildCanaryTimeoutRequirement() {
+  return optionalPositiveFiniteSecondsRequirement(
+    "RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS",
+    maxChildCanaryTimeoutSeconds,
+  );
+}
+
+function optionalPositiveFiniteSecondsRequirement(name, maxSeconds) {
+  const value = env(name);
+  if (!value) return [];
+  const parsed = Number(value);
+  if (
+    !/^(?:[1-9][0-9]*|0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*\.[0-9]+)$/u.test(value) ||
+    !Number.isFinite(parsed) ||
+    parsed <= 0 ||
+    parsed > maxSeconds
+  ) {
+    return [`${name} positive finite number <= ${maxSeconds}`];
   }
   return [];
 }
@@ -911,10 +929,8 @@ const rowReadinessRequirements = [
   ["responses.stream.disconnect.local", () => []],
   ["responses.stream.stalled_read.local", () => []],
   ["embeddings.create", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])],
-  ["openai.params.embeddings", () => [
-    ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"]),
-    ...positiveIntegerRequirement("RUNINFRA_EMBEDDING_DIMENSIONS"),
-  ]],
+  ["openai.params.embeddings", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])],
+  ["error.embeddings.unsupported_dimensions", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])],
   ["images.generate", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"])],
   ["openai.params.images", () => [
     ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL", "RUNINFRA_IMAGE_SIZE"]),
@@ -952,9 +968,11 @@ const rowReadinessRequirements = [
   ["retry.safety.get.local", () => []],
   ["retry.safety.post.requires_idempotency.local", () => []],
   ["retry.safety.post.with_idempotency.local", () => []],
+  ["retry.safety.post.non_replayable_json.no_retry.local", () => []],
   ["retry.safety.stream.no_retry.local", () => []],
   ["retry.safety.audio_binary.no_retry.local", () => []],
   ["retry.safety.audio_multipart.no_retry.local", () => []],
+  ["retry.safety.voice_binary.no_retry.local", () => []],
   ["webhooks.delivery_surface.absent", () => []],
   ["webhooks.verify_signature.local", () => []],
   ["webhooks.construct_event.local", () => []],
@@ -970,6 +988,7 @@ const rowReadinessRequirements = [
 function buildReadiness() {
   const globalMissing = [
     ...optionalCanaryTimeoutRequirement(),
+    ...optionalChildCanaryTimeoutRequirement(),
     ...optionalBaseURLRequirement(),
   ];
   const rows = rowReadinessRequirements.map(([name, requirements]) => {
@@ -1301,6 +1320,10 @@ function canaryTimeoutMs() {
   return Math.ceil(Number(env("RUNINFRA_CANARY_TIMEOUT_SECONDS") ?? "120") * 1000);
 }
 
+function childCanaryTimeoutMs() {
+  return Math.ceil(Number(env("RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS") ?? String(defaultChildCanaryTimeoutSeconds)) * 1000);
+}
+
 function modelDiscoveryReport(discovery) {
   return {
     schemaVersion: 1,
@@ -1461,6 +1484,7 @@ if (preflight) {
 function configurationErrors() {
   return [
     ...optionalCanaryTimeoutRequirement(),
+    ...optionalChildCanaryTimeoutRequirement(),
     ...optionalBaseURLRequirement(),
     ...optionalNonNegativeIntegerRequirement("RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS"),
     ...optionalIdempotencyEvidenceFieldRequirement(),
@@ -1641,8 +1665,10 @@ function run(label, command, commandArgs, envOverrides = {}) {
     stdio: "inherit",
     env: { ...process.env, ...canonicalEnvOverrides(), ...envOverrides },
     shell: false,
+    timeout: childCanaryTimeoutMs(),
   });
-  return { label, status: result.status ?? 1 };
+  const timedOut = result.error?.code === "ETIMEDOUT";
+  return { label, status: result.status ?? 1, timedOut };
 }
 
 function canonicalEnvOverrides(names = relevantEnv) {
@@ -1704,10 +1730,11 @@ for (const { language, path } of [
   try {
     reports.push(JSON.parse(readFileSync(path, "utf8")));
   } catch {
+    const childRun = runs.find((run) => run.label === language);
     reports.push({
       language,
       status: "missing",
-      error: "child report missing or unreadable",
+      error: childRun?.timedOut ? "child canary timed out" : "child report missing or unreadable",
     });
   }
 }
@@ -1781,7 +1808,7 @@ function sensitiveEnvValues() {
     .filter(([name, value]) =>
       typeof value === "string" &&
       value.length >= 8 &&
-      /(API[_-]?KEY|TOKEN|SECRET|PASSWORD|NPM|PYPI|TWINE|GITHUB|GH_)/iu.test(name)
+      /(API[_-]?KEY|TOKEN|SECRET|PASSWORD|NPM|PYPI|TWINE)/iu.test(name)
     )
     .map(([, value]) => value);
 }
@@ -1801,6 +1828,7 @@ function assertReportDoesNotLeak(report) {
 const surfaceCoverage = buildSurfaceCoverage();
 const parityErrors = [
   ...surfaceCoverage.errors,
+  ...runs.filter((run) => run.timedOut).map((run) => `${run.label} child canary timed out`),
   ...reportRowErrors(reports.find((report) => report.language === "typescript")),
   ...reportRowErrors(reports.find((report) => report.language === "python")),
 ];

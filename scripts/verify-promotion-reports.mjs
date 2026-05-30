@@ -123,7 +123,7 @@ function sensitiveEnvValues() {
     .filter(([name, value]) =>
       typeof value === "string" &&
       value.length >= 8 &&
-      /(API[_-]?KEY|TOKEN|SECRET|PASSWORD|NPM|PYPI|TWINE|GITHUB|GH_)/iu.test(name)
+      /(API[_-]?KEY|TOKEN|SECRET|PASSWORD|NPM|PYPI|TWINE)/iu.test(name)
     )
     .map(([, value]) => value);
 }

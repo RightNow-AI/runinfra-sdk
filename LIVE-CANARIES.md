@@ -121,10 +121,10 @@ and all-passed rows.
 | `RUNINFRA_API_KEY` | Workspace-scoped canary key for flat `/v1/*` routes |
 | `RUNINFRA_BASE_URL` | Optional, defaults to `https://api.runinfra.ai/v1` |
 | `RUNINFRA_CANARY_TIMEOUT_SECONDS` | Optional positive per-request canary timeout for both SDKs, defaults to 120 and must be <= 600 |
+| `RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS` | Optional positive parent-side timeout for each child canary process, defaults to 720 and must be <= 1800 |
 | `RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS` | Optional non-negative integer delay from 0 to 5000 after each consumed SSE event in slow-consumer rows, defaults to 25 |
 | `RUNINFRA_LLM_MODEL` | Model for chat, responses, streaming, and idempotency rows |
 | `RUNINFRA_EMBEDDING_MODEL` | Model for embeddings row |
-| `RUNINFRA_EMBEDDING_DIMENSIONS` | Positive integer embedding dimension count for the OpenAI parameter row |
 | `RUNINFRA_IMAGE_MODEL` | Model for image generation row |
 | `RUNINFRA_IMAGE_SIZE` | Image size for the OpenAI image parameter row |
 | `RUNINFRA_IMAGE_RESPONSE_FORMAT` | `url` or `b64_json` for the OpenAI image parameter row |
@@ -227,6 +227,7 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `responses.stream.stalled_read.local`
 - `embeddings.create`
 - `openai.params.embeddings`
+- `error.embeddings.unsupported_dimensions`
 - `images.generate`
 - `openai.params.images`
 - `audio.speech.create`
@@ -251,9 +252,11 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `retry.safety.get.local`
 - `retry.safety.post.requires_idempotency.local`
 - `retry.safety.post.with_idempotency.local`
+- `retry.safety.post.non_replayable_json.no_retry.local`
 - `retry.safety.stream.no_retry.local`
 - `retry.safety.audio_binary.no_retry.local`
 - `retry.safety.audio_multipart.no_retry.local`
+- `retry.safety.voice_binary.no_retry.local`
 - `webhooks.delivery_surface.absent`
 - `webhooks.verify_signature.local`
 - `webhooks.construct_event.local`
@@ -301,8 +304,10 @@ Responses streams: `chat.completions.stream.malformed_frame.local`,
 The OpenAI parameter rows prove chat sampling and metadata pass-through, chat
 `stream_options.include_usage` usage chunks with numeric token fields but
 without recording token counts, Responses instructions, metadata, temperature,
-output-token controls, embeddings `encoding_format: "float"` plus `dimensions`,
-exact image `response_format` output matching while sending an explicit image
+output-token controls, embeddings `encoding_format: "float"` support, a clear
+unsupported-parameter error for embedding `dimensions` until a deployed
+embedding backend advertises dimension reduction support, exact image
+`response_format` output matching while sending an explicit image
 `size` to the backend, TTS `response_format` request handling with a non-JSON
 binary audio response, and ASR `language`, fixed `prompt`, plus
 `response_format` request handling. The TTS parameter row does not claim exact
@@ -334,8 +339,12 @@ generated silence is not accepted as GA proof.
 Local retry-safety rows do not call the production gateway; they run against
 deterministic local HTTP responses from the installed SDK package. They prove
 safe GET requests retry transient failures, charge-bearing JSON POSTs retry only
-with an idempotency key, and streaming, binary TTS, and multipart ASR requests
-are sent once even when an idempotency key is present.
+with an idempotency key on replay-safe helpers, non-replayable JSON helpers
+such as embeddings and images are not retried across retryable HTTP status
+responses and transport exceptions, and streaming, binary TTS, multipart ASR,
+and binary voice-pipeline requests are sent once even when an idempotency key is
+present. The binary voice-pipeline row covers retryable HTTP status responses
+and transport exceptions.
 Local request-option rows do not call the production gateway; they prove
 user-supplied client request IDs and custom request headers are sent as headers,
 are not serialized into JSON request bodies, and cannot override

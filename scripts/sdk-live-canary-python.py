@@ -103,9 +103,20 @@ def assert_request_id(value: Any, label: str) -> None:
         raise AssertionError(f"{label} did not expose x-request-id")
 
 
-def assert_clear_unsupported_parameter_error(error: BaseException, label: str) -> Dict[str, Any]:
+def assert_clear_unsupported_parameter_error(
+    error: BaseException,
+    label: str,
+    expected_status: Optional[int] = None,
+    expected_type: Optional[str] = None,
+    expected_code: Optional[str] = None,
+    expected_param: Optional[str] = None,
+) -> Dict[str, Any]:
     status = getattr(error, "status", None)
-    if status not in {400, 422}:
+    if expected_status is not None and status != expected_status:
+        raise AssertionError(
+            f"{label} expected validation error status {expected_status}, got {status or 'unknown'}"
+        )
+    if expected_status is None and status not in {400, 422}:
         raise AssertionError(f"{label} expected a clear 400/422 validation error, got {status or 'unknown'}")
     error_type = getattr(error, "type", None)
     allowed_types = {
@@ -117,20 +128,30 @@ def assert_clear_unsupported_parameter_error(error: BaseException, label: str) -
         "unsupported_parameter",
         "validation_error",
     }
-    if not isinstance(error_type, str) or error_type not in allowed_types:
+    if expected_type is not None and error_type != expected_type:
+        raise AssertionError(
+            f"{label} expected validation error type {expected_type}, got {error_type or 'unknown'}"
+        )
+    if expected_type is None and (not isinstance(error_type, str) or error_type not in allowed_types):
         raise AssertionError(f"{label} expected an invalid-parameter error type, got {error_type or 'unknown'}")
+    error_code = getattr(error, "code", None)
+    if expected_code and error_code != expected_code:
+        raise AssertionError(
+            f"{label} expected unsupported error code {expected_code}, got {error_code or 'unknown'}"
+        )
+    error_param = getattr(error, "param", None)
+    if expected_param and error_param != expected_param:
+        raise AssertionError(
+            f"{label} expected unsupported parameter {expected_param}, got {error_param or 'unknown'}"
+        )
     request_id = getattr(error, "request_id", None)
     assert_request_id(request_id, label)
-    return {"errorType": error_type, "errorStatus": status, "requestId": request_id}
-
-
-def required_positive_integer_env(name: str) -> int:
-    value = env(name)
-    if not value:
-        raise AssertionError(f"{name} missing")
-    if not re.fullmatch(r"[1-9][0-9]*", value):
-        raise AssertionError(f"{name} must be a positive integer")
-    return int(value)
+    result = {"errorType": error_type, "errorStatus": status, "requestId": request_id}
+    if expected_code:
+        result["errorCode"] = error_code
+    if expected_param:
+        result["errorParam"] = error_param
+    return result
 
 
 def assert_chat_completion_envelope(response: Dict[str, Any], label: str) -> None:
@@ -327,6 +348,10 @@ def canary_diagnostic(error: BaseException) -> Optional[str]:
     if "unexpectedly succeeded" in message:
         return "unexpected_success"
     if "expected a clear 400/422 validation error" in message:
+        return "invalid_error_shape"
+    if "expected unsupported error code" in message:
+        return "invalid_error_shape"
+    if "expected unsupported parameter" in message:
         return "invalid_error_shape"
     if "did not expose x-request-id" in message:
         return "missing_request_id"
@@ -547,8 +572,12 @@ def local_retry_failure(request_id: str) -> RunInfraResponse:
     )
 
 
+def local_retry_transport_error() -> OSError:
+    return OSError("transient local transport retry probe")
+
+
 class LocalRetryTransport:
-    def __init__(self, responses: Iterable[RunInfraResponse]) -> None:
+    def __init__(self, responses: Iterable[Any]) -> None:
         self.responses = list(responses)
         self.calls: List[Any] = []
 
@@ -556,14 +585,18 @@ class LocalRetryTransport:
         self.calls.append(request)
         if not self.responses:
             raise RuntimeError("local retry canary exhausted fake responses")
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
-def local_retry_client(responses: Iterable[RunInfraResponse]) -> Dict[str, Any]:
+def local_retry_client(responses: Iterable[Any], *, pipeline_id: Optional[str] = None) -> Dict[str, Any]:
     transport = LocalRetryTransport(responses)
     return {
         "client": RunInfra(
             api_key="sk-ri-live-canary-local",
+            pipeline_id=pipeline_id,
             base_url="http://localhost:1/v1",
             max_retries=1,
             retry_base_seconds=0,
@@ -695,6 +728,22 @@ def assert_retryable_error(error: BaseException, label: str) -> Dict[str, Any]:
         "errorStatus": getattr(error, "status", None),
         "errorType": getattr(error, "type", None),
         "requestId": request_id,
+    }
+
+
+def assert_transport_connection_error(error: BaseException, label: str) -> Dict[str, Any]:
+    if (
+        not isinstance(error, RunInfraConnectionError)
+        or getattr(error, "status", None) != 0
+        or getattr(error, "type", None) != "connection_error"
+    ):
+        raise AssertionError(
+            f"{label} expected local transport RunInfraConnectionError, got "
+            f"{getattr(error, 'status', None) or error.__class__.__name__}"
+        )
+    return {
+        "transportErrorStatus": getattr(error, "status", None),
+        "transportErrorType": getattr(error, "type", None),
     }
 
 
@@ -834,7 +883,6 @@ def main() -> int:
         "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS",
         "RUNINFRA_LLM_MODEL",
         "RUNINFRA_EMBEDDING_MODEL",
-        "RUNINFRA_EMBEDDING_DIMENSIONS",
         "RUNINFRA_IMAGE_MODEL",
         "RUNINFRA_IMAGE_SIZE",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT",
@@ -958,8 +1006,13 @@ def main() -> int:
     record("embeddings.create", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"], lambda: _embeddings_create(client(), embedding_model))
     record(
         "openai.params.embeddings",
-        ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL", "RUNINFRA_EMBEDDING_DIMENSIONS"],
+        ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"],
         lambda: _embeddings_params(client(), embedding_model),
+    )
+    record(
+        "error.embeddings.unsupported_dimensions",
+        ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"],
+        lambda: _unsupported_embedding_dimensions(client(), embedding_model),
     )
     record("images.generate", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], lambda: _images_generate(client(), image_model))
     record(
@@ -1011,9 +1064,11 @@ def main() -> int:
     record("retry.safety.get.local", [], _retry_safety_get_local)
     record("retry.safety.post.requires_idempotency.local", [], _retry_safety_post_requires_idempotency_local)
     record("retry.safety.post.with_idempotency.local", [], _retry_safety_post_with_idempotency_local)
+    record("retry.safety.post.non_replayable_json.no_retry.local", [], _retry_safety_post_non_replayable_json_no_retry_local)
     record("retry.safety.stream.no_retry.local", [], _retry_safety_stream_no_retry_local)
     record("retry.safety.audio_binary.no_retry.local", [], _retry_safety_audio_binary_no_retry_local)
     record("retry.safety.audio_multipart.no_retry.local", [], _retry_safety_audio_multipart_no_retry_local)
+    record("retry.safety.voice_binary.no_retry.local", [], _retry_safety_voice_binary_no_retry_local)
     record("webhooks.delivery_surface.absent", [], _webhooks_delivery_surface_absent)
     record("webhooks.verify_signature.local", [], _webhooks_verify_signature_local)
     record("webhooks.construct_event.local", [], _webhooks_construct_event_local)
@@ -1354,20 +1409,36 @@ def _embeddings_create(client: RunInfra, model: str) -> Dict[str, Any]:
 
 
 def _embeddings_params(client: RunInfra, model: str) -> Dict[str, Any]:
-    dimensions = required_positive_integer_env("RUNINFRA_EMBEDDING_DIMENSIONS")
     response = client.embeddings.create(
         model=model,
         input="runinfra sdk openai parameter canary",
         encoding_format="float",
-        dimensions=dimensions,
     )
     assert_object(response, "embeddings params response")
     assert_embeddings_envelope(response, "embeddings params response")
     vector = response["data"][0].get("embedding")
     assert_request_id(response.get("_request_id"), "openai.params.embeddings")
-    if len(vector) != dimensions:
-        raise AssertionError("embeddings params response ignored requested dimensions")
     return {"requestId": response.get("_request_id"), "vectorLength": len(vector)}
+
+
+def _unsupported_embedding_dimensions(client: RunInfra, model: str) -> Dict[str, Any]:
+    try:
+        client.embeddings.create(
+            model=model,
+            input="runinfra sdk unsupported embedding dimensions canary",
+            encoding_format="float",
+            dimensions=1,
+        )
+    except BaseException as error:  # noqa: BLE001
+        return assert_clear_unsupported_parameter_error(
+            error,
+            "embedding dimensions",
+            expected_status=400,
+            expected_type="invalid_request_error",
+            expected_code="unsupported_parameter",
+            expected_param="dimensions",
+        )
+    raise AssertionError("embedding dimensions unexpectedly succeeded")
 
 
 def _images_generate(client: RunInfra, model: str) -> Dict[str, Any]:
@@ -2232,6 +2303,95 @@ def _retry_safety_post_with_idempotency_local() -> Dict[str, Any]:
     }
 
 
+def _retry_safety_post_non_replayable_json_no_retry_local() -> Dict[str, Any]:
+    checks = (
+        (
+            "embeddings",
+            "http_503",
+            "idem-local-embeddings-json-no-retry",
+            [
+                local_retry_failure("req-local-retry-embeddings-json-no-retry"),
+                local_retry_response({"object": "list", "data": []}, 200, "req-local-retry-embeddings-json-unexpected"),
+            ],
+            assert_retryable_error,
+            lambda client, request_options: client.embeddings.create(
+                model="runinfra-local-embedding-model",
+                input="local retry canary",
+                request_options=request_options,
+            ),
+        ),
+        (
+            "embeddings",
+            "transport_error",
+            "idem-local-embeddings-json-transport-no-retry",
+            [
+                local_retry_transport_error(),
+                local_retry_response({"object": "list", "data": []}, 200, "req-local-retry-embeddings-json-transport-unexpected"),
+            ],
+            assert_transport_connection_error,
+            lambda client, request_options: client.embeddings.create(
+                model="runinfra-local-embedding-model",
+                input="local retry canary",
+                request_options=request_options,
+            ),
+        ),
+        (
+            "images",
+            "http_503",
+            "idem-local-images-json-no-retry",
+            [
+                local_retry_failure("req-local-retry-images-json-no-retry"),
+                local_retry_response({"created": 1, "data": []}, 200, "req-local-retry-images-json-unexpected"),
+            ],
+            assert_retryable_error,
+            lambda client, request_options: client.images.generate(
+                model="runinfra-local-image-model",
+                prompt="local retry canary",
+                request_options=request_options,
+            ),
+        ),
+        (
+            "images",
+            "transport_error",
+            "idem-local-images-json-transport-no-retry",
+            [
+                local_retry_transport_error(),
+                local_retry_response({"created": 1, "data": []}, 200, "req-local-retry-images-json-transport-unexpected"),
+            ],
+            assert_transport_connection_error,
+            lambda client, request_options: client.images.generate(
+                model="runinfra-local-image-model",
+                prompt="local retry canary",
+                request_options=request_options,
+            ),
+        ),
+    )
+    for surface, failure_mode, idempotency_key, responses, assert_error, run in checks:
+        row_label = f"retry.safety.post.non_replayable_json.no_retry.local {surface} {failure_mode}"
+        local = local_retry_client(responses)
+        try:
+            run(
+                local["client"],
+                {
+                    "idempotency_key": idempotency_key,
+                    "max_retries": 1,
+                    "retry_base_seconds": 0,
+                },
+            )
+        except BaseException as error:  # noqa: BLE001
+            assert_idempotency_header(local["calls"], idempotency_key, row_label)
+            assert_error(error, row_label)
+            assert_retry_call_count(local["calls"], 1, row_label)
+            continue
+        raise AssertionError(f"{surface} JSON POST {failure_mode} unexpectedly retried into success")
+    return {
+        "attemptsPerSurface": 1,
+        "transportAttemptsPerSurface": 1,
+        "surfaces": "embeddings,images",
+        "failureModes": "http_503,transport_error",
+    }
+
+
 def _retry_safety_stream_no_retry_local() -> Dict[str, Any]:
     local = local_retry_client([local_retry_failure("req-local-retry-stream-no-retry")])
     try:
@@ -2304,6 +2464,56 @@ def _retry_safety_audio_multipart_no_retry_local() -> Dict[str, Any]:
             **assert_retryable_error(error, "retry.safety.audio_multipart.no_retry.local"),
         }
     raise AssertionError("multipart audio POST unexpectedly retried into success")
+
+
+def _retry_safety_voice_binary_no_retry_local() -> Dict[str, Any]:
+    checks = (
+        (
+            "http_503",
+            "idem-local-voice-binary-no-retry",
+            [
+                local_retry_failure("req-local-retry-voice-binary-no-retry"),
+                local_retry_response({"text": "unexpected retry success"}, 200, "req-local-retry-voice-binary-unexpected"),
+            ],
+            assert_retryable_error,
+        ),
+        (
+            "transport_error",
+            "idem-local-voice-binary-transport-no-retry",
+            [
+                local_retry_transport_error(),
+                local_retry_response(
+                    {"text": "unexpected retry success"},
+                    200,
+                    "req-local-retry-voice-binary-transport-unexpected",
+                ),
+            ],
+            assert_transport_connection_error,
+        ),
+    )
+    http_evidence: Dict[str, Any] = {}
+    for failure_mode, idempotency_key, responses, assert_error in checks:
+        row_label = f"retry.safety.voice_binary.no_retry.local {failure_mode}"
+        local = local_retry_client(responses, pipeline_id="pipe-local-retry-voice")
+        try:
+            local["client"].voice.pipeline.create(
+                audio=b"\x01\x02\x03",
+                mime_type="audio/wav",
+                request_options={
+                    "idempotency_key": idempotency_key,
+                    "max_retries": 1,
+                    "retry_base_seconds": 0,
+                },
+            )
+        except BaseException as error:  # noqa: BLE001
+            assert_idempotency_header(local["calls"], idempotency_key, row_label)
+            call_evidence = assert_retry_call_count(local["calls"], 1, row_label)
+            error_evidence = assert_error(error, row_label)
+            if failure_mode == "http_503":
+                http_evidence = {**call_evidence, **error_evidence}
+            continue
+        raise AssertionError(f"voice pipeline POST {failure_mode} unexpectedly retried into success")
+    return {**http_evidence, "transportAttempts": 1, "failureModes": "http_503,transport_error"}
 
 
 def _webhooks_delivery_surface_absent() -> Dict[str, str]:
