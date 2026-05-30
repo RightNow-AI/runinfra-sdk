@@ -6,8 +6,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.5] - 2026-05-30
 
 ### Added
-- Added runnable examples for chat, Responses streaming, embeddings, images,
-  audio, model discovery, and co-located voice pipeline helpers.
+- Added examples for chat, Responses streaming, embeddings, model discovery,
+  and webhook verification.
+- Clarified deployment requirements for image, audio, and co-located voice
+  pipeline helpers.
 
 ### Changed
 - Clarified webhook helpers as local signature verification APIs. Webhook
