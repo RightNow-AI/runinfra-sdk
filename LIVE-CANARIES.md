@@ -379,5 +379,5 @@ gateway exposes equivalent replay evidence under a different response path.
 
 Do not remove the experimental label from images, TTS, ASR, or voice pipeline
 until both language reports pass strict mode with the deployed models listed in
-the release notes or handoff. Unit tests and package scans remain required, but
-they do not replace this live matrix.
+the release validation matrix. Unit tests and package scans remain required,
+but they do not replace this live matrix.

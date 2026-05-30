@@ -6,12 +6,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.5] - 2026-05-30
 
 ### Changed
-- Refreshed the public README and changelog language so the documented SDK
-  surface matches the shipped helpers and stays focused on customer-visible
-  behavior.
-- Renamed the root README status row from webhook delivery to webhook
-  verification to match the local signature-verification helpers available in
-  the package.
+- Updated the public examples for chat, Responses, embeddings, images, audio,
+  model discovery, and voice pipeline helpers so they match the shipped SDK
+  surface.
+- Clarified that webhook support covers local signature verification helpers,
+  with delivery management handled outside the public SDK surface.
 
 ## [0.1.4] - 2026-05-23
 
