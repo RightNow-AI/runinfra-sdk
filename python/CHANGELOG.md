@@ -5,12 +5,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.1.5] - 2026-05-30
 
+### Added
+- Added runnable examples for chat, Responses streaming, embeddings, images,
+  audio, model discovery, and co-located voice pipeline helpers.
+
 ### Changed
-- Updated the public examples for chat, Responses, embeddings, images, audio,
-  model discovery, and voice pipeline helpers so they match the shipped SDK
-  surface.
-- Clarified that webhook support covers local signature verification helpers,
-  with delivery management handled outside the public SDK surface.
+- Clarified webhook helpers as local signature verification APIs. Webhook
+  delivery management remains outside the public SDK surface.
 
 ## [0.1.4] - 2026-05-23
 
@@ -66,8 +67,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - Aligned TypeScript and Python package metadata for the same release.
-- Updated docs to describe the voice pipeline helper as a pipeline-scoped
-  preview helper.
+- Clarified that the voice pipeline helper is a pipeline-scoped preview
+  surface.
 - Switched Python license metadata to the non-deprecated `license` and
   `license-files` form.
 
@@ -81,7 +82,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - Added the modality status section to the README.
 - Added preview docstrings for deployment-dependent helpers.
-- Added this changelog.
 
 ## [0.1.0] - 2026-05-22
 

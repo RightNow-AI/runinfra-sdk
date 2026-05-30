@@ -82,8 +82,7 @@ backend proxy, API service, or backend job. Browser apps should call your own
 server first, then your server calls RunInfra with the workspace or
 pipeline-scoped key. Direct browser token flows are not supported by the public
 SDK. If you are deliberately using a controlled non-public browser-like runtime,
-pass `dangerouslyAllowBrowser:
-true` and own that risk.
+pass `dangerouslyAllowBrowser: true` and own that risk.
 
 Unknown TypeScript client option keys are rejected so typos such as `baseUrl` or `api_key` do not silently change the gateway, authentication, timeout, retry, or runtime-safety behavior. Use `baseURL` for custom server-side gateway URLs.
 
