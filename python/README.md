@@ -21,7 +21,7 @@ This SDK is in **beta**. The surfaces below have different verification levels:
 | Images | `client.images.generate` | Preview. Available when the deployment exposes image generation. |
 | Audio (TTS) | `client.audio.speech.create` | Preview. Available when the deployment exposes speech generation. |
 | Audio (ASR) | `client.audio.transcriptions.create` | Preview. Available when the deployment exposes transcription. |
-| Webhooks | `client.webhooks.verify_signature`, `client.webhooks.construct_event`, `verify_webhook_signature`, `construct_webhook_event` | Local verification helpers only; remote delivery not shipped |
+| Webhooks | `client.webhooks.verify_signature`, `client.webhooks.construct_event`, `verify_webhook_signature`, `construct_webhook_event` | Local verification helpers only; delivery management is outside the public SDK surface |
 | Voice pipeline | `client.voice.pipeline.create` | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |
 
 The dashboard only shows snippets for operations the selected deployment
@@ -115,9 +115,8 @@ RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gatewa
 library HTTP stack. FastAPI, Starlette, Django ASGI, and other asyncio apps
 should run SDK calls in a worker thread, task queue, or background job so an
 inference request does not block the event loop. Do not instantiate an
-`AsyncRunInfra` client yet; that public surface is not shipped until it has the
-same validation, streaming, timeout, retry, and packaging coverage as the sync
-client.
+`AsyncRunInfra` client; async client APIs are outside the current public SDK
+surface.
 
 For one-off calls inside an asyncio handler, move the blocking SDK call to the
 default worker thread pool:
@@ -301,7 +300,7 @@ The wheel ships `py.typed` so type checkers can inspect the package. Fixed-shape
 
 ## Webhook verification
 
-Public webhook delivery routes are not shipped yet, so webhook delivery create/list methods are not part of the GA public SDK surface. The SDK includes local verification helpers for signed RunInfra webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
+Webhook delivery management is outside the public SDK surface. The SDK includes local verification helpers for signed RunInfra webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
 
 ```python
 import os
@@ -350,6 +349,5 @@ Co-located voice pipelines are available through the native
 posts binary audio to the pipeline-scoped `/pipeline` route and returns the JSON
 transcript / response envelope.
 
-Public webhook delivery create/list calls are intentionally unavailable until
-their gateway routes are shipped. Local signature verification helpers are
-available now.
+Webhook delivery management is handled outside the public SDK surface. Local
+signature verification helpers are available now.

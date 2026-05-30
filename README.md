@@ -73,7 +73,7 @@ See each package's own README + CHANGELOG for surface-level docs.
 | Embeddings | Beta. Typed helper for verified embedding deployments. |
 | Images, Audio TTS/ASR | Preview. Available when the selected deployment exposes the matching route. |
 | Voice pipeline | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |
-| Webhook delivery | Not shipped. Local verification helpers are available in both SDKs; create/list methods are not public SDK surface |
+| Webhook delivery | Local verification helpers are available in both SDKs. Delivery management is handled outside the public SDK surface. |
 
 See each package README and changelog for language-specific examples and exact helper names.
 
@@ -81,9 +81,8 @@ See each package README and changelog for language-specific examples and exact h
 
 RunInfra API keys are bearer secrets. Do not put `RUNINFRA_API_KEY` in browser
 code. Browser apps should call your server route or backend proxy first, then
-your server calls RunInfra with the workspace or pipeline-scoped key. Ephemeral
-browser tokens are not shipped in v0.1.4; do not build a direct browser token
-flow until scoped tokens, expiry, and audit logging are available.
+your server calls RunInfra with the workspace or pipeline-scoped key. Direct
+browser token flows are not supported by the public SDK.
 
 ## License
 

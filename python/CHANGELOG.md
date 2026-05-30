@@ -22,10 +22,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   connection failures, and malformed streams.
 
 ### Changed
-- Removed unshipped webhook delivery `create` and `list` methods from the
-  public `client.webhooks` namespace. Local signature verification remains
-  available through `verify_signature`, `construct_event`,
-  `verify_webhook_signature`, and `construct_webhook_event`.
+- Kept the public `client.webhooks` namespace focused on local signature
+  verification. Verification remains available through `verify_signature`,
+  `construct_event`, `verify_webhook_signature`, and `construct_webhook_event`.
 - Replaced arbitrary `**kwargs` on public request helpers with explicit keyword
   parameters plus `extra_body` for deliberate JSON body extensions.
 - Closed ASR multipart requests around explicit file, filename, language,

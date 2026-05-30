@@ -21,7 +21,7 @@ This SDK is in **beta**. The surfaces below have different verification levels:
 | Images | `client.images.generate` | Preview. Available when the deployment exposes image generation. |
 | Audio (TTS) | `client.audio.speech.create` | Preview. Available when the deployment exposes speech generation. |
 | Audio (ASR) | `client.audio.transcriptions.create` | Preview. Available when the deployment exposes transcription. |
-| Webhooks | `client.webhooks.verifySignature`, `client.webhooks.constructEvent`, `verifyWebhookSignature`, `constructWebhookEvent` | Local verification helpers only; remote delivery not shipped |
+| Webhooks | `client.webhooks.verifySignature`, `client.webhooks.constructEvent`, `verifyWebhookSignature`, `constructWebhookEvent` | Local verification helpers only; delivery management is outside the public SDK surface |
 | Voice pipeline | `client.voice.pipeline.create` | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |
 
 The dashboard only shows snippets for operations the selected deployment
@@ -80,10 +80,9 @@ this SDK in public client bundles with a secret API key. The SDK fails closed
 when it detects a browser runtime; keep calls on a Node.js server route,
 backend proxy, API service, or backend job. Browser apps should call your own
 server first, then your server calls RunInfra with the workspace or
-pipeline-scoped key. Ephemeral browser tokens are not shipped in v0.1.4; do not
-invent a direct browser token flow until it has a separate scoped-token design,
-expiry, and audit logging. If you are deliberately using
-a controlled non-public browser-like runtime, pass `dangerouslyAllowBrowser:
+pipeline-scoped key. Direct browser token flows are not supported by the public
+SDK. If you are deliberately using a controlled non-public browser-like runtime,
+pass `dangerouslyAllowBrowser:
 true` and own that risk.
 
 Unknown TypeScript client option keys are rejected so typos such as `baseUrl` or `api_key` do not silently change the gateway, authentication, timeout, retry, or runtime-safety behavior. Use `baseURL` for custom server-side gateway URLs.
@@ -268,7 +267,7 @@ Successful JSON object responses include `_request_id` when the gateway returns 
 
 ## Webhook verification
 
-Public webhook delivery routes are not shipped yet, so webhook delivery create/list methods are not part of the GA public SDK surface. The SDK includes local verification helpers for signed RunInfra webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
+Webhook delivery management is outside the public SDK surface. The SDK includes local verification helpers for signed RunInfra webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
 
 ```ts
 import {
@@ -312,6 +311,5 @@ Co-located voice pipelines are available through the native
 posts binary audio to the pipeline-scoped `/pipeline` route and returns the JSON
 transcript / response envelope.
 
-Public webhook delivery create/list calls are intentionally unavailable until
-their gateway routes are shipped. Local signature verification helpers are
-available now.
+Webhook delivery management is handled outside the public SDK surface. Local
+signature verification helpers are available now.

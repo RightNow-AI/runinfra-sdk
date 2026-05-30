@@ -19,10 +19,9 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   and idempotency keys for replay-safe chat and Responses requests.
 
 ### Changed
-- Removed unshipped webhook delivery `create` and `list` methods from the
-  public `client.webhooks` namespace. Local signature verification remains
-  available through `verifySignature`, `constructEvent`,
-  `verifyWebhookSignature`, and `constructWebhookEvent`.
+- Kept the public `client.webhooks` namespace focused on local signature
+  verification. Verification remains available through `verifySignature`,
+  `constructEvent`, `verifyWebhookSignature`, and `constructWebhookEvent`.
 - Closed public request body types around supported fields so typos and
   unsupported direct fields fail before a network request is sent.
 - Closed ASR multipart requests around explicit file, filename, language,
