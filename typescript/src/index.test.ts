@@ -263,10 +263,13 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("api_key = os.environ.get(\"RUNINFRA_API_KEY\")");
     expect(readme).not.toContain("os.environ[\"RUNINFRA_API_KEY\"]");
 
-    expect(readme).toContain("| Webhook delivery | Not shipped");
+    expect(readme).toContain(
+      "| Webhook verification | Local signature verification helpers are available in both SDKs. Delivery management is handled outside the public SDK surface. |",
+    );
     expect(readme).toContain("| Voice pipeline | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |");
     expect(readme).toContain("| Embeddings | Beta. Typed helper for verified embedding deployments. |");
     expect(readme).toContain("| Chat completions, Responses | Beta. Typed helpers for verified LLM and vision-language deployments. |");
+    expect(readme).not.toContain("| Webhook delivery | Not shipped");
     expect(readme).not.toContain("Strict live source canaries currently pass chat/responses rows");
     expect(readme).not.toContain("Chat completions, Responses, Embeddings | Beta, contract-tested");
     expect(readme).not.toContain("Webhook delivery, Voice pipeline | Not shipped");
@@ -308,6 +311,10 @@ describe("RunInfra TypeScript SDK", () => {
       "version-sync",
       "workflow-policy",
       "CI and publish",
+      "accidental credentials",
+      "build metadata",
+      "backtracking risk",
+      "Development Status",
     ]) {
       expect(changelog).not.toContain(phrase);
     }
@@ -350,7 +357,7 @@ describe("RunInfra TypeScript SDK", () => {
     for (const text of [readme, rootReadme]) {
       expect(text).toMatch(/Do not put `RUNINFRA_API_KEY` in browser\s+code/u);
       expect(text).toContain("backend proxy");
-      expect(text).toMatch(/Ephemeral\s+browser tokens are not shipped in v0\.1\.4/u);
+      expect(text).toMatch(/Direct\s+browser token flows are not supported by the public\s+SDK/u);
     }
 
     expect(readme).toMatch(/The SDK fails closed\s+when it detects a browser runtime/u);
@@ -372,13 +379,13 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("constructWebhookEvent");
     expect(readme).toContain("verifyWebhookSignature");
     expect(readme).toContain("WebhookVerificationError");
-    expect(readme).toContain("webhook delivery create/list methods are not part of the GA public SDK surface");
+    expect(readme).toContain("Webhook delivery management is outside the public SDK surface");
     expect(readme).not.toContain("client.webhooks.create");
     expect(readme).not.toContain("client.webhooks.list");
     expect(readme).toContain("`UnsupportedOperationError` remains exported for compatibility");
     expect(changelog).toContain("## [0.1.4]");
-    expect(changelog).toContain("Removed unshipped webhook delivery `create` and `list` methods");
-    expect(changelog).toContain("Local signature verification remains");
+    expect(changelog).toContain("local signature");
+    expect(changelog).toContain("Verification remains available");
   });
 
   it("documents non-blank idempotency key requirements", () => {

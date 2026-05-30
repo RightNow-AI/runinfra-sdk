@@ -185,6 +185,10 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "version-sync",
             "workflow-policy",
             "CI and publish",
+            "accidental credentials",
+            "build metadata",
+            "backtracking risk",
+            "Development Status",
         ):
             self.assertNotIn(phrase, changelog)
 
@@ -204,13 +208,13 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("construct_webhook_event", readme)
         self.assertIn("verify_webhook_signature", readme)
         self.assertIn("WebhookVerificationError", readme)
-        self.assertIn("webhook delivery create/list methods are not part of the GA public SDK surface", readme)
+        self.assertIn("Webhook delivery management is outside the public SDK surface", readme)
         self.assertNotIn("client.webhooks.create", readme)
         self.assertNotIn("client.webhooks.list", readme)
         self.assertIn("`UnsupportedOperationError` remains exported for compatibility", readme)
         self.assertIn("## [0.1.4]", changelog)
-        self.assertIn("Removed unshipped webhook delivery `create` and `list` methods", changelog)
-        self.assertIn("Local signature verification remains", changelog)
+        self.assertIn("local signature", changelog)
+        self.assertIn("Verification remains available", changelog)
 
     def test_readme_documents_non_blank_idempotency_key_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -800,7 +804,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("## Async Python runtimes", readme)
         self.assertIn("`RunInfra` is intentionally sync-only in v0.1.4", readme)
         self.assertIn("does not block the event loop", readme)
-        self.assertIn("`AsyncRunInfra` client yet", readme)
+        self.assertIn("Do not instantiate an\n`AsyncRunInfra` client", readme)
 
     def test_readme_documents_public_repo_promotion_without_stale_monorepo_commands(self):
         root = Path(__file__).resolve().parents[2]

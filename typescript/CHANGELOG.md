@@ -38,8 +38,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   set.
 - Hardened API-key redaction in transport errors, response body errors, and
   stream read errors.
-- Improved package hygiene safeguards so published SDKs stay free of accidental
-  credentials and build metadata.
+- Limited the published package contents to the runtime SDK, type definitions,
+  README, changelog, license, and package metadata.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but
@@ -48,30 +48,24 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
 ## [0.1.3] - 2026-05-23
 
 ### Security
-- Hardened browser credential safeguards by requiring
-  `dangerouslyAllowBrowser` to be an actual boolean and by failing closed in
-  browser worker runtimes unless explicitly allowed.
-- Replaced trailing-slash URL regex normalization with a bounded loop to avoid
-  regex backtracking risk on adversarial base URLs.
-- Strengthened published package safeguards against accidental credential or
-  build-metadata leaks.
+- Improved server-side API key safeguards for browser-like runtimes.
+- Improved custom base URL validation for untrusted input.
 
 ### Changed
-- Improved package reproducibility for public TypeScript and Python releases.
+- Improved install consistency across the TypeScript and Python packages.
 
 ## [0.1.2] - 2026-05-23
 
 ### Changed
-- Improved package integrity checks for public TypeScript and Python releases.
-- Kept TypeScript and Python package metadata aligned for the same release.
+- Aligned TypeScript and Python package metadata for the same release.
 - Updated docs to describe the voice pipeline helper as a pipeline-scoped
   preview helper.
 
 ## [0.1.1] - 2026-05-23
 
 ### Changed
-- Changed package metadata to use the proprietary license reference consistently
-  across TypeScript and Python packages.
+- Used the proprietary license reference consistently across TypeScript and
+  Python packages.
 - Updated repository and issue URLs to point at the public SDK repo.
 - Clarified package status as beta while image and audio helpers remain
   deployment-dependent preview surfaces.

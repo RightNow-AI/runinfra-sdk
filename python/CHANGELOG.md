@@ -38,8 +38,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 - Hardened API-key redaction in transport errors, response body errors, stream
   read errors, traceback output, and exception chains.
-- Improved package hygiene safeguards so published SDKs stay free of accidental
-  credentials and build metadata.
+- Limited the published package contents to the runtime SDK, type metadata,
+  README, changelog, license, and package metadata.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but
@@ -48,17 +48,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.3] - 2026-05-23
 
 ### Security
-- Strengthened published package safeguards against accidental credential or
-  build-metadata leaks.
+- Improved package content validation for installed SDK files.
 
 ### Changed
-- Improved package reproducibility for public TypeScript and Python releases.
+- Improved install consistency across the TypeScript and Python packages.
 
 ## [0.1.2] - 2026-05-23
 
 ### Changed
-- Improved package integrity checks for public TypeScript and Python releases.
-- Kept TypeScript and Python package metadata aligned for the same release.
+- Aligned TypeScript and Python package metadata for the same release.
 - Updated docs to describe the voice pipeline helper as a pipeline-scoped
   preview helper.
 - Switched Python license metadata to the non-deprecated `license` and
@@ -67,7 +65,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.1] - 2026-05-23
 
 ### Changed
-- Changed `Development Status` from production/stable to beta.
 - Updated repository and issue URLs to point at the public SDK repo.
 - Clarified package status as beta while image and audio helpers remain
   deployment-dependent preview surfaces.

@@ -7,8 +7,8 @@
 [![License](https://img.shields.io/badge/license-Proprietary-blue.svg)](./LICENSE)
 
 Official client SDKs for [RunInfra](https://runinfra.ai), the optimized
-inference platform for serving open-source models on the GPU and serving
-backend that fits your workload.
+inference platform for serving open-source models on GPU backends that fit your
+workload.
 
 ## Install
 
@@ -73,7 +73,7 @@ See each package's own README + CHANGELOG for surface-level docs.
 | Embeddings | Beta. Typed helper for verified embedding deployments. |
 | Images, Audio TTS/ASR | Preview. Available when the selected deployment exposes the matching route. |
 | Voice pipeline | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |
-| Webhook delivery | Local verification helpers are available in both SDKs. Delivery management is handled outside the public SDK surface. |
+| Webhook verification | Local signature verification helpers are available in both SDKs. Delivery management is handled outside the public SDK surface. |
 
 See each package README and changelog for language-specific examples and exact helper names.
 
