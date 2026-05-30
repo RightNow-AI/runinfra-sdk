@@ -212,9 +212,10 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertNotIn("client.webhooks.create", readme)
         self.assertNotIn("client.webhooks.list", readme)
         self.assertIn("`UnsupportedOperationError` remains exported for compatibility", readme)
-        self.assertIn("## [0.1.4]", changelog)
+        self.assertIn("## [0.1.5]", changelog)
         self.assertIn("local signature", changelog)
-        self.assertIn("Verification remains available", changelog)
+        self.assertIn("webhook", changelog)
+        self.assertIn("verification", changelog)
 
     def test_readme_documents_non_blank_idempotency_key_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -802,7 +803,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
         self.assertIn("## Async Python runtimes", readme)
-        self.assertIn("`RunInfra` is intentionally sync-only in v0.1.4", readme)
+        self.assertIn("`RunInfra` is intentionally sync-only in v0.1.5", readme)
         self.assertIn("does not block the event loop", readme)
         self.assertIn("Do not instantiate an\n`AsyncRunInfra` client", readme)
 

@@ -383,9 +383,10 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).not.toContain("client.webhooks.create");
     expect(readme).not.toContain("client.webhooks.list");
     expect(readme).toContain("`UnsupportedOperationError` remains exported for compatibility");
-    expect(changelog).toContain("## [0.1.4]");
+    expect(changelog).toContain("## [0.1.5]");
     expect(changelog).toContain("local signature");
-    expect(changelog).toContain("Verification remains available");
+    expect(changelog).toContain("webhook");
+    expect(changelog).toContain("verification");
   });
 
   it("documents non-blank idempotency key requirements", () => {

@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const RUNINFRA_SDK_VERSION = "0.1.4";
+export const RUNINFRA_SDK_VERSION = "0.1.5";
 const MAX_AUTOMATIC_RETRY_AFTER_MS = 60_000;
 
 export interface RunInfraOptions {

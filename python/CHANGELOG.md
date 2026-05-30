@@ -3,6 +3,16 @@
 All notable changes to the `runinfra` Python SDK are documented here. This
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-05-30
+
+### Changed
+- Refreshed the public README and changelog language so the documented SDK
+  surface matches the shipped helpers and stays focused on customer-visible
+  behavior.
+- Renamed the root README status row from webhook delivery to webhook
+  verification to match the local signature-verification helpers available in
+  the package.
+
 ## [0.1.4] - 2026-05-23
 
 ### Added

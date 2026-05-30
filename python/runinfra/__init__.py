@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Mappi
 JsonDict = Dict[str, Any]
 Transport = Callable[["RunInfraRequest"], "RunInfraResponse"]
 ResponseBody = Union[bytes, Iterable[bytes]]
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 _MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 60.0
 _WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH = 8192
 
