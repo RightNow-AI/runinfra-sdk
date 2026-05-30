@@ -170,6 +170,23 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             self.assertNotIn("For production promotion", text)
             self.assertNotIn("runinfra-sdk-promoted-artifacts", text)
             self.assertNotIn("streaming final/slow-consumer rows pass against production", text)
+        for phrase in (
+            "source maps",
+            "debug source markers",
+            "local private paths",
+            "registry config files",
+            "package token material",
+            "publish dispatch",
+            "dry-run",
+            "workflow actions",
+            "immutable commits",
+            "wheel/sdist",
+            "wheel and sdist",
+            "version-sync",
+            "workflow-policy",
+            "CI and publish",
+        ):
+            self.assertNotIn(phrase, changelog)
 
     def test_readme_documents_safe_base_url_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()

@@ -39,9 +39,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 - Hardened API-key redaction in transport errors, response body errors, stream
   read errors, traceback output, and exception chains.
-- Hardened package verification to reject source maps, debug source markers,
-  local private paths, registry config files, credential files, and package
-  token material.
+- Improved package hygiene safeguards so published SDKs stay free of accidental
+  credentials and build metadata.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but
@@ -50,23 +49,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.1.3] - 2026-05-23
 
 ### Security
-- Hardened the shared release path with pinned CI and publish build tooling,
-  SHA-pinned workflow actions, protected-branch dispatch checks, and an exact
-  version confirmation before any real registry publish.
-- Extended wheel and sdist verification to scan shipped files for source maps,
-  local machine paths, package tokens, private keys, and registry config leaks.
+- Strengthened published package safeguards against accidental credential or
+  build-metadata leaks.
 
 ### Changed
-- Added the repository Python dev requirements file used by CI and publish
-  workflows so package builds no longer float on latest build tool releases.
+- Improved package reproducibility for public TypeScript and Python releases.
 
 ## [0.1.2] - 2026-05-23
 
 ### Changed
-- Hardened package verification for exact npm tarball and Python wheel/sdist
-  contents.
-- Added version-sync and workflow-policy checks to prevent stale SDK releases
-  and long-lived registry-token regressions.
+- Improved package integrity checks for public TypeScript and Python releases.
+- Kept TypeScript and Python package metadata aligned for the same release.
 - Updated docs to describe the voice pipeline helper as a pipeline-scoped
   preview helper.
 - Switched Python license metadata to the non-deprecated `license` and

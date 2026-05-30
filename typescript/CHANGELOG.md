@@ -39,9 +39,8 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   set.
 - Hardened API-key redaction in transport errors, response body errors, and
   stream read errors.
-- Hardened package verification to reject source maps, debug source markers,
-  local private paths, registry config files, credential files, and package
-  token material.
+- Improved package hygiene safeguards so published SDKs stay free of accidental
+  credentials and build metadata.
 
 ### Compatibility
 - `UnsupportedOperationError` remains exported for older v0.1.x consumers, but
@@ -55,22 +54,17 @@ All notable changes to `@runinfra/sdk` are documented here. This project follows
   browser worker runtimes unless explicitly allowed.
 - Replaced trailing-slash URL regex normalization with a bounded loop to avoid
   regex backtracking risk on adversarial base URLs.
+- Strengthened published package safeguards against accidental credential or
+  build-metadata leaks.
 
 ### Changed
-- Pinned CI and publish build tooling with a TypeScript lockfile and Python
-  dev requirements file, and pinned workflow actions to immutable commits.
-- Made real publish dispatch default to dry-run and require an exact version
-  confirmation on `main`.
-- Extended package verification to scan shipped files for source maps, local
-  machine paths, package tokens, private keys, and registry config leaks.
+- Improved package reproducibility for public TypeScript and Python releases.
 
 ## [0.1.2] - 2026-05-23
 
 ### Changed
-- Hardened package verification for exact npm tarball and Python wheel/sdist
-  contents.
-- Added version-sync and workflow-policy checks to prevent stale SDK releases
-  and long-lived registry-token regressions.
+- Improved package integrity checks for public TypeScript and Python releases.
+- Kept TypeScript and Python package metadata aligned for the same release.
 - Updated docs to describe the voice pipeline helper as a pipeline-scoped
   preview helper.
 

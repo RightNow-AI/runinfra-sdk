@@ -293,6 +293,24 @@ describe("RunInfra TypeScript SDK", () => {
       expect(text).not.toContain("For production promotion");
       expect(text).not.toContain("runinfra-sdk-promoted-artifacts");
     }
+    for (const phrase of [
+      "source maps",
+      "debug source markers",
+      "local private paths",
+      "registry config files",
+      "package token material",
+      "publish dispatch",
+      "dry-run",
+      "workflow actions",
+      "immutable commits",
+      "wheel/sdist",
+      "wheel and sdist",
+      "version-sync",
+      "workflow-policy",
+      "CI and publish",
+    ]) {
+      expect(changelog).not.toContain(phrase);
+    }
     expect(packageReadme).toContain("| Embeddings | `client.embeddings.create` | Beta. Typed helper for verified embedding deployments. |");
     expect(changelog).toContain("Added typed helpers for chat completions, Responses, embeddings");
   });
