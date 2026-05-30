@@ -1525,11 +1525,10 @@ export class RunInfra {
   /**
    * Audio surfaces (text-to-speech + speech-to-text).
    *
-   * @experimental As of v0.1.4, these methods have NOT been verified end-to-end
-   * against a live deployed pipeline in our canary suite. The HTTP envelope
+   * Preview helpers for deployed RunInfra audio routes. The HTTP envelope
    * matches the OpenAI Audio API contract and the request/response shapes are
-   * stable, but you should test against your own deployed model before using
-   * in production. Live-canary verification is tracked for v1.0.0 GA.
+   * stable. Supported voices, reference-audio modes, and response formats are
+   * deployment-specific.
    */
   readonly audio: {
     speech: {
@@ -1548,11 +1547,9 @@ export class RunInfra {
   /**
    * Image generation surface.
    *
-   * @experimental As of v0.1.4, this method has NOT been verified end-to-end
-   * against a live deployed pipeline in our canary suite. The HTTP envelope
-   * matches the OpenAI Images API contract, but you should test against your
-   * own deployed model before using in production. Live-canary verification
-   * is tracked for v1.0.0 GA.
+   * Preview helper for deployed RunInfra image routes. The HTTP envelope
+   * matches the OpenAI Images API contract. Supported size, response format,
+   * quality, style, and user fields depend on the selected deployment.
    */
   readonly images: {
     generate: (request: ImageGenerateRequest, options?: RunInfraRequestOptions) => Promise<ImageGenerationResponse>;
@@ -1566,11 +1563,9 @@ export class RunInfra {
   /**
    * Voice pipeline surface.
    *
-   * @experimental As of v0.1.4, this method has NOT been verified end-to-end
-   * against a live deployed pipeline in our canary suite. It requires a
-   * pipeline-scoped client and posts binary audio to `/pipeline`, but you
-   * should test against your own deployed pipeline before using in production.
-   * Live-canary verification is tracked for v1.0.0 GA.
+   * Preview helper for co-located voice pipelines. It requires a
+   * pipeline-scoped client and posts binary audio to `/pipeline`; transcript
+   * and response behavior depends on the selected deployment.
    */
   readonly voice: {
     pipeline: {
