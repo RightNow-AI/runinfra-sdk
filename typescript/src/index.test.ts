@@ -439,6 +439,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("A `RUNINFRA_BASE_URL` equal to `https://api.runinfra.ai/v1` is recorded as production");
     expect(liveCanaries).toContain("any other custom `RUNINFRA_BASE_URL`");
     expect(liveCanaries).toContain("custom base URLs before spawning child canaries");
+    expect(readme).toContain("Gateway errors expose `requestId`, `type`, and, when returned by the API");
+    expect(readme).toContain("OpenAI-style `code` and `param` metadata");
     expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
     expect(readme).toContain("forwards the supported request through the chat-completions serving path");
     expect(readme).toContain(
@@ -788,7 +790,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
         summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -881,7 +883,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
         summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -963,7 +965,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
         summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -1050,7 +1052,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -1158,7 +1160,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
         summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
     const promotionArgs = [
@@ -1251,6 +1253,29 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
       );
       writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
 
+      writeFileSync(livePath, `${JSON.stringify({
+        ...live,
+        reports: live.reports.map((report) => ({
+          ...report,
+          results: report.results.map((result) => ({ name: result.name, status: result.status })),
+        })),
+      }, null, 2)}\n`);
+      const missingDuration = spawnSync(process.execPath, [
+        ...promotionArgs,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(missingDuration.status).toBe(1);
+      expect(`${missingDuration.stdout}${missingDuration.stderr}`).toContain(
+        `typescript row ${expectedRows[0]} durationMs must be a non-negative finite number`,
+      );
+      expect(`${missingDuration.stdout}${missingDuration.stderr}`).toContain(
+        `python row ${expectedRows[0]} durationMs must be a non-negative finite number`,
+      );
+      writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
+
       writeFileSync(readinessPath, `${JSON.stringify({
         ...readiness,
         readiness: {
@@ -1296,6 +1321,8 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
       expect(liveCanaryDocs).toContain("requires readiness `rowCoverageErrors` to be");
       expect(liveCanaryDocs).toContain("readiness `summary.ready` to equal the canonical matrix row count");
       expect(liveCanaryDocs).toContain("readiness `summary.blocked` to be `0`");
+      expect(liveCanaryDocs).toContain("requires every child canary row to include");
+      expect(liveCanaryDocs).toContain("non-negative finite `durationMs` timing evidence");
 
       writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
 
@@ -1500,7 +1527,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -1611,7 +1638,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -1705,7 +1732,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -2465,6 +2492,38 @@ class RunInfra:
     expect(readme).toContain("`extraBody` cannot override typed request fields");
     expect(typescriptCanary).toContain("extraBody: {");
     expect(typescriptCanary).toContain("runinfra_unsupported_parameter_probe");
+  });
+
+  it("keeps unsupported embedding dimensions canaries tied to exact error code and parameter", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { publicSurfaceCoverage } =
+      await import("../../scripts/live-canary-surface-coverage.mjs") as {
+        publicSurfaceCoverage: Array<{ surface: string; rows: string[] }>;
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const row = "error.embeddings.unsupported_dimensions";
+
+    expect(expectedRows).toContain(row);
+    expect(runner).toContain(`["${row}", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])]`);
+    expect(typescriptCanary).toContain(`record("${row}"`);
+    expect(typescriptCanary).toContain("status: 400");
+    expect(typescriptCanary).toContain('type: "invalid_request_error"');
+    expect(typescriptCanary).toContain('code: "unsupported_parameter"');
+    expect(typescriptCanary).toContain('param: "dimensions"');
+    expect(pythonCanary).toContain(`"${row}"`);
+    expect(pythonCanary).toContain("expected_status=400");
+    expect(pythonCanary).toContain('expected_type="invalid_request_error"');
+    expect(pythonCanary).toContain('expected_code="unsupported_parameter"');
+    expect(pythonCanary).toContain('expected_param="dimensions"');
+    expect(liveCanaries).toContain(row);
+    expect(liveCanaries).toContain("unsupported-parameter error for embedding `dimensions`");
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "unsupported body parameter handling")?.rows)
+      .toContain(row);
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "client.embeddings.create")?.rows)
+      .toContain(row);
   });
 
   it("keeps child canaries in parity for local unknown request field coverage", async () => {
@@ -3247,6 +3306,45 @@ class RunInfra:
     );
     expect(driftedPublish).not.toBe(publish);
     expect(evaluateWorkflowPolicy({ publish: driftedPublish, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+  });
+
+  it("lets dry-run publish verification complete without protected registry environments", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const label = "dry-run publish verification avoids protected registry environments";
+
+    expect(evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(true);
+
+    const withoutDryRunNpm = publish.replace(
+      /  dry-run-npm:[\s\S]*?(?=\r?\n  [a-zA-Z0-9_-]+:\r?\n)/u,
+      "",
+    );
+    expect(withoutDryRunNpm).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: withoutDryRunNpm, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const realPublishWithoutDryRunGuard = publish.replace(
+      "    if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.dry_run != 'true' && (github.event.inputs.package == 'typescript' || github.event.inputs.package == 'both') }}",
+      "    if: ${{ github.ref == 'refs/heads/main' && (github.event.inputs.package == 'typescript' || github.event.inputs.package == 'both') }}",
+    );
+    expect(realPublishWithoutDryRunGuard).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: realPublishWithoutDryRunGuard, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const realPublishWithoutEnvironment = publish.replace("    environment: npm\n", "");
+    expect(realPublishWithoutEnvironment).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: realPublishWithoutEnvironment, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const dryRunPypiUpload = publish.replace(
+      "          twine check artifacts/python-local/*",
+      "          twine upload artifacts/python-local/*",
+    );
+    expect(dryRunPypiUpload).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: dryRunPypiUpload, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
       .toBe(false);
   });
 
@@ -4289,6 +4387,147 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
+  it("fails strict parent live-canary parity when child report rows omit duration metadata", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-child-duration-parity-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const rowsJson = JSON.stringify(expectedRows);
+    try {
+      mkdirSync(join(tmp, "scripts"), { recursive: true });
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-typescript.mjs"), `
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+const expectedRows = ${rowsJson};
+const report = process.argv[process.argv.indexOf("--report") + 1];
+mkdirSync(dirname(report), { recursive: true });
+writeFileSync(report, JSON.stringify({
+  language: "typescript",
+  sdkVersion: "${RUNINFRA_SDK_VERSION}",
+  strict: true,
+  baseURL: "https://api.runinfra.ai/v1",
+  summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
+  results: expectedRows.map((name) => ({ name, status: "passed" })),
+}));
+`);
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-python.py"), `
+import json
+import os
+import sys
+expected_rows = ${JSON.stringify(expectedRows)}
+report = sys.argv[sys.argv.index("--report") + 1]
+os.makedirs(os.path.dirname(report), exist_ok=True)
+with open(report, "w", encoding="utf-8") as handle:
+    json.dump({
+        "language": "python",
+        "sdkVersion": "${RUNINFRA_SDK_VERSION}",
+        "strict": True,
+        "baseURL": "https://api.runinfra.ai/v1",
+        "summary": {"passed": len(expected_rows), "failed": 0, "skipped": 0},
+        "results": [{"name": name, "status": "passed"} for name in expected_rows],
+    }, handle)
+`);
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "source",
+        "--strict",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain(
+        `typescript row ${expectedRows[0]} durationMs must be a non-negative finite number`,
+      );
+      expect(report.parity?.errors).toContain(
+        `python row ${expectedRows[0]} durationMs must be a non-negative finite number`,
+      );
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds parent live-canary child execution and writes a failure report when a child stalls", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-child-timeout-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const rowsJson = JSON.stringify(expectedRows);
+    try {
+      mkdirSync(join(tmp, "scripts"), { recursive: true });
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-typescript.mjs"), `
+setInterval(() => {
+  try {
+    process.kill(process.ppid, 0);
+  } catch {
+    process.exit(0);
+  }
+}, 25);
+await new Promise(() => {});
+`);
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-python.py"), `
+import json
+import os
+import sys
+expected_rows = ${rowsJson}
+report = sys.argv[sys.argv.index("--report") + 1]
+os.makedirs(os.path.dirname(report), exist_ok=True)
+with open(report, "w", encoding="utf-8") as handle:
+    json.dump({
+        "language": "python",
+        "sdkVersion": "${RUNINFRA_SDK_VERSION}",
+        "strict": False,
+        "baseURL": "https://api.runinfra.ai/v1",
+        "summary": {"passed": len(expected_rows), "failed": 0, "skipped": 0},
+        "results": [{"name": name, "status": "passed"} for name in expected_rows],
+    }, handle)
+`);
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        timeout: 2_500,
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+          RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS: "0.2",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+        reports?: Array<{ language?: string; error?: string }>;
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain("typescript child canary timed out");
+      expect(report.reports?.find((child) => child.language === "typescript")?.error).toBe("child canary timed out");
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("removes parent live-canary temporary child reports when final report writing fails", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-report-write-failure-"));
     const reportParent = join(tmp, "not-a-directory");
@@ -4539,7 +4778,6 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_API_KEY: fakeKey,
           TEST_MODEL: "llm-alias-model",
           TEST_EMBEDDING_MODEL: "embedding-alias-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "384",
           TEST_IMAGE_MODEL: "image-alias-model",
           RUNINFRA_IMAGE_SIZE: "1024x1024",
           RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
@@ -4593,7 +4831,6 @@ with open(report, "w", encoding="utf-8") as handle:
         `RUNINFRA_API_KEY=${fakeKey}`,
         "TEST_MODEL=llm-env-file-model",
         "TEST_EMBEDDING_MODEL=embedding-env-file-model",
-        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
         "TEST_IMAGE_MODEL=image-env-file-model",
         "RUNINFRA_IMAGE_SIZE=1024x1024",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -4672,7 +4909,6 @@ with open(report, "w", encoding="utf-8") as handle:
         "RUNINFRA_API_KEY=env-file-api-key-placeholder",
         "RUNINFRA_LLM_MODEL=llm-env-file-model",
         "RUNINFRA_EMBEDDING_MODEL=embedding-env-file-model",
-        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
         "RUNINFRA_IMAGE_MODEL=image-env-file-model",
         "RUNINFRA_IMAGE_SIZE=1024x1024",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -4738,7 +4974,6 @@ with open(report, "w", encoding="utf-8") as handle:
         "RUNINFRA_API_KEY=env-file-api-key-placeholder",
         "RUNINFRA_LLM_MODEL=llm-env-file-model",
         "RUNINFRA_EMBEDDING_MODEL=embedding-env-file-model",
-        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
         "RUNINFRA_IMAGE_MODEL=image-env-file-model",
         "RUNINFRA_IMAGE_SIZE=1024x1024",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -4841,7 +5076,7 @@ with open(report, "w", encoding="utf-8") as handle:
       const template = readFileSync(templatePath, "utf8");
       expect(template).toContain("RUNINFRA_API_KEY=");
       expect(template).toContain("RUNINFRA_LLM_MODEL=");
-      expect(template).toContain("RUNINFRA_EMBEDDING_DIMENSIONS=");
+      expect(template).not.toContain("RUNINFRA_EMBEDDING_DIMENSIONS=");
       expect(template).toContain("RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json");
       expect(template).toContain("RUNINFRA_TTS_RESPONSE_FORMAT=mp3");
       expect(template).toContain("RUNINFRA_ASR_RESPONSE_FORMAT=json");
@@ -5241,7 +5476,7 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
-  it("blocks strict live-canary preflight on invalid positive-integer readiness inputs", () => {
+  it("does not require embedding dimensions for strict live-canary preflight", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
     const reportPath = join(tmp, "readiness.json");
     try {
@@ -5261,11 +5496,15 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_API_KEY: "preflight-api-key-placeholder",
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "not-a-positive-integer",
           RUNINFRA_IMAGE_MODEL: "image-preflight-model",
+          RUNINFRA_IMAGE_SIZE: "1024x1024",
+          RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
           RUNINFRA_TTS_MODEL: "tts-preflight-model",
           RUNINFRA_TTS_VOICE: "voice-preflight",
+          RUNINFRA_TTS_RESPONSE_FORMAT: "mp3",
           RUNINFRA_ASR_MODEL: "asr-preflight-model",
+          RUNINFRA_ASR_LANGUAGE: "en",
+          RUNINFRA_ASR_RESPONSE_FORMAT: "json",
           RUNINFRA_ASR_FIXTURE_PATH: __filename,
           RUNINFRA_ASR_EXPECTED_TEXT: "hello",
           TEST_PIPELINE_ID: "pipeline-preflight",
@@ -5273,17 +5512,22 @@ with open(report, "w", encoding="utf-8") as handle:
         },
       });
 
-      expect(result.status).toBe(1);
+      expect(result.status, result.stderr).toBe(0);
       const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
         readiness?: {
+          status?: string;
           missing?: string[];
           rows?: Array<{ name: string; status: string; missing?: string[] }>;
         };
       };
-      expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+      expect(report.readiness?.status).toBe("ready");
+      expect(report.readiness?.missing).toEqual([]);
       expect(
         report.readiness?.rows?.find((row) => row.name === "openai.params.embeddings")?.missing,
-      ).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+      ).toEqual([]);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "error.embeddings.unsupported_dimensions")?.missing,
+      ).toEqual([]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -5311,7 +5555,6 @@ with open(report, "w", encoding="utf-8") as handle:
             RUNINFRA_CANARY_TIMEOUT_SECONDS: timeout,
             RUNINFRA_LLM_MODEL: "llm-preflight-model",
             RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-            RUNINFRA_EMBEDDING_DIMENSIONS: "128",
             RUNINFRA_IMAGE_MODEL: "image-preflight-model",
             RUNINFRA_TTS_MODEL: "tts-preflight-model",
             RUNINFRA_TTS_VOICE: "voice-preflight",
@@ -5358,7 +5601,6 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_CANARY_TIMEOUT_SECONDS: timeoutValue,
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "128",
           RUNINFRA_IMAGE_MODEL: "image-preflight-model",
           RUNINFRA_IMAGE_SIZE: "1024x1024",
           RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
@@ -5472,7 +5714,6 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_BASE_URL: unsafeBaseURL,
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "128",
           RUNINFRA_IMAGE_MODEL: "image-preflight-model",
           RUNINFRA_IMAGE_SIZE: "1024x1024",
           RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
@@ -7200,6 +7441,45 @@ with open(report, "w", encoding="utf-8") as handle:
     });
   });
 
+  it("preserves API error code and parameter metadata", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: "The embeddings parameter 'dimensions' is not supported.",
+            type: "invalid_request_error",
+            code: "unsupported_parameter",
+            param: "dimensions",
+          },
+        },
+        {
+          status: 400,
+          headers: { "x-request-id": "req-dimensions" },
+        },
+      ),
+    );
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+      maxRetries: 0,
+    });
+
+    await expect(
+      client.embeddings.create({
+        model: "bge-small",
+        input: "hello",
+        dimensions: 1,
+      }),
+    ).rejects.toMatchObject({
+      name: "RunInfraError",
+      status: 400,
+      type: "invalid_request_error",
+      code: "unsupported_parameter",
+      param: "dimensions",
+      requestId: "req-dimensions",
+    } satisfies Partial<RunInfraError>);
+  });
+
   it("rejects malformed JSON response shapes before returning user data", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       jsonResponse("OK.", { headers: { "x-request-id": "req-raw-text" } }),
@@ -7866,6 +8146,50 @@ with open(report, "w", encoding="utf-8") as handle:
       status: 401,
       requestId: "req-status-redact",
     });
+    await expect(client.models.list()).rejects.not.toThrow(apiKey);
+  });
+
+  it("redacts api keys from status error metadata fields", async () => {
+    const apiKey = "sk-ri-redact-local";
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "metadata redaction canary",
+            type: "invalid_request_error",
+            code: `unsupported_${apiKey}`,
+            param: `field_${apiKey}`,
+          },
+        }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json", "x-request-id": "req-status-metadata-redact" },
+        },
+      ),
+    );
+    const client = new RunInfra({
+      apiKey,
+      fetch: fetcher,
+      maxRetries: 0,
+      retryBaseMs: 0,
+    });
+
+    let raised: unknown;
+    try {
+      await client.models.list();
+    } catch (error) {
+      raised = error;
+    }
+
+    expect(raised).toMatchObject({
+      name: "RunInfraError",
+      type: "invalid_request_error",
+      status: 400,
+      requestId: "req-status-metadata-redact",
+      code: "unsupported_[redacted]",
+      param: "field_[redacted]",
+    });
+    expect(JSON.stringify(raised)).not.toContain(apiKey);
     await expect(client.models.list()).rejects.not.toThrow(apiKey);
   });
 

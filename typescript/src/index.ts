@@ -346,12 +346,16 @@ export class RunInfraError extends Error {
   readonly type: string;
   readonly requestId?: string;
   readonly retryAfterMs?: number;
+  readonly code?: string;
+  readonly param?: string;
 
   constructor(message: string, input: {
     status: number;
     type: string;
     requestId?: string;
     retryAfterMs?: number;
+    code?: string;
+    param?: string;
   }) {
     super(message);
     this.name = "RunInfraError";
@@ -359,47 +363,49 @@ export class RunInfraError extends Error {
     this.type = input.type;
     this.requestId = input.requestId;
     this.retryAfterMs = input.retryAfterMs;
+    this.code = input.code;
+    this.param = input.param;
   }
 }
 
 export class AuthenticationError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "auth_error", requestId });
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
+    super(message, { status, type: "auth_error", requestId, code, param });
     this.name = "AuthenticationError";
   }
 }
 
 export class PermissionDeniedError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "permission_denied", requestId });
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
+    super(message, { status, type: "permission_denied", requestId, code, param });
     this.name = "PermissionDeniedError";
   }
 }
 
 export class RateLimitError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string, retryAfterMs?: number) {
-    super(message, { status, type: "rate_limit_error", requestId, retryAfterMs });
+  constructor(message: string, status: number, requestId?: string, retryAfterMs?: number, code?: string, param?: string) {
+    super(message, { status, type: "rate_limit_error", requestId, retryAfterMs, code, param });
     this.name = "RateLimitError";
   }
 }
 
 export class InsufficientCreditsError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "insufficient_credits", requestId });
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
+    super(message, { status, type: "insufficient_credits", requestId, code, param });
     this.name = "InsufficientCreditsError";
   }
 }
 
 export class DeploymentError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "deployment_error", requestId });
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
+    super(message, { status, type: "deployment_error", requestId, code, param });
     this.name = "DeploymentError";
   }
 }
 
 export class ModelNotFoundError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "model_not_found", requestId });
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
+    super(message, { status, type: "model_not_found", requestId, code, param });
     this.name = "ModelNotFoundError";
   }
 }
@@ -1332,10 +1338,15 @@ function retryDelayMs(attempt: number, baseMs: number, response?: Response): num
   return Math.min(30_000, exponential + jitter);
 }
 
-async function parseError(response: Response): Promise<{ message: string; type: string }> {
+async function parseError(response: Response): Promise<{
+  message: string;
+  type: string;
+  code?: string;
+  param?: string;
+}> {
   try {
     const body = (await response.json()) as {
-      error?: { message?: unknown; type?: unknown };
+      error?: { message?: unknown; type?: unknown; code?: unknown; param?: unknown };
     };
     return {
       message:
@@ -1343,6 +1354,8 @@ async function parseError(response: Response): Promise<{ message: string; type: 
           ? body.error.message
           : `RunInfra request failed with status ${response.status}`,
       type: typeof body.error?.type === "string" ? body.error.type : "api_error",
+      ...(typeof body.error?.code === "string" ? { code: body.error.code } : {}),
+      ...(typeof body.error?.param === "string" ? { param: body.error.param } : {}),
     };
   } catch {
     return {
@@ -1362,13 +1375,13 @@ async function discardResponseBody(response: Response): Promise<void> {
 
 async function raiseForStatus(response: Response): Promise<void> {
   if (response.ok) return;
-  const { message, type } = await parseError(response);
+  const { message, type, code, param } = await parseError(response);
   const requestId = response.headers.get("x-request-id") ?? undefined;
-  if (response.status === 401) throw new AuthenticationError(message, response.status, requestId);
-  if (response.status === 403) throw new PermissionDeniedError(message, response.status, requestId);
-  if (response.status === 402) throw new InsufficientCreditsError(message, response.status, requestId);
+  if (response.status === 401) throw new AuthenticationError(message, response.status, requestId, code, param);
+  if (response.status === 403) throw new PermissionDeniedError(message, response.status, requestId, code, param);
+  if (response.status === 402) throw new InsufficientCreditsError(message, response.status, requestId, code, param);
   if (response.status === 404 || type === "model_not_found") {
-    throw new ModelNotFoundError(message, response.status, requestId);
+    throw new ModelNotFoundError(message, response.status, requestId, code, param);
   }
   if (response.status === 429) {
     throw new RateLimitError(
@@ -1376,10 +1389,12 @@ async function raiseForStatus(response: Response): Promise<void> {
       response.status,
       requestId,
       retryAfterMs(response) ?? undefined,
+      code,
+      param,
     );
   }
-  if (type === "deployment_error") throw new DeploymentError(message, response.status, requestId);
-  throw new RunInfraError(message, { status: response.status, type, requestId });
+  if (type === "deployment_error") throw new DeploymentError(message, response.status, requestId, code, param);
+  throw new RunInfraError(message, { status: response.status, type, requestId, code, param });
 }
 
 async function parseJsonResponse<TResponse>(
@@ -1438,14 +1453,26 @@ function redactSensitiveValues(message: string, sensitiveValues: readonly string
 
 function redactRunInfraError(error: RunInfraError, sensitiveValues: readonly string[]): RunInfraError {
   const message = redactSensitiveValues(error.message, sensitiveValues);
-  if (error instanceof AuthenticationError) return new AuthenticationError(message, error.status, error.requestId);
-  if (error instanceof PermissionDeniedError) return new PermissionDeniedError(message, error.status, error.requestId);
-  if (error instanceof RateLimitError) {
-    return new RateLimitError(message, error.status, error.requestId, error.retryAfterMs);
+  const code = error.code === undefined ? undefined : redactSensitiveValues(error.code, sensitiveValues);
+  const param = error.param === undefined ? undefined : redactSensitiveValues(error.param, sensitiveValues);
+  if (error instanceof AuthenticationError) {
+    return new AuthenticationError(message, error.status, error.requestId, code, param);
   }
-  if (error instanceof InsufficientCreditsError) return new InsufficientCreditsError(message, error.status, error.requestId);
-  if (error instanceof DeploymentError) return new DeploymentError(message, error.status, error.requestId);
-  if (error instanceof ModelNotFoundError) return new ModelNotFoundError(message, error.status, error.requestId);
+  if (error instanceof PermissionDeniedError) {
+    return new PermissionDeniedError(message, error.status, error.requestId, code, param);
+  }
+  if (error instanceof RateLimitError) {
+    return new RateLimitError(message, error.status, error.requestId, error.retryAfterMs, code, param);
+  }
+  if (error instanceof InsufficientCreditsError) {
+    return new InsufficientCreditsError(message, error.status, error.requestId, code, param);
+  }
+  if (error instanceof DeploymentError) {
+    return new DeploymentError(message, error.status, error.requestId, code, param);
+  }
+  if (error instanceof ModelNotFoundError) {
+    return new ModelNotFoundError(message, error.status, error.requestId, code, param);
+  }
   if (error instanceof RunInfraTimeoutError) return new RunInfraTimeoutError(message, error.requestId);
   if (error instanceof RunInfraConnectionError) return new RunInfraConnectionError(message, error.requestId);
   if (error instanceof RunInfraStreamParseError) return new RunInfraStreamParseError(message, error.requestId);
@@ -1456,6 +1483,8 @@ function redactRunInfraError(error: RunInfraError, sensitiveValues: readonly str
     type: error.type,
     requestId: error.requestId,
     retryAfterMs: error.retryAfterMs,
+    code,
+    param,
   });
 }
 

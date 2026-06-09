@@ -374,6 +374,9 @@ function liveCanaryErrors(report) {
       reportErrors.push(`${language} child report rows must exactly match expectedRows`);
     }
     for (const result of results) {
+      if (!isNonNegativeFiniteNumber(result?.durationMs)) {
+        reportErrors.push(`${language} row ${String(result?.name ?? "<unknown>")} durationMs must be a non-negative finite number`);
+      }
       if (result?.status !== "passed") {
         reportErrors.push(`${language} row ${String(result?.name ?? "<unknown>")} must be passed`);
       }
@@ -389,6 +392,10 @@ function liveCanaryErrors(report) {
     }
   }
   return reportErrors;
+}
+
+function isNonNegativeFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function arrayOrEmpty(value) {

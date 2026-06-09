@@ -274,6 +274,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx", readme)
         self.assertIn("error.model.not_found", live_canaries)
         self.assertIn("error.body.unsupported_parameter", live_canaries)
+        self.assertIn("Gateway errors expose `request_id`, `type`, and, when returned by the API", readme)
+        self.assertIn("OpenAI-style `code` and `param` metadata", readme)
         self.assertIn("RunInfra `/v1/responses` is a chat-completions compatibility adapter.", readme)
         self.assertIn("forwards the supported request through the chat-completions serving path", readme)
         self.assertIn(
@@ -2504,6 +2506,69 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             client.models.list()
 
         self.assertEqual(raised.exception.type, "deployment_error")
+
+    def test_errors_preserve_api_code_and_parameter_metadata(self):
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "The embeddings parameter 'dimensions' is not supported.",
+                        "type": "invalid_request_error",
+                        "code": "unsupported_parameter",
+                        "param": "dimensions",
+                    }
+                },
+                status=400,
+                headers={"x-request-id": "req-dimensions"},
+            )
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport, max_retries=0)
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.embeddings.create(
+                model="bge-small",
+                input="hello",
+                dimensions=1,
+            )
+
+        self.assertEqual(raised.exception.status, 400)
+        self.assertEqual(raised.exception.type, "invalid_request_error")
+        self.assertEqual(raised.exception.code, "unsupported_parameter")
+        self.assertEqual(raised.exception.param, "dimensions")
+        self.assertEqual(raised.exception.request_id, "req-dimensions")
+
+    def test_redacts_api_keys_from_status_error_metadata_fields(self):
+        api_key = "sk-ri-redact-local"
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "metadata redaction canary",
+                        "type": "invalid_request_error",
+                        "code": f"unsupported_{api_key}",
+                        "param": f"field_{api_key}",
+                    }
+                },
+                status=400,
+                headers={"x-request-id": "req-status-metadata-redact"},
+            )
+        )
+        client = RunInfra(
+            api_key=api_key,
+            transport=transport,
+            max_retries=0,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.status, 400)
+        self.assertEqual(raised.exception.type, "invalid_request_error")
+        self.assertEqual(raised.exception.code, "unsupported_[redacted]")
+        self.assertEqual(raised.exception.param, "field_[redacted]")
+        self.assertEqual(raised.exception.request_id, "req-status-metadata-redact")
+        self.assertSecretNotInExceptionChain(raised.exception, api_key)
 
     def test_request_options_can_disable_retries_for_cost_sensitive_calls(self):
         transport = RecordingTransport(
