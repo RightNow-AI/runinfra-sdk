@@ -193,7 +193,9 @@ readiness `summary.blocked` to be `0`, and `expectedRows` to match the
 canonical live canary matrix exactly,
 so a shortened self-consistent report cannot satisfy the gate. The report's
 candidate source file count must also match the canonical live-canary source
-file manifest.
+file manifest. The gate requires every child canary row to include
+non-negative finite `durationMs` timing evidence, so a strict live report
+cannot claim low-latency readiness from pass/fail rows alone.
 Promotion evidence must come from strict child canaries against `https://api.runinfra.ai/v1`;
 reports generated with any other custom `RUNINFRA_BASE_URL` are useful for
 staging smoke tests but cannot satisfy the real publish gate.

@@ -1769,6 +1769,9 @@ function reportRowErrors(report) {
   }
   const counts = { passed: 0, failed: 0, skipped: 0 };
   for (const result of report.results) {
+    if (!isNonNegativeFiniteNumber(result?.durationMs)) {
+      errors.push(`${language} row ${String(result?.name ?? "<unknown>")} durationMs must be a non-negative finite number`);
+    }
     if (result?.status === "passed" || result?.status === "failed" || result?.status === "skipped") {
       counts[result.status] += 1;
     } else {
@@ -1797,6 +1800,10 @@ function reportRowErrors(report) {
     if (strict && report.summary.skipped !== 0) errors.push(`${language} summary skipped count must be 0`);
   }
   return errors;
+}
+
+function isNonNegativeFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function sameStringArray(left, right) {

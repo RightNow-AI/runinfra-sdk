@@ -790,7 +790,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
         summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -883,7 +883,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
         summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -965,7 +965,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
         summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -1052,7 +1052,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -1160,7 +1160,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
         summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
     const promotionArgs = [
@@ -1253,6 +1253,29 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
       );
       writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
 
+      writeFileSync(livePath, `${JSON.stringify({
+        ...live,
+        reports: live.reports.map((report) => ({
+          ...report,
+          results: report.results.map((result) => ({ name: result.name, status: result.status })),
+        })),
+      }, null, 2)}\n`);
+      const missingDuration = spawnSync(process.execPath, [
+        ...promotionArgs,
+      ], {
+        cwd: new URL("..", import.meta.url),
+        encoding: "utf8",
+      });
+
+      expect(missingDuration.status).toBe(1);
+      expect(`${missingDuration.stdout}${missingDuration.stderr}`).toContain(
+        `typescript row ${expectedRows[0]} durationMs must be a non-negative finite number`,
+      );
+      expect(`${missingDuration.stdout}${missingDuration.stderr}`).toContain(
+        `python row ${expectedRows[0]} durationMs must be a non-negative finite number`,
+      );
+      writeFileSync(livePath, `${JSON.stringify(live, null, 2)}\n`);
+
       writeFileSync(readinessPath, `${JSON.stringify({
         ...readiness,
         readiness: {
@@ -1298,6 +1321,8 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
       expect(liveCanaryDocs).toContain("requires readiness `rowCoverageErrors` to be");
       expect(liveCanaryDocs).toContain("readiness `summary.ready` to equal the canonical matrix row count");
       expect(liveCanaryDocs).toContain("readiness `summary.blocked` to be `0`");
+      expect(liveCanaryDocs).toContain("requires every child canary row to include");
+      expect(liveCanaryDocs).toContain("non-negative finite `durationMs` timing evidence");
 
       writeFileSync(readinessPath, `${JSON.stringify(readiness, null, 2)}\n`);
 
@@ -1502,7 +1527,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -1613,7 +1638,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -1707,7 +1732,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         sdkVersion: RUNINFRA_SDK_VERSION,
         strict: true,
         baseURL: "https://api.runinfra.ai/v1",
-        results: expectedRows.map((name) => ({ name, status: "passed" })),
+        results: expectedRows.map((name) => ({ name, status: "passed", durationMs: 1 })),
       })),
     };
 
@@ -4356,6 +4381,80 @@ with open(report, "w", encoding="utf-8") as handle:
       expect(report.parity?.errors).toContain(`typescript row ${expectedRows[1]} must be passed`);
       expect(report.parity?.errors).toContain(`typescript summary failed count must be 0`);
       expect(report.parity?.errors).toContain(`typescript summary skipped count must be 0`);
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails strict parent live-canary parity when child report rows omit duration metadata", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-child-duration-parity-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const rowsJson = JSON.stringify(expectedRows);
+    try {
+      mkdirSync(join(tmp, "scripts"), { recursive: true });
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-typescript.mjs"), `
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+const expectedRows = ${rowsJson};
+const report = process.argv[process.argv.indexOf("--report") + 1];
+mkdirSync(dirname(report), { recursive: true });
+writeFileSync(report, JSON.stringify({
+  language: "typescript",
+  sdkVersion: "${RUNINFRA_SDK_VERSION}",
+  strict: true,
+  baseURL: "https://api.runinfra.ai/v1",
+  summary: { passed: expectedRows.length, failed: 0, skipped: 0 },
+  results: expectedRows.map((name) => ({ name, status: "passed" })),
+}));
+`);
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-python.py"), `
+import json
+import os
+import sys
+expected_rows = ${JSON.stringify(expectedRows)}
+report = sys.argv[sys.argv.index("--report") + 1]
+os.makedirs(os.path.dirname(report), exist_ok=True)
+with open(report, "w", encoding="utf-8") as handle:
+    json.dump({
+        "language": "python",
+        "sdkVersion": "${RUNINFRA_SDK_VERSION}",
+        "strict": True,
+        "baseURL": "https://api.runinfra.ai/v1",
+        "summary": {"passed": len(expected_rows), "failed": 0, "skipped": 0},
+        "results": [{"name": name, "status": "passed"} for name in expected_rows],
+    }, handle)
+`);
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "source",
+        "--strict",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain(
+        `typescript row ${expectedRows[0]} durationMs must be a non-negative finite number`,
+      );
+      expect(report.parity?.errors).toContain(
+        `python row ${expectedRows[0]} durationMs must be a non-negative finite number`,
+      );
       expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
