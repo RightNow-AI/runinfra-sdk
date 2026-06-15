@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: ""
+      require_live_canary:
+        description: Keep true for a fully-verified release. Set false ONLY when the live service canary infra is unavailable; it skips just the live service canary and publishes on build+unit+packaging+security gates.
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -239,16 +244,24 @@ jobs:
         if: ${{ github.event.inputs.dry_run == 'true' }}
         run: echo "Dry run - strict live promotion reports are required before a real publish."
 
+      - name: Live canary provenance
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" != "true" ] && [ "${{ github.event.inputs.require_live_canary }}" = "false" ]; then
+            echo "LIVE CANARY SKIPPED for this release (require_live_canary=false) - published on build+unit+packaging+security gates only." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Live canary gating active for this release (require_live_canary=true)." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Strict live-canary readiness preflight
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ github.event.inputs.dry_run != 'true' && github.event.inputs.require_live_canary != 'false' }}
         run: node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json
 
       - name: Strict artifact live canary
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ github.event.inputs.dry_run != 'true' && github.event.inputs.require_live_canary != 'false' }}
         run: node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json
 
       - name: Verify strict promotion reports
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ github.event.inputs.dry_run != 'true' && github.event.inputs.require_live_canary != 'false' }}
         run: node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .
 
   dry-run-npm:
