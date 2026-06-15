@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const RUNINFRA_SDK_VERSION = "0.1.4";
+export const RUNINFRA_SDK_VERSION = "0.2.0";
 const MAX_AUTOMATIC_RETRY_AFTER_MS = 60_000;
 
 export interface RunInfraOptions {
@@ -346,12 +346,16 @@ export class RunInfraError extends Error {
   readonly type: string;
   readonly requestId?: string;
   readonly retryAfterMs?: number;
+  readonly code?: string;
+  readonly param?: string;
 
   constructor(message: string, input: {
     status: number;
     type: string;
     requestId?: string;
     retryAfterMs?: number;
+    code?: string;
+    param?: string;
   }) {
     super(message);
     this.name = "RunInfraError";
@@ -359,47 +363,70 @@ export class RunInfraError extends Error {
     this.type = input.type;
     this.requestId = input.requestId;
     this.retryAfterMs = input.retryAfterMs;
+    this.code = input.code;
+    this.param = input.param;
   }
 }
 
 export class AuthenticationError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "auth_error", requestId });
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
+    super(message, { status, type: "auth_error", requestId, code, param });
     this.name = "AuthenticationError";
   }
 }
 
 export class PermissionDeniedError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "permission_denied", requestId });
+  // `type` defaults to "permission_denied" but the gateway can supply a more
+  // specific discriminator on the 403 body (e.g. "byoc_plan_required" when a
+  // workspace below the deploy tier calls a BYOC-deployed endpoint). We thread
+  // it onto `.type` so callers can branch — `err instanceof PermissionDeniedError
+  // && err.type === "byoc_plan_required"` — instead of regex-scraping the message.
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string, type = "permission_denied") {
+    super(message, { status, type, requestId, code, param });
     this.name = "PermissionDeniedError";
   }
 }
 
 export class RateLimitError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string, retryAfterMs?: number) {
-    super(message, { status, type: "rate_limit_error", requestId, retryAfterMs });
+  constructor(message: string, status: number, requestId?: string, retryAfterMs?: number, code?: string, param?: string) {
+    super(message, { status, type: "rate_limit_error", requestId, retryAfterMs, code, param });
     this.name = "RateLimitError";
   }
 }
 
 export class InsufficientCreditsError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "insufficient_credits", requestId });
+  /** Remaining workspace balance in cents, when the gateway reports it. */
+  readonly currentBalanceCents?: number;
+  /** Credits this request needed, in cents, when the gateway reports it. */
+  readonly requiredCents?: number;
+  /** Where to top up, when the gateway reports it. */
+  readonly topupUrl?: string;
+  constructor(
+    message: string,
+    status: number,
+    requestId?: string,
+    code?: string,
+    param?: string,
+    details?: { currentBalanceCents?: number; requiredCents?: number; topupUrl?: string },
+  ) {
+    super(message, { status, type: "insufficient_credits", requestId, code, param });
     this.name = "InsufficientCreditsError";
+    this.currentBalanceCents = details?.currentBalanceCents;
+    this.requiredCents = details?.requiredCents;
+    this.topupUrl = details?.topupUrl;
   }
 }
 
 export class DeploymentError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "deployment_error", requestId });
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
+    super(message, { status, type: "deployment_error", requestId, code, param });
     this.name = "DeploymentError";
   }
 }
 
 export class ModelNotFoundError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string) {
-    super(message, { status, type: "model_not_found", requestId });
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
+    super(message, { status, type: "model_not_found", requestId, code, param });
     this.name = "ModelNotFoundError";
   }
 }
@@ -1332,17 +1359,44 @@ function retryDelayMs(attempt: number, baseMs: number, response?: Response): num
   return Math.min(30_000, exponential + jitter);
 }
 
-async function parseError(response: Response): Promise<{ message: string; type: string }> {
+async function parseError(response: Response): Promise<{
+  message: string;
+  type: string;
+  code?: string;
+  param?: string;
+  currentBalanceCents?: number;
+  requiredCents?: number;
+  topupUrl?: string;
+}> {
   try {
     const body = (await response.json()) as {
-      error?: { message?: unknown; type?: unknown };
+      error?: {
+        message?: unknown;
+        type?: unknown;
+        code?: unknown;
+        param?: unknown;
+        current_balance_cents?: unknown;
+        required_cents?: unknown;
+        topup_url?: unknown;
+      };
     };
+    const error = body.error ?? {};
     return {
       message:
-        typeof body.error?.message === "string"
-          ? body.error.message
+        typeof error.message === "string"
+          ? error.message
           : `RunInfra request failed with status ${response.status}`,
-      type: typeof body.error?.type === "string" ? body.error.type : "api_error",
+      type: typeof error.type === "string" ? error.type : "api_error",
+      ...(typeof error.code === "string" ? { code: error.code } : {}),
+      ...(typeof error.param === "string" ? { param: error.param } : {}),
+      // Structured remediation fields the gateway ships on 402 insufficient_credits.
+      ...(typeof error.current_balance_cents === "number" && Number.isFinite(error.current_balance_cents)
+        ? { currentBalanceCents: error.current_balance_cents }
+        : {}),
+      ...(typeof error.required_cents === "number" && Number.isFinite(error.required_cents)
+        ? { requiredCents: error.required_cents }
+        : {}),
+      ...(typeof error.topup_url === "string" ? { topupUrl: error.topup_url } : {}),
     };
   } catch {
     return {
@@ -1362,13 +1416,31 @@ async function discardResponseBody(response: Response): Promise<void> {
 
 async function raiseForStatus(response: Response): Promise<void> {
   if (response.ok) return;
-  const { message, type } = await parseError(response);
+  const { message, type, code, param, currentBalanceCents, requiredCents, topupUrl } =
+    await parseError(response);
   const requestId = response.headers.get("x-request-id") ?? undefined;
-  if (response.status === 401) throw new AuthenticationError(message, response.status, requestId);
-  if (response.status === 403) throw new PermissionDeniedError(message, response.status, requestId);
-  if (response.status === 402) throw new InsufficientCreditsError(message, response.status, requestId);
+  if (response.status === 401) throw new AuthenticationError(message, response.status, requestId, code, param);
+  if (response.status === 403) {
+    // Keep a more specific gateway discriminator (e.g. "byoc_plan_required")
+    // on `.type` so callers can branch instead of regex-scraping the message.
+    throw new PermissionDeniedError(
+      message,
+      response.status,
+      requestId,
+      code,
+      param,
+      type !== "api_error" ? type : "permission_denied",
+    );
+  }
+  if (response.status === 402) {
+    throw new InsufficientCreditsError(message, response.status, requestId, code, param, {
+      currentBalanceCents,
+      requiredCents,
+      topupUrl,
+    });
+  }
   if (response.status === 404 || type === "model_not_found") {
-    throw new ModelNotFoundError(message, response.status, requestId);
+    throw new ModelNotFoundError(message, response.status, requestId, code, param);
   }
   if (response.status === 429) {
     throw new RateLimitError(
@@ -1376,10 +1448,12 @@ async function raiseForStatus(response: Response): Promise<void> {
       response.status,
       requestId,
       retryAfterMs(response) ?? undefined,
+      code,
+      param,
     );
   }
-  if (type === "deployment_error") throw new DeploymentError(message, response.status, requestId);
-  throw new RunInfraError(message, { status: response.status, type, requestId });
+  if (type === "deployment_error") throw new DeploymentError(message, response.status, requestId, code, param);
+  throw new RunInfraError(message, { status: response.status, type, requestId, code, param });
 }
 
 async function parseJsonResponse<TResponse>(
@@ -1438,14 +1512,32 @@ function redactSensitiveValues(message: string, sensitiveValues: readonly string
 
 function redactRunInfraError(error: RunInfraError, sensitiveValues: readonly string[]): RunInfraError {
   const message = redactSensitiveValues(error.message, sensitiveValues);
-  if (error instanceof AuthenticationError) return new AuthenticationError(message, error.status, error.requestId);
-  if (error instanceof PermissionDeniedError) return new PermissionDeniedError(message, error.status, error.requestId);
-  if (error instanceof RateLimitError) {
-    return new RateLimitError(message, error.status, error.requestId, error.retryAfterMs);
+  const code = error.code === undefined ? undefined : redactSensitiveValues(error.code, sensitiveValues);
+  const param = error.param === undefined ? undefined : redactSensitiveValues(error.param, sensitiveValues);
+  if (error instanceof AuthenticationError) {
+    return new AuthenticationError(message, error.status, error.requestId, code, param);
   }
-  if (error instanceof InsufficientCreditsError) return new InsufficientCreditsError(message, error.status, error.requestId);
-  if (error instanceof DeploymentError) return new DeploymentError(message, error.status, error.requestId);
-  if (error instanceof ModelNotFoundError) return new ModelNotFoundError(message, error.status, error.requestId);
+  if (error instanceof PermissionDeniedError) {
+    // Preserve the gateway discriminator (e.g. "byoc_plan_required") through redaction.
+    return new PermissionDeniedError(message, error.status, error.requestId, code, param, error.type);
+  }
+  if (error instanceof RateLimitError) {
+    return new RateLimitError(message, error.status, error.requestId, error.retryAfterMs, code, param);
+  }
+  if (error instanceof InsufficientCreditsError) {
+    // Carry the structured top-up fields through redaction (they hold no secrets).
+    return new InsufficientCreditsError(message, error.status, error.requestId, code, param, {
+      currentBalanceCents: error.currentBalanceCents,
+      requiredCents: error.requiredCents,
+      topupUrl: error.topupUrl,
+    });
+  }
+  if (error instanceof DeploymentError) {
+    return new DeploymentError(message, error.status, error.requestId, code, param);
+  }
+  if (error instanceof ModelNotFoundError) {
+    return new ModelNotFoundError(message, error.status, error.requestId, code, param);
+  }
   if (error instanceof RunInfraTimeoutError) return new RunInfraTimeoutError(message, error.requestId);
   if (error instanceof RunInfraConnectionError) return new RunInfraConnectionError(message, error.requestId);
   if (error instanceof RunInfraStreamParseError) return new RunInfraStreamParseError(message, error.requestId);
@@ -1456,6 +1548,8 @@ function redactRunInfraError(error: RunInfraError, sensitiveValues: readonly str
     type: error.type,
     requestId: error.requestId,
     retryAfterMs: error.retryAfterMs,
+    code,
+    param,
   });
 }
 
@@ -1496,11 +1590,10 @@ export class RunInfra {
   /**
    * Audio surfaces (text-to-speech + speech-to-text).
    *
-   * @experimental As of v0.1.4, these methods have NOT been verified end-to-end
-   * against a live deployed pipeline in our canary suite. The HTTP envelope
+   * Preview helpers for deployed RunInfra audio routes. The HTTP envelope
    * matches the OpenAI Audio API contract and the request/response shapes are
-   * stable, but you should test against your own deployed model before using
-   * in production. Live-canary verification is tracked for v1.0.0 GA.
+   * stable. Supported voices, reference-audio modes, and response formats are
+   * deployment-specific.
    */
   readonly audio: {
     speech: {
@@ -1519,11 +1612,9 @@ export class RunInfra {
   /**
    * Image generation surface.
    *
-   * @experimental As of v0.1.4, this method has NOT been verified end-to-end
-   * against a live deployed pipeline in our canary suite. The HTTP envelope
-   * matches the OpenAI Images API contract, but you should test against your
-   * own deployed model before using in production. Live-canary verification
-   * is tracked for v1.0.0 GA.
+   * Preview helper for deployed RunInfra image routes. The HTTP envelope
+   * matches the OpenAI Images API contract. Supported size, response format,
+   * quality, style, and user fields depend on the selected deployment.
    */
   readonly images: {
     generate: (request: ImageGenerateRequest, options?: RunInfraRequestOptions) => Promise<ImageGenerationResponse>;
@@ -1537,11 +1628,9 @@ export class RunInfra {
   /**
    * Voice pipeline surface.
    *
-   * @experimental As of v0.1.4, this method has NOT been verified end-to-end
-   * against a live deployed pipeline in our canary suite. It requires a
-   * pipeline-scoped client and posts binary audio to `/pipeline`, but you
-   * should test against your own deployed pipeline before using in production.
-   * Live-canary verification is tracked for v1.0.0 GA.
+   * Preview helper for co-located voice pipelines. It requires a
+   * pipeline-scoped client and posts binary audio to `/pipeline`; transcript
+   * and response behavior depends on the selected deployment.
    */
   readonly voice: {
     pipeline: {

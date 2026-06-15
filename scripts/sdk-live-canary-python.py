@@ -103,9 +103,20 @@ def assert_request_id(value: Any, label: str) -> None:
         raise AssertionError(f"{label} did not expose x-request-id")
 
 
-def assert_clear_unsupported_parameter_error(error: BaseException, label: str) -> Dict[str, Any]:
+def assert_clear_unsupported_parameter_error(
+    error: BaseException,
+    label: str,
+    expected_status: Optional[int] = None,
+    expected_type: Optional[str] = None,
+    expected_code: Optional[str] = None,
+    expected_param: Optional[str] = None,
+) -> Dict[str, Any]:
     status = getattr(error, "status", None)
-    if status not in {400, 422}:
+    if expected_status is not None and status != expected_status:
+        raise AssertionError(
+            f"{label} expected validation error status {expected_status}, got {status or 'unknown'}"
+        )
+    if expected_status is None and status not in {400, 422}:
         raise AssertionError(f"{label} expected a clear 400/422 validation error, got {status or 'unknown'}")
     error_type = getattr(error, "type", None)
     allowed_types = {
@@ -117,20 +128,30 @@ def assert_clear_unsupported_parameter_error(error: BaseException, label: str) -
         "unsupported_parameter",
         "validation_error",
     }
-    if not isinstance(error_type, str) or error_type not in allowed_types:
+    if expected_type is not None and error_type != expected_type:
+        raise AssertionError(
+            f"{label} expected validation error type {expected_type}, got {error_type or 'unknown'}"
+        )
+    if expected_type is None and (not isinstance(error_type, str) or error_type not in allowed_types):
         raise AssertionError(f"{label} expected an invalid-parameter error type, got {error_type or 'unknown'}")
+    error_code = getattr(error, "code", None)
+    if expected_code and error_code != expected_code:
+        raise AssertionError(
+            f"{label} expected unsupported error code {expected_code}, got {error_code or 'unknown'}"
+        )
+    error_param = getattr(error, "param", None)
+    if expected_param and error_param != expected_param:
+        raise AssertionError(
+            f"{label} expected unsupported parameter {expected_param}, got {error_param or 'unknown'}"
+        )
     request_id = getattr(error, "request_id", None)
     assert_request_id(request_id, label)
-    return {"errorType": error_type, "errorStatus": status, "requestId": request_id}
-
-
-def required_positive_integer_env(name: str) -> int:
-    value = env(name)
-    if not value:
-        raise AssertionError(f"{name} missing")
-    if not re.fullmatch(r"[1-9][0-9]*", value):
-        raise AssertionError(f"{name} must be a positive integer")
-    return int(value)
+    result = {"errorType": error_type, "errorStatus": status, "requestId": request_id}
+    if expected_code:
+        result["errorCode"] = error_code
+    if expected_param:
+        result["errorParam"] = error_param
+    return result
 
 
 def assert_chat_completion_envelope(response: Dict[str, Any], label: str) -> None:
@@ -327,6 +348,10 @@ def canary_diagnostic(error: BaseException) -> Optional[str]:
     if "unexpectedly succeeded" in message:
         return "unexpected_success"
     if "expected a clear 400/422 validation error" in message:
+        return "invalid_error_shape"
+    if "expected unsupported error code" in message:
+        return "invalid_error_shape"
+    if "expected unsupported parameter" in message:
         return "invalid_error_shape"
     if "did not expose x-request-id" in message:
         return "missing_request_id"
@@ -858,7 +883,6 @@ def main() -> int:
         "RUNINFRA_CANARY_STREAM_SLOW_CONSUMER_DELAY_MS",
         "RUNINFRA_LLM_MODEL",
         "RUNINFRA_EMBEDDING_MODEL",
-        "RUNINFRA_EMBEDDING_DIMENSIONS",
         "RUNINFRA_IMAGE_MODEL",
         "RUNINFRA_IMAGE_SIZE",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT",
@@ -982,8 +1006,13 @@ def main() -> int:
     record("embeddings.create", ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"], lambda: _embeddings_create(client(), embedding_model))
     record(
         "openai.params.embeddings",
-        ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL", "RUNINFRA_EMBEDDING_DIMENSIONS"],
+        ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"],
         lambda: _embeddings_params(client(), embedding_model),
+    )
+    record(
+        "error.embeddings.unsupported_dimensions",
+        ["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"],
+        lambda: _unsupported_embedding_dimensions(client(), embedding_model),
     )
     record("images.generate", ["RUNINFRA_API_KEY", "RUNINFRA_IMAGE_MODEL"], lambda: _images_generate(client(), image_model))
     record(
@@ -1380,20 +1409,36 @@ def _embeddings_create(client: RunInfra, model: str) -> Dict[str, Any]:
 
 
 def _embeddings_params(client: RunInfra, model: str) -> Dict[str, Any]:
-    dimensions = required_positive_integer_env("RUNINFRA_EMBEDDING_DIMENSIONS")
     response = client.embeddings.create(
         model=model,
         input="runinfra sdk openai parameter canary",
         encoding_format="float",
-        dimensions=dimensions,
     )
     assert_object(response, "embeddings params response")
     assert_embeddings_envelope(response, "embeddings params response")
     vector = response["data"][0].get("embedding")
     assert_request_id(response.get("_request_id"), "openai.params.embeddings")
-    if len(vector) != dimensions:
-        raise AssertionError("embeddings params response ignored requested dimensions")
     return {"requestId": response.get("_request_id"), "vectorLength": len(vector)}
+
+
+def _unsupported_embedding_dimensions(client: RunInfra, model: str) -> Dict[str, Any]:
+    try:
+        client.embeddings.create(
+            model=model,
+            input="runinfra sdk unsupported embedding dimensions canary",
+            encoding_format="float",
+            dimensions=1,
+        )
+    except BaseException as error:  # noqa: BLE001
+        return assert_clear_unsupported_parameter_error(
+            error,
+            "embedding dimensions",
+            expected_status=400,
+            expected_type="invalid_request_error",
+            expected_code="unsupported_parameter",
+            expected_param="dimensions",
+        )
+    raise AssertionError("embedding dimensions unexpectedly succeeded")
 
 
 def _images_generate(client: RunInfra, model: str) -> Dict[str, Any]:

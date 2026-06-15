@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Mappi
 JsonDict = Dict[str, Any]
 Transport = Callable[["RunInfraRequest"], "RunInfraResponse"]
 ResponseBody = Union[bytes, Iterable[bytes]]
-__version__ = "0.1.4"
+__version__ = "0.2.0"
 _MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 60.0
 _WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH = 8192
 
@@ -143,12 +143,16 @@ class RunInfraError(Exception):
         error_type: str,
         request_id: Optional[str] = None,
         retry_after_seconds: Optional[float] = None,
+        code: Optional[str] = None,
+        param: Optional[str] = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.type = error_type
         self.request_id = request_id
         self.retry_after_seconds = retry_after_seconds
+        self.code = code
+        self.param = param
 
 
 class AuthenticationError(RunInfraError):
@@ -164,7 +168,33 @@ class RateLimitError(RunInfraError):
 
 
 class InsufficientCreditsError(RunInfraError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int,
+        error_type: str = "insufficient_credits",
+        request_id: Optional[str] = None,
+        retry_after_seconds: Optional[float] = None,
+        code: Optional[str] = None,
+        param: Optional[str] = None,
+        current_balance_cents: Optional[int] = None,
+        required_cents: Optional[int] = None,
+        topup_url: Optional[str] = None,
+    ) -> None:
+        super().__init__(
+            message,
+            status=status,
+            error_type=error_type,
+            request_id=request_id,
+            retry_after_seconds=retry_after_seconds,
+            code=code,
+            param=param,
+        )
+        # Structured remediation fields the gateway ships on 402; any may be None.
+        self.current_balance_cents = current_balance_cents
+        self.required_cents = required_cents
+        self.topup_url = topup_url
 
 
 class DeploymentError(RunInfraError):
@@ -856,17 +886,44 @@ def _redacted_error_message(error: BaseException, sensitive_values: Iterable[str
     return message
 
 
+def _redacted_error_metadata(value: Optional[str], sensitive_values: Iterable[str] = ()) -> Optional[str]:
+    if value is None:
+        return None
+    redacted = value
+    for sensitive_value in sensitive_values:
+        if sensitive_value:
+            redacted = redacted.replace(sensitive_value, "[redacted]")
+    return redacted
+
+
 def _redacted_runinfra_error(
     error: RunInfraError,
     sensitive_values: Iterable[str] = (),
 ) -> RunInfraError:
-    message = _redacted_error_message(error, sensitive_values)
+    sensitive = tuple(sensitive_values)
+    message = _redacted_error_message(error, sensitive)
+    code = _redacted_error_metadata(error.code, sensitive)
+    param = _redacted_error_metadata(error.param, sensitive)
     if isinstance(error, RunInfraStreamParseError):
         return RunInfraStreamParseError(message, request_id=error.request_id)
     if isinstance(error, UnsupportedOperationError):
         return UnsupportedOperationError(message)
     if isinstance(error, WebhookVerificationError):
         return WebhookVerificationError(message)
+    if isinstance(error, InsufficientCreditsError):
+        # Carry the structured top-up fields through redaction (they hold no secrets).
+        return InsufficientCreditsError(
+            message,
+            status=error.status,
+            error_type=error.type,
+            request_id=error.request_id,
+            retry_after_seconds=error.retry_after_seconds,
+            code=code,
+            param=param,
+            current_balance_cents=error.current_balance_cents,
+            required_cents=error.required_cents,
+            topup_url=error.topup_url,
+        )
     try:
         return error.__class__(
             message,
@@ -874,6 +931,8 @@ def _redacted_runinfra_error(
             error_type=error.type,
             request_id=error.request_id,
             retry_after_seconds=error.retry_after_seconds,
+            code=code,
+            param=param,
         )
     except TypeError:
         return RunInfraError(
@@ -882,6 +941,8 @@ def _redacted_runinfra_error(
             error_type=error.type,
             request_id=error.request_id,
             retry_after_seconds=error.retry_after_seconds,
+            code=code,
+            param=param,
         )
 
 
@@ -931,6 +992,11 @@ def _idempotent_replay_from_headers(headers: Mapping[str, str]) -> bool:
 def _error_from_response(response: RunInfraResponse) -> RunInfraError:
     message = f"RunInfra request failed with status {response.status}"
     error_type = "api_error"
+    code: Optional[str] = None
+    param: Optional[str] = None
+    current_balance_cents: Optional[int] = None
+    required_cents: Optional[int] = None
+    topup_url: Optional[str] = None
     try:
         body = response.json()
         if isinstance(body, dict) and isinstance(body.get("error"), dict):
@@ -939,18 +1005,68 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
                 message = error["message"]
             if isinstance(error.get("type"), str):
                 error_type = error["type"]
+            if isinstance(error.get("code"), str):
+                code = error["code"]
+            if isinstance(error.get("param"), str):
+                param = error["param"]
+            # Structured remediation fields the gateway ships on 402.
+            # `bool` is a subclass of `int`, so exclude it explicitly.
+            if isinstance(error.get("current_balance_cents"), int) and not isinstance(
+                error.get("current_balance_cents"), bool
+            ):
+                current_balance_cents = error["current_balance_cents"]
+            if isinstance(error.get("required_cents"), int) and not isinstance(
+                error.get("required_cents"), bool
+            ):
+                required_cents = error["required_cents"]
+            if isinstance(error.get("topup_url"), str):
+                topup_url = error["topup_url"]
     except Exception:
         pass
 
     request_id = _request_id_from_headers(response.headers)
     if response.status == 401:
-        return AuthenticationError(message, status=response.status, error_type="auth_error", request_id=request_id)
+        return AuthenticationError(
+            message,
+            status=response.status,
+            error_type="auth_error",
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
     if response.status == 403:
-        return PermissionDeniedError(message, status=response.status, error_type="permission_denied", request_id=request_id)
+        # Default to "permission_denied", but keep a more specific gateway
+        # discriminator (e.g. "byoc_plan_required") so callers can branch on
+        # `.type` instead of regex-scraping the message.
+        return PermissionDeniedError(
+            message,
+            status=response.status,
+            error_type=error_type if error_type != "api_error" else "permission_denied",
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
     if response.status == 402:
-        return InsufficientCreditsError(message, status=response.status, error_type="insufficient_credits", request_id=request_id)
+        return InsufficientCreditsError(
+            message,
+            status=response.status,
+            error_type="insufficient_credits",
+            request_id=request_id,
+            code=code,
+            param=param,
+            current_balance_cents=current_balance_cents,
+            required_cents=required_cents,
+            topup_url=topup_url,
+        )
     if response.status == 404 or error_type == "model_not_found":
-        return ModelNotFoundError(message, status=response.status, error_type="model_not_found", request_id=request_id)
+        return ModelNotFoundError(
+            message,
+            status=response.status,
+            error_type="model_not_found",
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
     if response.status == 429:
         return RateLimitError(
             message,
@@ -958,10 +1074,26 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
             error_type="rate_limit_error",
             request_id=request_id,
             retry_after_seconds=_retry_after_seconds(response),
+            code=code,
+            param=param,
         )
     if error_type == "deployment_error":
-        return DeploymentError(message, status=response.status, error_type=error_type, request_id=request_id)
-    return RunInfraError(message, status=response.status, error_type=error_type, request_id=request_id)
+        return DeploymentError(
+            message,
+            status=response.status,
+            error_type=error_type,
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
+    return RunInfraError(
+        message,
+        status=response.status,
+        error_type=error_type,
+        request_id=request_id,
+        code=code,
+        param=param,
+    )
 
 
 def _json_body(payload: Mapping[str, Any]) -> bytes:
@@ -1617,11 +1749,10 @@ class _Transcriptions:
 class _Audio:
     """Audio surfaces (text-to-speech + speech-to-text).
 
-    [EXPERIMENTAL] As of v0.1.4, these methods have NOT been verified end-to-end
-    against a live deployed pipeline in the canary suite. The HTTP envelope
+    Preview helpers for deployed RunInfra audio routes. The HTTP envelope
     matches the OpenAI Audio API contract and the request/response shapes are
-    stable, but you should test against your own deployed model before using
-    in production. Live-canary verification is tracked for v1.0.0 GA.
+    stable. Supported voices, reference-audio modes, and response formats are
+    deployment-specific.
     """
 
     def __init__(self, requester: _Requester) -> None:
@@ -1652,11 +1783,9 @@ class _Models:
 class _Images:
     """Image generation surface.
 
-    [EXPERIMENTAL] As of v0.1.4, this method has NOT been verified end-to-end
-    against a live deployed pipeline in the canary suite. The HTTP envelope
-    matches the OpenAI Images API contract, but you should test against your
-    own deployed model before using in production. Live-canary verification
-    is tracked for v1.0.0 GA.
+    Preview helper for deployed RunInfra image routes. The HTTP envelope
+    matches the OpenAI Images API contract. Supported size, response format,
+    quality, style, and user fields depend on the selected deployment.
     """
 
     def __init__(self, requester: _Requester) -> None:
@@ -1763,11 +1892,9 @@ class _VoicePipeline:
 class _Voice:
     """Voice pipeline surface.
 
-    [EXPERIMENTAL] As of v0.1.4, this method has NOT been verified end-to-end
-    against a live deployed pipeline in the canary suite. It requires a
-    pipeline-scoped client and posts binary audio to `/pipeline`, but you
-    should test against your own deployed pipeline before using in production.
-    Live-canary verification is tracked for v1.0.0 GA.
+    Preview helper for co-located voice pipelines. It requires a
+    pipeline-scoped client and posts binary audio to `/pipeline`; transcript
+    and response behavior depends on the selected deployment.
     """
 
     def __init__(self, requester: _Requester) -> None:

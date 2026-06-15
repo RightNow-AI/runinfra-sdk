@@ -1,0 +1,640 @@
+# Agent 4 SDK Production GA Goal
+
+## Goal
+Make RunInfra SDKs production-grade and GA-ready for npm and PyPI without weakening security, breaking contract, leaking secrets/source maps, or pretending unverified behavior is done.
+
+Targets:
+- npm: `@runinfra/sdk`
+- PyPI: `runinfra`
+- API: `https://api.runinfra.ai/v1`
+
+## Done Means
+The SDK is ready only when all of these are true:
+- TypeScript and Python SDKs expose the same supported product contract unless a difference is explicitly documented.
+- Chat, responses, streaming, images, audio, models, errors, retries, idempotency, timeouts, pagination, and OpenAI-compatible paths are covered by unit tests and live canaries.
+- SDK parameters are validated, typed, documented, and mapped exactly to backend behavior. No dead parameters, silent drops, fake options, or undocumented lossy conversions.
+- Streaming is stable under normal chunks, split SSE frames, keepalive/comment frames, error events, aborts, and slow consumers. No retry of non-idempotent streams.
+- Voice and image surfaces either work end-to-end against real backend routes or are removed/hidden before GA.
+- Security checks prove API keys are only sent in `Authorization: Bearer`, never URLs, logs, thrown errors, source maps, npm tarballs, PyPI artifacts, README examples, or workflow output.
+- Browser usage is explicitly blocked or safe by design. Server-side usage is the default.
+- npm package and PyPI wheel/sdist clean-install and import from fresh environments.
+- Published artifacts are built from the intended promoted commit and match promotion evidence.
+- CI prevents publishing when tests, artifact scans, package surface checks, clean installs, provenance/trusted publishing, or live canaries fail.
+
+## Not Done Yet If Any Of This Remains
+- Any SDK method calls a missing backend route.
+- Any endpoint returns a shape different from the SDK type.
+- Any OpenAI-compatible endpoint is partial without documentation.
+- Audio, image, model, or response APIs pass local tests but lack live canary evidence.
+- Source maps, raw source, secrets, `.env`, local paths, logs, or generated private artifacts appear in package outputs.
+- PyPI/npm publish relies on long-lived tokens instead of trusted publishing, except for approved emergency bootstrap.
+- RunPipe gateway and RunInfra Engine behavior are not aligned with SDK docs and tests.
+
+## Methodology
+Work in small commits. For each GA gap:
+1. Inspect current SDK, RunPipe gateway, and RunInfra Engine behavior before changing code.
+2. Add a failing regression test or live canary first.
+3. Implement the smallest contract-correct fix.
+4. Update README, typed docs, and goal notes only when behavior is verified.
+5. Run focused tests, full SDK tests, package artifact scans, clean installs, and workflow policy checks.
+6. Run second-opinion review for changes over 2 files, over 100 lines, or any security decision.
+7. Never call it production-grade from memory. Cite the exact command or live canary result.
+
+## Priority Order
+1. Contract mismatches: missing routes, response shape drift, parameter drift.
+2. Live canaries: chat, responses, streaming, image, audio, models, OpenAI compatibility.
+3. Artifact security: npm tarball, PyPI wheel, PyPI sdist, source-map and secret scans.
+4. Publish safety: trusted publishing, provenance, exact artifact promotion, rollback notes.
+5. Developer experience: clear errors, stable retries, complete examples, async/sync Python decision.
+
+## Anti-Actions
+Do not publish, push, deploy, rotate secrets, provision paid infra, or change production settings without explicit current approval. Do not hide failing surfaces behind marketing copy. Do not remove tests to pass CI. Do not merge unrelated work. Do not use pasted registry tokens in committed files or logs.
+
+## Session Log
+
+### 2026-05-25T04:48:50+03:00 - Agent 4
+- Ran `pnpm --dir typescript build`: passed.
+- Ran `python -m pytest python\tests -q`: 130 passed, 127 subtests passed.
+- Ran production source live canary with the scoped local SDK live env file and `--package-source source`: TypeScript 33 passed / 1 failed / 15 skipped; Python 33 passed / 1 failed / 15 skipped.
+- The shared failed row is `error.body.unsupported_parameter`. The failure is `unexpected_success`, meaning production accepted the reserved `runinfra_unsupported_parameter_probe` Responses body extension instead of returning a clear 400/422 `unsupported_parameter` error.
+- Added redacted child-canary diagnostics so failed rows keep raw messages hidden but expose safe enum diagnostics such as `unexpected_success`.
+- Post-review cleanup removed local path details from this goal note, added an executable TypeScript canary self-test for `errorSummary()`, and normalized unknown diagnostics to `null` for TS/Python report parity.
+- Verified focused regressions: TypeScript `child live-canary failure diagnostics` passed; Python `error_summary_adds_safe_diagnostics` passed.
+- Verified full local suites: `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed; `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` passed 200 tests; `python -m pytest python\tests -q` passed 131 tests and 127 subtests.
+- Verified policy/security gates: `node scripts\verify-workflow-policy.mjs`, `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`, `node scripts\secret-scan-policy.mjs`, and `git diff --check` passed.
+- Current source live-canary candidate digest after this change: `ab6fd0dc6525f5701385722d7c39736ca1829c3b5f86b3fa55c62607a6efa5ed`, source file count 15.
+- GA remains blocked. Do not publish npm/PyPI until the production gateway rejects the reserved Responses parameter, strict multimodal canary inputs are complete, artifact canaries pass, and registry install/import proof passes.
+
+### 2026-05-25T12:54:00+03:00 - Agent 4
+- Added safe live model discovery to the parent live-canary runner: `--discover-models` calls only `GET /models`, classifies catalog candidate IDs into `RUNINFRA_LLM_MODEL`, `RUNINFRA_EMBEDDING_MODEL`, `RUNINFRA_IMAGE_MODEL`, `RUNINFRA_TTS_MODEL`, and `RUNINFRA_ASR_MODEL` buckets, and writes a redacted report without running inference rows.
+- Discovery is explicitly informational. It does not make strict preflight ready, does not prove callability, and does not replace `models.retrieve.*` or multimodal canary rows.
+- Added `scripts/live-canary-model-discovery.mjs` to the canonical source digest manifest so promotion reports cannot reuse stale source identity after discovery logic changes.
+- Added regression coverage for model discovery reports, fail-closed missing-key behavior, source digest inclusion, docs wording, stalled discovery requests before headers, stalled discovery JSON bodies after headers, and conflicting runner mode flags.
+- Ran live discovery with the scoped local SDK live env file. Result: completed, catalog count 1, classified count 1, invalid count 0. The catalog produced one LLM candidate bucket and no embedding/image/TTS/ASR candidates.
+- Current source candidate identity after this change: digest `681c1fad119cb8c3166a03f7f8b0120a0c4d36812e8071b5a8a9ba19234bb25b`, source file count 16.
+- Strict preflight with the scoped local SDK live env file remains blocked: 34 ready rows, 15 blocked rows.
+- Source live canary rerun after warm-up remains blocked only by the production unsupported-parameter behavior: TypeScript 33 passed / 1 failed / 15 skipped; Python 33 passed / 1 failed / 15 skipped. The failed row in both languages is `error.body.unsupported_parameter` with diagnostic `unexpected_success`.
+- Second-opinion review found two warnings: model discovery timeout did not cover stalled response bodies, and `--discover-models --preflight` could skip strict readiness. Both were fixed before commit.
+- Verification passed: `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit`; `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` with 207 tests; `python -m pytest python\tests -q` with 131 tests and 127 subtests; `pnpm --dir typescript build`; `node scripts\verify-workflow-policy.mjs`; `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`; `node scripts\secret-scan-policy.mjs`; `git diff --check` with expected Windows CRLF warnings only.
+- GA remains blocked. Do not publish npm/PyPI until production rejects the reserved Responses parameter, real embedding/image/TTS/ASR/voice/idempotency canary inputs exist and pass, artifact canaries pass, registry install/import proof passes, and independent review is clean.
+
+### 2026-05-25T13:22:00+03:00 - Agent 4
+- Refreshed exact local package artifacts from commit `30e41d5`: `pnpm --dir typescript install --frozen-lockfile`, `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist` all completed.
+- Artifact leakage/shape gates passed: `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz`, `python scripts\verify-python-package.py python\dist`, and `python -m twine check` for the `runinfra-0.1.4` wheel and sdist.
+- Clean artifact consumer installs passed: `node scripts\verify-clean-installs.mjs --package both --mode artifact` verified npm import, Python wheel import, and Python sdist import.
+- Artifact-mode strict readiness with the scoped SDK live env file remained blocked: 34 ready rows, 15 blocked rows. Source identity stayed `681c1fad119cb8c3166a03f7f8b0120a0c4d36812e8071b5a8a9ba19234bb25b`, source file count 16.
+- Artifact-mode strict live canary installed the packed npm tarball and Python wheel, recorded all three artifact digests, and remained blocked with the same live status: TypeScript 33 passed / 1 failed / 15 skipped; Python 33 passed / 1 failed / 15 skipped. The failed row in both languages is still `error.body.unsupported_parameter` with diagnostic `unexpected_success`.
+- Artifact digests recorded in the live report: npm `c719ba363c25917b0af325c4b4cf4e4e2dd3eea648569acdace541e52300ff7d`, Python wheel `d48aab15bedf7c9ba6e49d30a0355e9475f179e6d3af9d8c51760cb2a19f72b4`, Python sdist `f61e040597dd492edd8d4870dc1b7196dc5c9f3eb5b1b5b6ff7a897459ef1bfe`.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-artifact.json --live artifacts\sdk\live-canary-current-artifact.json` failed as expected, proving the promotion gate rejects blocked readiness, skipped multimodal/idempotency rows, and the unsupported-parameter live failure.
+- No source change, push, deploy, publish, registry change, secret rotation, or paid provisioning was performed in this checkpoint.
+
+### 2026-05-25T13:29:00+03:00 - Agent 4
+- Verified current public registry availability for SDK `0.1.4` without publishing: `node scripts\verify-clean-installs.mjs --package both --mode registry --version 0.1.4 --registry-attempts 1 --registry-retry-delay-ms 1000` failed at registry preflight.
+- Canonical npm does not currently have `@runinfra/sdk@0.1.4`, and canonical PyPI does not currently have `runinfra==0.1.4`. The script stopped before creating consumer install workspaces.
+- Registry install/import proof for `0.1.4` remains blocked until a trusted-publishing release is actually performed after strict readiness/live/artifact promotion gates pass.
+
+### 2026-05-25T13:25:10+03:00 - Agent 4
+- Re-checked the current RunPipe production-gateway source state after `git fetch --all --prune`. `origin/main` still does not contain the SDK gateway contract fix commit family; the current production blocker is therefore integration/deploy state, not missing local SDK artifact code.
+- The active RunPipe checkout is dirty with unrelated plan/token/UI work, so no edits or merges were done there.
+- Used the existing isolated RunPipe worktree `C:\Users\jaber\RightNow-Full\RunPipe-sdk-gateway-main-20260525` on `fix/sdk-gateway-contracts-main-20260525` for the gateway candidate. It was clean, contained the SDK gateway contract tests/code, and was behind current `origin/main`.
+- Merged current `origin/main` into that isolated gateway branch. Merge commit: `bc8ea7aa Merge remote-tracking branch 'origin/main' into fix/sdk-gateway-contracts-main-20260525`.
+- Verified the post-merge gateway candidate with focused checks: `pnpm test -- app/api/v1/workspace-flat.test.ts -t "rejects reserved runinfra-prefixed body parameters before proxying"` passed 1 test; `pnpm test -- app/api/v1/[...path]/route.test.ts -t "rejects reserved runinfra-prefixed responses parameters before proxying"` passed 1 test; `pnpm test -- lib/api/responses-compat.test.ts` passed 16 tests.
+- Verified `pnpm typecheck` in the isolated gateway worktree: passed.
+- Verified `git diff --check HEAD~1..HEAD` in the isolated gateway worktree: passed.
+- Current gateway candidate branch is clean and ahead of `origin/main` by 11 commits. It is ready for review/push/deploy approval as the local fix candidate for the SDK live-canary `error.body.unsupported_parameter` blocker, but it has not been pushed or deployed by Agent 4 in this checkpoint.
+- SDK GA remains blocked until that production gateway behavior is live, strict multimodal/idempotency canary inputs exist and pass, artifact and registry install/import gates pass, and independent review is clean.
+
+### 2026-05-25T13:25:48+03:00 - Agent 4
+- Ran the SDK GitHub security gate. The first `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` attempt failed with `401 Unauthorized` because the process did not have a GitHub token.
+- Confirmed `gh auth status` had an authenticated CLI session, then reran the verifier with the CLI token supplied through `GITHUB_TOKEN` without printing it.
+- Verified `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk`: passed, with no open high/critical code-scanning alerts reported for `RightNow-AI/runinfra-sdk`.
+
+### 2026-05-25T13:26:14+03:00 - Agent 4
+- Queried RunPod state read-only through MCP. Do not copy raw MCP output into commits because worker environment fields can include platform-injected secrets.
+- Existing RunPod endpoint inventory contains one SDK canary endpoint for LLM coverage: `runinfra-sdk-canary-llm-mpiw58hc`, configured as a serverless L4/vLLM canary for `RUNINFRA_MODALITY=llm`, with min workers `0` and max workers `1`.
+- Existing template inventory includes the LLM canary template plus stock SGLang, TEI embedding, and vLLM templates. No pods are currently listed.
+- No existing RunPod endpoint was found for embeddings, images, TTS, ASR, or voice pipeline canary coverage in this read-only check.
+- Strict multimodal canaries therefore still need either approved provisioning of scoped canary targets or already-deployed RunPipe workspace models that expose those modalities before GA can be claimed.
+
+### 2026-05-25T13:27:17+03:00 - Agent 4
+- Verified `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`: passed. The report listed 22 declared public SDK surfaces, no uncovered surfaces, and no uncovered strict matrix rows.
+- Verified `node scripts\verify-workflow-policy.mjs`: passed all publish and CI policy checks, including OIDC trusted publishing, no long-lived registry tokens, strict promotion reports, CodeQL gate wiring, exact promoted artifact use, branch lock to main, default dry-run, version confirmation, and SHA-pinned workflow actions.
+- Verified `node scripts\secret-scan-policy.mjs`: passed with exit code 0.
+
+### 2026-05-25T13:41:36+03:00 - Agent 4
+- Fixed SDK contract polish found by second-opinion review before GA: removed gateway-rejected Responses adapter parameters from the typed TS and Python public surfaces, added docs/changelog wording that Responses is limited to gateway-supported adapter fields, and kept unsupported body escape hatches under explicit extra-body controls.
+- Added voice pipeline client-side scope guards. A default flat `/v1` client now rejects `voice.pipeline.create()` before network I/O unless it was configured with `pipelineId` or a pipeline-scoped base URL, preventing a public SDK method from silently calling a missing flat gateway route.
+- Added typed replay metadata for the gateway `X-RunInfra-Idempotent-Replay: true` header. JSON SDK responses now expose `_idempotent_replay: true` alongside `_request_id`, and the strict live-canary default idempotency evidence paths now include `_idempotent_replay`.
+- Verified focused SDK regressions: TS Responses parameter typing, Python Responses signature, TS voice pipeline guard, Python voice pipeline guard, TS request-id/replay metadata, and Python request-id/replay metadata all passed.
+- Verified broad SDK gates: `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit` passed; `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` passed 208 tests; `python -m pytest python\tests -q` passed 133 tests and 133 subtests; `pnpm --dir typescript build` passed.
+- Verified SDK policy/security gates: `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`, `node scripts\verify-workflow-policy.mjs`, `node scripts\secret-scan-policy.mjs`, and `git diff --check` passed. `git diff --check` only printed expected Windows LF-to-CRLF warnings on touched files.
+- In the isolated RunPipe gateway candidate worktree, added request-id propagation to flat image generation, TTS, and ASR routes and asserted `x-request-id` plus client request-id echo in `app/api/v1/workspace-flat.test.ts`.
+- Verified gateway candidate: `pnpm test -- app/api/v1/workspace-flat.test.ts` passed 103 tests; `pnpm typecheck` passed; `git diff --check` passed with expected Windows LF-to-CRLF warnings only. Committed locally as `19e3da6f fix: propagate v1 trace headers for multimodal routes` on `fix/sdk-gateway-contracts-main-20260525`.
+- GA remains blocked for production publishing. The SDK source is stronger, but npm/PyPI publish still requires the gateway candidate to be pushed/deployed, strict live readiness to stop reporting blocked multimodal/idempotency rows, strict artifact-mode live canaries to pass, registry install/import proof for the release version, and independent review after final candidate artifacts are regenerated.
+
+### 2026-05-25T13:43:00+03:00 - Agent 4
+- Regenerated local package artifacts from SDK commit `c420c5a`: `pnpm --dir typescript pack` and `python -m build python --outdir python\dist` passed.
+- Verified package leakage/shape gates for the regenerated artifacts: `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz`, `python scripts\verify-python-package.py python\dist`, and `python -m twine check python\dist\runinfra-0.1.4-py3-none-any.whl python\dist\runinfra-0.1.4.tar.gz` passed.
+- Verified clean consumer installs/imports for the regenerated artifacts: `node scripts\verify-clean-installs.mjs --package both --mode artifact` passed for npm, Python wheel, and Python sdist.
+- Regenerated artifact digests: npm tarball `19db4c783fa0f8336c9e8c63196c6f322a8f8bb4d3464fdb6e431ed8fbc3000e`; Python wheel `7d722a2b03e425887c6f22e633923821c19a35408e0c6dea6a72a24c508191a6`; Python sdist `b41a96fa297fca2f4ca821513c71132a81308ba8fc64bea1200c6a35075dc3e0`.
+- These artifact checks reduce package-security risk but do not clear the GA block. Strict live artifact canaries and registry install/import proof still need to pass after gateway deploy and multimodal/idempotency readiness is complete.
+
+### 2026-05-25T13:47:29+03:00 - Agent 4
+- Second-opinion SDK review found a real issue after commit `c420c5a`: the public Responses signature removed `metadata`, but both child live canaries still sent `metadata` in the `openai.params.responses` row. That would make Python fail before network and TypeScript send a gateway-unsupported parameter.
+- Fixed both child canaries to use the gateway-supported Responses adapter parameter `top_p` instead of `metadata`.
+- Added TS and Python regression tests that isolate the `openai.params.responses` canary blocks and fail if `metadata` returns there.
+- Verified the fix with focused tests: `pnpm --dir typescript test -- --reporter dot --testTimeout 5000 -t "Responses adapter parameter contract"` passed; `python -m pytest python\tests\test_runinfra_sdk.py -q -k "child_responses_param_canaries_use_supported_adapter_fields"` passed.
+- Verified direct canary smoke: imported `scripts/sdk-live-canary-python.py`, called `_responses_params()` against a fake traced Responses envelope, and confirmed the outgoing body contains `"top_p":1`, contains no `metadata`, and preserves `_request_id` evidence. `python -m py_compile scripts\sdk-live-canary-python.py` also passed.
+- Re-ran broad SDK gates: TS typecheck passed; full TS suite passed 209 tests; full Python suite passed 134 tests and 133 subtests; `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`, `node scripts\verify-workflow-policy.mjs`, `node scripts\secret-scan-policy.mjs`, and `git diff --check` passed. `git diff --check` only printed expected Windows LF-to-CRLF warnings on touched files.
+- CodeRabbit CLI was not installed, so the external CLI review could not run. Subagent review covered the SDK and gateway diffs; the SDK review finding above was fixed before finalizing this checkpoint.
+
+### 2026-05-25T13:48:20+03:00 - Agent 4
+- Regenerated package artifacts again from current SDK HEAD `f263835` after the live-canary parameter correction: `pnpm --dir typescript pack` and `python -m build python --outdir python\dist` passed.
+- Verified current regenerated artifacts: `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz`, `python scripts\verify-python-package.py python\dist`, `python -m twine check python\dist\runinfra-0.1.4-py3-none-any.whl python\dist\runinfra-0.1.4.tar.gz`, and `node scripts\verify-clean-installs.mjs --package both --mode artifact` passed.
+- Current regenerated artifact digests: npm tarball `19db4c783fa0f8336c9e8c63196c6f322a8f8bb4d3464fdb6e431ed8fbc3000e`; Python wheel `49f5977540135116a55f4e4f77f30a33827efcacec22175b9e9164683ab54477`; Python sdist `1f44dafe558fcec70e98ffc157577755794ecf754fcf3cacb773a50a178deed3`.
+
+### 2026-05-25T13:52:32+03:00 - Agent 4
+- Refreshed the current-shell strict artifact preflight with `node scripts\run-sdk-live-canaries.mjs --package-source artifact --preflight --strict --report artifacts\sdk\live-canary-readiness-current-head.json`. It failed as expected because this shell has no live `RUNINFRA_*` canary environment loaded: 19 ready rows, 30 blocked rows. Candidate identity in the report is SDK `0.1.4`, source digest `a6dbc1eac6a28ec8d6cc53995e86b1a34af135fdf4caaefbe4a1dbb81daf305e`, source file count 16.
+- Parsed the latest env-backed readiness artifacts already present in the repo. They remain blocked at 34 ready rows, 15 blocked rows. The blocked rows are the multimodal model/fixture rows (`RUNINFRA_EMBEDDING_MODEL`, `RUNINFRA_IMAGE_MODEL`, `RUNINFRA_TTS_MODEL`, `RUNINFRA_ASR_MODEL`, image size/format, TTS voice or reference audio/text, ASR fixture/expected text/language/format), voice pipeline audio/expected text, and `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1`.
+- Parsed the latest env-backed artifact live canary report. It remains TypeScript 33 passed / 1 failed / 15 skipped and Python 33 passed / 1 failed / 15 skipped. The failed row in both languages is still `error.body.unsupported_parameter` with diagnostic `unexpected_success`; skipped rows are the same multimodal/idempotency rows.
+- Ran additional local GA gates: `pnpm --dir typescript install --frozen-lockfile` passed; `python -m pip install -r python\requirements-dev.txt` passed with pinned packages already satisfied; `node scripts\verify-version-sync.mjs` passed for SDK `0.1.4`; GitHub code-scanning status passed with no open high/critical alerts for `RightNow-AI/runinfra-sdk`.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed. The next real GA movement requires explicit deployment/publish/provisioning approval or a loaded live canary env that supplies the missing multimodal/idempotency inputs.
+
+### 2026-05-25T13:56:05+03:00 - Agent 4
+- Hardened promotion source identity so shipped package docs cannot drift from live evidence. Added a regression that failed until the canonical live-canary source digest manifest included both shipped SDK READMEs.
+- Updated `scripts/live-canary-source-files.mjs` to include `typescript/README.md` and `python/README.md`. This forces strict readiness/live promotion reports to be regenerated after package README contract or GA-status changes, preventing stale live reports from blessing changed shipped docs.
+- Verified the TDD cycle: focused test first failed because `typescript/README.md` was absent from `sourceDigestFileLabels`, then passed after the manifest update.
+- Re-ran local gates: TS typecheck passed; full TS suite passed 210 tests; full Python suite passed 134 tests and 133 subtests; `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`, `node scripts\verify-workflow-policy.mjs`, `node scripts\secret-scan-policy.mjs`, and `git diff --check` passed. `git diff --check` only printed expected Windows LF-to-CRLF warnings on touched files.
+- Refreshed current-shell strict artifact preflight again. It remains blocked because this shell has no live `RUNINFRA_*` canary environment loaded: 19 ready rows, 30 blocked rows. New candidate identity: SDK `0.1.4`, source digest `77c181d7d6ede6b8765ff4ea990579f0e328a388b50c6fd4b9381c677a3bb91a`, source file count 18.
+
+### 2026-05-25T13:58:06+03:00 - Agent 4
+- Extended the same shipped-doc promotion hardening to package changelogs. The TypeScript npm tarball and Python wheel/sdist both ship `CHANGELOG.md`, so changelog edits can change user-visible GA claims and must invalidate strict promotion evidence.
+- Added a regression that failed until `scripts/live-canary-source-files.mjs` included `typescript/CHANGELOG.md` and `python/CHANGELOG.md`, then added both files to the canonical live-canary source digest manifest.
+- Verified focused TDD cycle: `pnpm --dir typescript test -- --reporter dot --testTimeout 5000 -t "includes shipped SDK changelogs in live promotion source digests"` failed before the manifest change and passed after it.
+- Re-ran local gates: TS typecheck passed; full TS suite passed 211 tests; full Python suite passed 134 tests and 133 subtests; `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`, `node scripts\verify-workflow-policy.mjs`, `node scripts\secret-scan-policy.mjs`, and `git diff --check` passed. `git diff --check` only printed expected Windows LF-to-CRLF warnings on touched files.
+- Refreshed current-shell strict artifact preflight again. It remains blocked because this shell has no live `RUNINFRA_*` canary environment loaded: 19 ready rows, 30 blocked rows. New candidate identity: SDK `0.1.4`, source digest `ec132a1be81b4496457e2cbf7c9158bc8bb4cdc846b40345affb4e92d02a799c`, source file count 20.
+
+### 2026-05-25T14:01:04+03:00 - Agent 4
+- Hardened promotion identity again so live evidence is invalidated by changes to the scripts and workflows that decide whether a real npm/PyPI publish is allowed.
+- Added a regression that failed until `scripts/live-canary-source-files.mjs` included the production publish gate scripts and workflows: `verify-promotion-reports`, `verify-promoted-artifacts`, npm/Python package scanners, clean-install verifier, version sync, publish-dispatch guard, workflow-policy evaluator/verifier, `.github/workflows/ci.yml`, and `.github/workflows/publish.yml`.
+- Verified focused TDD cycle: `pnpm --dir typescript test -- --reporter dot --testTimeout 5000 -t "production publish gate scripts and workflows"` failed before the manifest change, then passed after the manifest update.
+- Refreshed current-shell strict artifact preflight with `node scripts\run-sdk-live-canaries.mjs --package-source artifact --preflight --strict --report artifacts\sdk\live-canary-readiness-current-head.json`. It remains blocked because this shell has no live `RUNINFRA_*` canary environment loaded: 19 ready rows, 30 blocked rows. New candidate identity: SDK `0.1.4`, source digest `0c37433c2cb627340b0a8f0f007bcecf2d70a93c653014ee2fd5689258160659`, source file count 31.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:03:43+03:00 - Agent 4
+- Followed the parallel release-gate review finding and extended promotion digest coverage to the clean-install helper modules that control canonical npm/PyPI registry behavior: `scripts/clean-install-policy.mjs` and `scripts/registry-version-preflight.mjs`.
+- Closed a stronger freshness gap in `scripts/verify-promotion-reports.mjs`: the verifier now recomputes the current canonical promotion source digest and rejects same-count stale readiness/live report pairs, instead of accepting reports just because they agree with each other.
+- Verified focused TDD cycles:
+  - `pnpm --dir typescript test -- --reporter dot --testTimeout 5000 -t "production publish gate scripts and workflows"` failed until the two clean-install helper modules were added to `scripts/live-canary-source-files.mjs`, then passed.
+  - `pnpm --dir typescript test -- --reporter dot --testTimeout 5000 -t "verifies promotion reports use the same candidate digest"` failed because a stale same-count report pair was accepted, then passed after the verifier recomputed the current source digest.
+- Refreshed current-shell strict artifact preflight again. It remains blocked because this shell has no live `RUNINFRA_*` canary environment loaded: 19 ready rows, 30 blocked rows. New candidate identity: SDK `0.1.4`, source digest `700de231e3a10a42f9109dd2378f718f0ec8659b267df1171d92527c705e7707`, source file count 33.
+- Ran `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-artifact.json`; it failed as expected, now explicitly rejecting the stale live report source digest/count in addition to the existing blocked readiness, failed unsupported-parameter row, skipped multimodal rows, and skipped idempotency row.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:05:38+03:00 - Agent 4
+- Addressed the Python production-ergonomics GA requirement without overclaiming async support. The decision remains sync-only for `runinfra==0.1.4`; `AsyncRunInfra` is intentionally not exported until it has unit, streaming, live-canary, artifact, and install parity.
+- Added runnable Python README examples for `asyncio.to_thread` and FastAPI `BackgroundTasks` so ASGI users have safe patterns that do not block the event loop or fake an async client.
+- Added a Python regression requiring the async-runtime guidance and confirming `AsyncRunInfra` is absent from the public module. Focused TDD: `python -m pytest python\tests\test_runinfra_sdk.py -q -k "sync_only_async_runtime_patterns"` failed before the docs change and passed after it.
+- Updated `python/CHANGELOG.md` to record the sync-only async-runtime guidance.
+- Refreshed current-shell strict artifact preflight again. It remains blocked because this shell has no live `RUNINFRA_*` canary environment loaded: 19 ready rows, 30 blocked rows. New candidate identity: SDK `0.1.4`, source digest `322672a372a3d88688507169065e3bb22e31c4b6384d8e7a23454870c413a93b`, source file count 33.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:08:13+03:00 - Agent 4
+- Rechecked the browser-security requirement before changing anything. The TypeScript SDK already fails closed in detected browser runtimes unless `dangerouslyAllowBrowser: true` is explicitly set, and the public docs state to keep bearer-key calls on server routes/backend proxies. No browser code change was needed.
+- Regenerated current package artifacts from HEAD after the Python README/changelog changes: `pnpm --dir typescript install --frozen-lockfile`, `python -m pip install -r python\requirements-dev.txt`, `node scripts\verify-version-sync.mjs`, `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist` all completed.
+- Verified rebuilt artifact contents and metadata: `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz`, `python scripts\verify-python-package.py python\dist`, `python -m twine check python\dist\runinfra-0.1.4-py3-none-any.whl python\dist\runinfra-0.1.4.tar.gz`, and `node scripts\verify-clean-installs.mjs --package both --mode artifact` passed.
+- Current rebuilt artifact digests: npm `19db4c783fa0f8336c9e8c63196c6f322a8f8bb4d3464fdb6e431ed8fbc3000e`; Python wheel `3c0073d02ec200ed078f67d85bd6fa1458e04b3ff9be4718e6dff6f96704de22`; Python sdist `c75b4209b7b09a1f45678990a3a232b7cb6c0d09aac050375a1f41134c881056`.
+- Refreshed current-shell strict artifact preflight and current no-env artifact live report. Both use source digest `322672a372a3d88688507169065e3bb22e31c4b6384d8e7a23454870c413a93b`, source file count 33. Preflight remains blocked at 19 ready / 30 blocked because no live `RUNINFRA_*` canary env is loaded. The no-env artifact live report is TypeScript 19 passed / 0 failed / 30 skipped and Python 19 passed / 0 failed / 30 skipped.
+- Ran `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json`; it failed as expected on blocked readiness rows and skipped live rows, without stale digest/count errors.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:09:47+03:00 - Agent 4
+- Reverified the isolated RunPipe gateway fix candidate for the production `error.body.unsupported_parameter` blocker. The worktree `RunPipe-sdk-gateway-main-20260525` is clean on `fix/sdk-gateway-contracts-main-20260525` and remains ahead of `origin/main` by 12 commits.
+- Focused gateway checks passed: `pnpm test -- app/api/v1/[...path]/route.test.ts -t "rejects reserved runinfra-prefixed responses parameters before proxying"`; `pnpm test -- app/api/v1/workspace-flat.test.ts -t "rejects reserved runinfra-prefixed body parameters before proxying"`; `pnpm test -- lib/api/responses-compat.test.ts` with 16 tests; and `pnpm typecheck`.
+- This is local evidence only. The branch has still not been pushed or deployed by Agent 4, so production can still return `unexpected_success` for the SDK unsupported-parameter canary until an approved deploy lands.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:10:24+03:00 - Agent 4
+- Rechecked the GitHub security gate using the authenticated `gh` CLI token without printing or storing the token. `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` passed: no open high/critical code-scanning alerts for `RightNow-AI/runinfra-sdk`.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:14:53+03:00 - Agent 4
+- Hardened promotion identity for repo-level public SDK docs. `README.md` and `AGENT-NOTES.md` now participate in the canonical live-canary source digest, so public GA/beta/readiness/security claims in those files invalidate stale readiness and live promotion evidence.
+- Followed a focused TDD cycle. Added `includes repo-level public SDK docs in live promotion source digests`; it failed before the manifest change because `README.md` was absent from `sourceDigestFileLabels`, then passed after `scripts/live-canary-source-files.mjs` included both repo-level docs.
+- Refreshed current-shell strict artifact preflight and no-env artifact live reports after the manifest change. Both reports now use source digest `d9189db411e8ea2c700518752e706bc79e45b75ed218fb5551c6ac6cd09bf638`, source file count `35`, SDK `0.1.4`, package source `artifact`.
+- Current-shell strict artifact preflight remains blocked because no live `RUNINFRA_*` canary environment is loaded in this shell: readiness summary `19` ready rows and `30` blocked rows.
+- Current no-env artifact live report remains strict-failing by design: TypeScript `19` passed / `0` failed / `30` skipped, Python `19` passed / `0` failed / `30` skipped. Skipped rows remain the live multimodal, voice pipeline, model-specific, and idempotency rows that require real canary env/fixtures.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json` fails on blocked readiness rows and skipped live rows. It no longer reports stale source digest or source file count disagreement for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:18:48+03:00 - Agent 4
+- Hardened package leakage scanners against `sourceURL=` debug/source disclosure comments in addition to existing `sourceMappingURL`, `sourcesContent`, and `webpack://` checks.
+- Followed a focused TDD cycle in both SDK test suites. The TypeScript release-scanner test and Python package-verifier test both failed on `sourceURL=runinfra-sdk://...` before the scanner changes, then passed after adding the JS and Python scanner rules.
+- Verified current built artifacts against the stronger scanners: `node scripts\verify-npm-package.mjs typescript\runinfra-sdk-0.1.4.tgz` and `python scripts\verify-python-package.py python\dist` passed. Also ran `node scripts\secret-scan-policy.mjs` as a module-load/policy syntax check.
+- Refreshed current-shell strict artifact preflight and no-env artifact live reports again. Both now use source digest `348a23994c123dc590d8650e43b659495a22ffda3ccc2c5c97f8e17cbf636ff0`, source file count `35`, SDK `0.1.4`, package source `artifact`.
+- Current-shell strict artifact preflight remains blocked because no live `RUNINFRA_*` canary environment is loaded in this shell: readiness summary `19` ready rows and `30` blocked rows. Current no-env artifact live report remains TypeScript `19` passed / `0` failed / `30` skipped and Python `19` passed / `0` failed / `30` skipped.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json` still fails on blocked readiness rows and skipped live rows. No stale digest or source file count disagreement is present in this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:26:15+03:00 - Agent 4
+- Hardened the real-publish promotion gate so `scripts\verify-promotion-reports.mjs` requires `--artifacts-root` and recomputes the npm tarball, Python wheel, and Python sdist SHA-256 values from staged artifact files. This prevents a forged or stale live canary report from blessing different downloaded artifacts.
+- Followed focused TDD cycles. `rejects promotion reports whose artifact digests do not match staged artifacts` failed before implementation because `--artifacts-root` was ignored, then passed after the verifier recomputed staged artifact hashes. `requires real publish to pass strict promotion reports for the exact package artifacts` failed until `.github\workflows\publish.yml` and `scripts\workflow-policy.mjs` required `--artifacts-root .`.
+- Second-opinion review found two important verifier gaps before commit: omitted `--artifacts-root` could still pass forged digest reports, and the forged-digest regression only covered npm. Both were fixed before final verification by requiring `--artifacts-root` and checking forged npm, Python wheel, and Python sdist digests independently.
+- Updated public/internal command snippets in the root README, package READMEs, `LIVE-CANARIES.md`, and `AGENT-NOTES.md` to include `--artifacts-root .`, and documented that promotion digest evidence is checked against the staged artifact files.
+- Rebuilt current package artifacts from this source state after package README/doc changes, then refreshed current-shell strict artifact preflight and no-env artifact live reports. After the second-opinion verifier fixes, both reports now use source digest `0291cce94a4f0eeafa75ab7b40f0144557626a7a0d4f2198c230040f3377cf69`, source file count `35`, SDK `0.1.4`, package source `artifact`.
+- Current rebuilt artifact digests: npm `b96dcd1e4bd74a36183d55dc53d7e9a7dbfaf72694699eeece5636f4128385e0`, Python wheel `17a19c71e0fbcee7302e213725b79e805330f4703231460f82a1dae93ebcb03d`, Python sdist `151c338e56b4d81567c3ad452c9da46c9c6c7e8ca89d93108c25996a5cc76464`.
+- Reverified rebuilt package artifacts before this checkpoint: npm package scanner, Python package scanner, Twine metadata check, version sync, and clean artifact consumer installs passed.
+- Current-shell strict artifact preflight remains blocked because no live `RUNINFRA_*` canary environment is loaded in this shell: readiness summary `19` ready rows and `30` blocked rows. Current no-env artifact live report remains TypeScript `19` passed / `0` failed / `30` skipped and Python `19` passed / `0` failed / `30` skipped.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` still fails on blocked readiness rows and skipped live rows. No stale digest, source file count, or staged artifact digest mismatch is present in this refreshed pair.
+- Final local verification after the second-opinion fixes passed: TypeScript typecheck; full TypeScript suite `214` tests; full Python suite `135` tests and `134` subtests; surface coverage; workflow policy; secret policy; diff whitespace check; npm package scanner; Python package scanner; Twine check; version sync; and clean artifact install/import for npm, Python wheel, and Python sdist.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T14:42:10+03:00 - Agent 4
+- Hardened `scripts\verify-promotion-reports.mjs` so each TypeScript/Python child live-canary summary must be present and must report `passed === expectedRows.length`, `failed === 0`, and `skipped === 0`. This closes a promotion-evidence gap where row details could be complete but the summary still underreported the strict matrix.
+- Followed a focused TDD cycle. The promotion verifier regression first failed because a live report with a mismatched TypeScript child summary still passed; after the verifier change and valid fixture summary updates, the focused test passed.
+- Refreshed current no-env artifact readiness and live reports after the verifier change. Both reports use SDK `0.1.4`, package source `artifact`, source digest `cc62b8092e91975436ae48a9a3db1ca7573a2d4ed980340c6ac11761c4d7a977`, and source file count `35`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded in this shell: `19` ready rows and `30` blocked rows. Current no-env artifact live report remains TypeScript `19` passed / `0` failed / `30` skipped and Python `19` passed / `0` failed / `30` skipped.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` now fails on the known blocked/skipped rows and also reports strict summary count errors for the no-env live reports. It does not report stale source digest, source file count, or staged artifact digest mismatch for the refreshed pair.
+- Verification passed before this checkpoint: `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit`; `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` with `214` tests; `python -m pytest python\tests -q` with `135` tests and `134` subtests; `node --check scripts\verify-promotion-reports.mjs`; `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`; `node scripts\verify-workflow-policy.mjs`; `node scripts\secret-scan-policy.mjs`; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T15:07:06+03:00 - Agent 4
+- Integrated the parallel sidecar findings from Fermat, Leibniz, and Einstein into the SDK hardening checkpoint. Fermat found Python/package scanners missed Python registry credential config families; Leibniz found parent live-canary parity could still report passed when strict child rows failed or skipped; Einstein found the TypeScript Responses envelope lacked `created_at` and package READMEs underdocumented typed Responses adapter fields.
+- Hardened package leakage scanners for Python registry credential config material while keeping artifact docs usable. Actual `.pypirc`, `.netrc`, `pip.conf`, and `pip.ini` files are still rejected by package path policy, and content scanners now reject credential config syntax such as npm auth token config, PyPI config sections with username/password, netrc machine/login/password records, and pip index URLs with embedded credentials. A scanner false positive against shipped changelog prose was reproduced by artifact verification and fixed by separating path-level bans from content-level credential syntax detection.
+- Hardened parent live-canary parity in `scripts\run-sdk-live-canaries.mjs`: strict parent reports now fail if child language, strict flag, base URL, row order, row status, row summary counts, or strict pass/fail/skip totals disagree with the expected matrix. This prevents no-env or partially failing child reports from being summarized as parent-passed.
+- Aligned the TypeScript Responses response envelope with observed OpenAI-style gateway shape by adding `created_at?: number` to `ResponsesCreateResponse`, and updated TypeScript/Python package READMEs plus changelogs to document typed Responses fields: `model`, `input`, `stream`, `instructions`, `temperature`, `top_p`, `tools`, `tool_choice`, `response_format`, and `max_output_tokens`.
+- Focused TDD evidence:
+  - Credential scanner regressions failed on missing `.pypirc`/`.netrc`/pip config coverage before implementation, then passed after scanner hardening. After the changelog false positive was found, focused tests were updated to require real credential-config syntax to fail and harmless filename prose to pass.
+  - Parent live-canary parity regression failed because strict child skipped/failed rows still allowed parent exit `0`, then passed after parent parity became fail-closed.
+  - Responses docs/type regression failed because the package READMEs omitted the full typed Responses field list, then passed after README updates and the TS `created_at` envelope addition.
+- Rebuilt publishable artifacts from this source state: `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist` passed. Current artifact hashes in `artifacts\sdk\live-canary-current-head-noenv.json`: npm `e968af7b85d43b90d4edddf921dd873dc4fff2a70afd39c56590017aa15147c1`; Python wheel `93e0aa957c47bccd55c95cff5366b4d9913f72e4e662c082eb850581769b0584`; Python sdist `a139beea133c4508f3e3e22ab5bf68d814e697c83df8835cb807c29698277cef`.
+- Reverified rebuilt artifacts and policy gates: npm package scanner passed, Python wheel/sdist scanner passed, Twine check passed, version sync passed for SDK `0.1.4`, clean artifact install/import passed for npm, Python wheel, and Python sdist, surface coverage passed with `49` rows and no uncovered public surfaces, workflow policy passed, and scanner module load passed.
+- Full local verification passed after the final scanner adjustment: `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit`; `pnpm --dir typescript test -- --reporter dot --testTimeout 5000` with `216` tests; `python -m pytest python\tests -q` with `135` tests and `137` subtests; `node --check scripts\run-sdk-live-canaries.mjs`; `node --check scripts\secret-scan-policy.mjs`; `node --check scripts\verify-npm-package.mjs`; and `python -m py_compile scripts\verify-python-package.py`.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `514237f0676341119739d8482e8c4ee05f50935606d5abe336fc93221ebdeb2c`, and source file count `35`. Readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded in this shell: `19` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `19` passed / `0` failed / `30` skipped and Python `19` passed / `0` failed / `30` skipped, with parent parity now failed by design on skipped strict rows.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` failed as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. It did not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T15:30:40+03:00 - Agent 4
+- Integrated a fresh read-only sidecar audit from Euler. The concrete promotion-evidence gap was that `scripts\verify-promotion-reports.mjs` validated readiness row status/missing data but did not validate `readiness.summary`, so a forged or stale summary could contradict the rows while the promotion verifier still passed.
+- Fixed the gap in `readinessErrors(report)`: readiness summaries must now be present, `summary.ready` must match the number of ready rows and equal `expectedRows.length`, and `summary.blocked` must match blocked rows and equal `0`.
+- Followed a focused TDD cycle. The TypeScript promotion verifier test first failed because a readiness report with `summary: { ready: expectedRows.length - 1, blocked: 1 }` still exited `0`; after the verifier change and valid fixture summary updates, the focused test passed and asserts both `readiness summary ready count must be 49` and `readiness summary blocked count must be 0`.
+- Updated `LIVE-CANARIES.md`, `AGENT-NOTES.md`, and both package changelogs to document that promotion readiness summaries must prove every canonical row is ready with zero blocked rows. Added TS/Python doc regressions so the public/internal promotion docs stay aligned with the verifier.
+- Faraday's separate read-only audit found a useful next local SDK polish item: Python `chat.completions.create(stream=True)` and `responses.create(stream=True)` runtime behavior is correct, but the public Python type surface lacks overloads that statically narrow `stream=True` to `RunInfraStream`. This was not changed in this checkpoint and should be considered for the next local TDD pass.
+- Rebuilt publishable artifacts from this source state after changelog/doc changes: `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist` passed.
+- Verification passed: `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit`; full TypeScript suite `216` tests; full Python suite `135` tests and `137` subtests; `node --check scripts\verify-promotion-reports.mjs`; npm package scanner; Python wheel/sdist scanner; Twine check; version sync; clean artifact install/import for npm, Python wheel, and Python sdist; surface coverage; workflow policy; scanner module load; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `f0debc4c0385fa8817632b03822aa9cb29dd484725b78422cbc61998e40a5a4e`, and source file count `35`. Current artifact hashes in `artifacts\sdk\live-canary-current-head-noenv.json`: npm `d21f36d615b365b13e7b85e04bc7f234939d23871cf4b44654f5a8964258638d`; Python wheel `90558676620162e5a91bc1dd9ec4006f24aa657d0e4ea1428385314963a2e9c4`; Python sdist `45d2776c18e404cd55fc36a74ee2b6ff8cfa5349491f0f4df34f44c661d9062e`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded in this shell: readiness summary `19` ready rows and `30` blocked rows. Current no-env artifact live report remains TypeScript `19` passed / `0` failed / `30` skipped and Python `19` passed / `0` failed / `30` skipped.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, parent parity failure, child summary count errors, and now explicit readiness summary errors. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T15:38:02+03:00 - Agent 4
+- Continued the Python production-ergonomics track from Faraday's read-only audit: Python streaming runtime behavior already returned `RunInfraStream`, but `chat.completions.create(stream=True)` and `responses.create(stream=True)` did not expose overload metadata that statically narrows the return type.
+- Added a focused TDD regression in `python\tests\test_runinfra_sdk.py`. The RED run failed with `KeyError: typing.Literal[True]` for both `_ChatCompletions.create` and `_Responses.create`, proving the public overload metadata was absent.
+- Added stdlib-only `typing.overload` / `typing.Literal` declarations in `python\runinfra\__init__.py`: `stream=True` narrows to `RunInfraStream`, `stream=False` or omitted narrows to the non-stream response envelope, and a dynamic `bool` stream value returns the existing union. The implementation bodies were left unchanged.
+- Updated Python package docs and changelog to document the streaming type-surface improvement.
+- Verification passed: focused Python overload regression; full Python suite `136` tests and `139` subtests; `python -m compileall -q python\runinfra`; Python wheel/sdist build; Python package scanner; Twine check; clean artifact install/import for Python wheel and sdist; version sync; secret-scan policy; live-canary surface coverage; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T15:42:44+03:00 - Agent 4
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports after the Python overload checkpoint. Both use SDK `0.1.4`, package source `artifact`, source digest `e821fda4a495cfa8e973981ef6780020605685fbd3eb42b3e5fbcdcb6063567e`, and source file count `35`.
+- Current artifact hashes in `artifacts\sdk\live-canary-current-head-noenv.json`: npm `d21f36d615b365b13e7b85e04bc7f234939d23871cf4b44654f5a8964258638d`; Python wheel `1bffd7bdcce006e82feaad31dcd3e3cc5672d44f0fcb77cadade07080d2fb494`; Python sdist `6b69904efc1567f33c57d65287f29d5b1ebbe90293e43b2007ca9bb89c0f71a2`.
+- Readiness remains blocked in this shell because no live `RUNINFRA_*` canary environment is loaded: readiness summary `19` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `19` passed / `0` failed / `30` skipped and Python `19` passed / `0` failed / `30` skipped.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, readiness summary counts, skipped live rows, child summary counts, and parity. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T16:15:46+03:00 - Agent 4
+- Hardened promotion source identity for package/source-disclosure safety. The RED TypeScript regression first failed because `scripts\live-canary-source-files.mjs` did not bind `typescript\tsconfig.json` or `python\MANIFEST.in`, meaning compiler source-map or sdist-manifest changes could avoid changing the promotion source digest.
+- Added `typescript\tsconfig.json` and `python\MANIFEST.in` to the canonical promotion source manifest. Added a regression that verifies TypeScript source-map compiler options are not enabled and that the package build config files stay in the source digest.
+- Extended TypeScript and Python scanner regressions to cover all implemented source-disclosure markers, not just `sourceURL`: `sourceMappingURL`, `sourcesContent`, and `webpack://`.
+- Integrated the completed package-leakage sidecar audit. The separate live-canary/public-surface sidecar rate-limited before completion, so it was not used as evidence.
+- Verification passed: focused TS source-digest/docs/scanner regressions; focused Python scanner regression; `pnpm --dir typescript exec tsc -p tsconfig.json --noEmit`; full TS suite `217` tests; full Python suite `136` tests and `142` subtests; `node scripts\secret-scan-policy.mjs`; `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage`; `pnpm --dir typescript build`; `pnpm --dir typescript pack`; `python -m build python --outdir python\dist`; `node scripts\verify-version-sync.mjs`; npm package scanner; Python package scanner; Twine check; clean artifact install/import for npm, Python wheel, and Python sdist; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `9143a6afae9784bf5c3e4fcb0ffe70b8aac03bd7f0f28a4aeef0f109efbffbcb`, and source file count `37`. Current artifact hashes: npm `3329b5677abec1258480dcb2e3d4e7fa14ffc5dffbe634b968ff0a514c9da367`; Python wheel `150d7b4bf35d63808312801c7cfdf0c31de97dc6a91222829a37e3b2596b05c1`; Python sdist `90823cc427e078d4d36386d9f3bd2914bd76dafb043b93a775fb202234aeda37`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `19` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `19` passed / `0` failed / `30` skipped and Python `19` passed / `0` failed / `30` skipped.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, readiness summary counts, skipped live rows, child summary counts, and parity. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T15:44:30+03:00 - Agent 4
+- Verified the external GitHub code-scanning release gate read-only with the existing `gh` authenticated account by exporting the token only inside the shell process: `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` passed with no open high/critical alerts.
+- Verified secure workflow policy and dry-run dispatch locally: `node scripts\verify-workflow-policy.mjs` passed all OIDC, trusted-publisher, branch lock, SHA-pinning, no-token, artifact, clean-install, version-sync, and strict-promotion checks; `node scripts\verify-publish-dispatch.mjs --dry-run --version 0.1.4` passed.
+- This is read-only release-gate evidence only. It does not replace strict live artifact canaries, which remain blocked/skipped without a loaded live `RUNINFRA_*` canary environment.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T15:46:27+03:00 - Agent 4
+- Checked canonical registry availability read-only. `node scripts\verify-clean-installs.mjs --package both --mode registry --version 0.1.4` failed at registry preflight because npm `@runinfra/sdk@0.1.4` and PyPI `runinfra==0.1.4` are not available.
+- Confirmed visible registry versions: `npm view @runinfra/sdk versions --json` returned `0.1.0` through `0.1.3`; `python -m pip index versions runinfra` reported latest `0.1.3`. Current local SDK version remains `0.1.4`, so the current local candidate has not been published to canonical registries.
+- This is a publish-state gap, not a local package build gap. Do not publish until strict live artifact canaries pass and the user gives explicit current publish approval.
+
+### 2026-05-25T15:58:58+03:00 - Agent 4
+- Fixed a docs truth gap with TDD. The RED doc tests failed because root/package READMEs still said strict live source canaries currently passed chat/responses rows except one production unsupported-parameter row. That wording contradicted the refreshed current-head evidence where strict artifact reports are still blocked/skipped without live canary env.
+- Updated root README, TypeScript README, Python README, `AGENT-NOTES.md`, and both package changelogs to say current `0.1.4` promotion artifacts are not strict-live green and that publish requires fresh production artifact canaries with zero skipped or failed rows.
+- Verification passed: focused TypeScript doc regressions; focused Python doc regression; full TypeScript suite `216` tests; full Python suite `136` tests and `139` subtests; TypeScript typecheck/build/pack; Python wheel/sdist build; npm package scanner; Python package scanner; Twine check; version sync; secret-scan policy; live-canary surface coverage; and clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `e0f0bac074aa1539b99725ef8a12337a4e9ac6d2b0267a6e400c838e52d312de`, and source file count `35`. Current artifact hashes: npm `f65ee49d0abcd201cce6f0fa90f0298c08fcfbde8d7720779c18aaa250a4a995`; Python wheel `67430ab22edb2527d2e9057df1a1347109f55c5ca4fed5e934be5a8f61a277f6`; Python sdist `d72b5df43d83a0d579b780f23a862a2ca955ff75d8d22075af4c96582435d161`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `19` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `19` passed / `0` failed / `30` skipped and Python `19` passed / `0` failed / `30` skipped.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, readiness summary counts, skipped live rows, child summary counts, and parity. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T16:34:52+03:00 - Agent 4
+- Continued the request-option hardening track with a focused local canary row for user-supplied client request IDs. The RED TypeScript and Python parity tests first failed because `request.client_request_id.local` was absent from the canonical matrix, parent readiness, child canaries, docs, and surface coverage.
+- Added `request.client_request_id.local` to the canonical live canary matrix, parent readiness requirements, public-surface coverage, TypeScript child canary, Python child canary, `LIVE-CANARIES.md`, and both package changelogs.
+- The new row runs against deterministic local artifact-installed SDK transports, not production. It proves `clientRequestId` / `client_request_id` is sent as `X-Client-Request-Id`, that the server `x-request-id` remains exposed as `_request_id`, and that the client request ID plus option key names are not serialized into JSON request bodies.
+- Verification passed: focused TS parity test for local client request ID coverage; focused Python parity test; `node --check scripts\run-sdk-live-canaries.mjs`; `node --check scripts\sdk-live-canary-typescript.mjs`; `python -m py_compile scripts\sdk-live-canary-python.py`; surface coverage with `50` rows and no uncovered public surfaces; TypeScript typecheck; full TypeScript suite `218` tests; full Python suite `137` tests and `142` subtests; secret-scan policy; version sync; `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Rebuilt publishable artifacts and reverified them: `pnpm --dir typescript build`; `pnpm --dir typescript pack`; `python -m build python --outdir python\dist`; npm package scanner; Python wheel/sdist scanner; Twine check; clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `291db7c7aaa7b00c1349ae5ace518648c8d24598778aab0cc35afcf3fcaf182f`, and source file count `37`. Current artifact hashes: npm `3ace5f36e125ce97eb75dc49a3892fbc32dba073481e23bce1ee90069c099cff`; Python wheel `93538502ede5d92452f0f7f6d250d1021a35ccee94d3cc39ac9023fc8ccbbfbc`; Python sdist `58678e7b329cf9d8020f168164350a870597b3d9b911d00d06272653ce5a83e4`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `20` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `20` passed / `0` failed / `30` skipped and Python `20` passed / `0` failed / `30` skipped. The new `request.client_request_id.local` row passed in both languages with `clientRequestIdHeader=present`.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T16:45:18+03:00 - Agent 4
+- Extended request-option hardening with a second local artifact canary row, `request.custom_headers.local`. The RED TypeScript and Python parity tests first failed because the row was absent from the canonical matrix and child canary wiring.
+- Added the row to the canonical live canary matrix, parent readiness requirements, public-surface coverage, TypeScript child canary, Python child canary, `LIVE-CANARIES.md`, and both package changelogs.
+- The new row runs against deterministic local installed-artifact SDK transports. It proves allowed app metadata headers are sent as HTTP headers, that `headers`, the custom header name, and the custom header value are not serialized into JSON request bodies, and that attempting to override `Authorization` fails as `invalid_request_options` before another request is sent.
+- Verification passed: focused TS parity test for local custom-header coverage; focused Python parity test; `node --check scripts\run-sdk-live-canaries.mjs`; `node --check scripts\sdk-live-canary-typescript.mjs`; `python -m py_compile scripts\sdk-live-canary-python.py`; surface coverage with `51` rows and no uncovered public surfaces; TypeScript typecheck; full TypeScript suite `219` tests; full Python suite `138` tests and `142` subtests; secret-scan policy; version sync; workflow policy; dry-run publish dispatch; Python compileall; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Rebuilt publishable artifacts and reverified them: `pnpm --dir typescript build`; `pnpm --dir typescript pack`; `python -m build python --outdir python\dist`; npm package scanner; Python wheel/sdist scanner; Twine check; clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `e19ee2c2eedeb13671d735c8213fa343378d14a424345dd32bf2dcee9031bf0e`, and source file count `37`. Current artifact hashes: npm `5c27f94b4aa1f861c5a7528af456f93b0a83f2adc09ac0f26224bcfe5b38f562`; Python wheel `238bff68c049436f999bd43ae7467d1e3067a378cd6f9c50f93d0fe0e8e84182`; Python sdist `8ccb88c2c610dc5264feec0bcbaf7142eabe09fb5daed4f07eae85b2e6ea4743`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `21` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `21` passed / `0` failed / `30` skipped and Python `21` passed / `0` failed / `30` skipped. The new `request.custom_headers.local` row passed in both languages with `customHeader=present`, `rejectedOverride=authorization`, and `errorType=invalid_request_options`.
+- Second-opinion review from Archimedes found no critical, important, or minor issues and assessed the patch ready to merge.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T17:03:21+03:00 - Agent 4
+- Extended request-option hardening with `request.timeout.local`. The RED TypeScript and Python parity tests first failed because the row was absent from the canonical matrix, parent readiness, child canaries, docs, and surface coverage.
+- Added the row to the canonical live canary matrix, parent readiness requirements, public-surface coverage, TypeScript child canary, Python child canary, `LIVE-CANARIES.md`, and both package changelogs.
+- The TypeScript child canary uses a deterministic local artifact-installed transport with client default `timeoutMs: 1000`, then calls `responses.create()` with per-request `{ timeoutMs: 5, maxRetries: 0 }`. It requires an `AbortSignal`, fails closed if no abort arrives within 250 ms, records abort latency, asserts exactly one call, maps the abort to `RunInfraTimeoutError`, and proves timeout option names are not serialized into JSON bodies.
+- The Python child canary uses a deterministic local transport with client default `timeout_seconds=1`, then calls `responses.create()` with per-request `{"timeout_seconds": 0.05, "max_retries": 0}`. It records the `RunInfraRequest`, asserts `call.timeout_seconds == 0.05`, maps `TimeoutError` to `RunInfraTimeoutError`, and proves timeout option names are not serialized into JSON bodies.
+- Verification passed after the TypeScript guard fix: focused TS local-timeout parity test; focused Python local-timeout parity test; `node --check scripts\run-sdk-live-canaries.mjs`; `node --check scripts\sdk-live-canary-typescript.mjs`; `python -m py_compile scripts\sdk-live-canary-python.py`; surface coverage with `52` rows and no uncovered public surfaces; TypeScript typecheck; full TypeScript suite `220` tests; full Python suite `139` tests and `142` subtests; secret-scan policy; version sync; workflow policy; dry-run publish dispatch; Python compileall; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Rebuilt publishable artifacts and reverified them: `pnpm --dir typescript build`; `pnpm --dir typescript pack`; `python -m build python --outdir python\dist`; npm package scanner; Python wheel/sdist scanner; Twine check; clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `62fcef00ab28c380dff79648ab6ec32d23694e6e146433a00354f2752c84bb10`, and source file count `37`. Current artifact hashes: npm `a97eb82a160c6ff5f640af1a21ae5fec6aca9dcf8649af809555504515c52b71`; Python wheel `aceb0eda412dfa44b32d3088c02f24ce2e73f87fad5f955bea4bdc4ef0627be4`; Python sdist `a52694c39163c8a05d1f686fac3e272c9f79d28aef9df551e946499309248699`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `22` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `22` passed / `0` failed / `30` skipped and Python `22` passed / `0` failed / `30` skipped. The new `request.timeout.local` row passed in both languages with `errorType=timeout_error`; TypeScript also reported `signalObserved=true`.
+- Second-opinion review from Raman found no findings. Residual risk is fail-closed timing flake under extreme TypeScript event-loop starvation, and the Python local transport proves per-request timeout propagation/error mapping rather than real socket wall-clock timing.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T17:27:50+03:00 - Agent 4
+- Extended request-option and unsupported-body hardening with `request.extra_body.local`. The RED TypeScript and Python parity tests first failed because the row was absent from the canonical matrix, parent readiness, child canaries, docs, and surface coverage.
+- Added the row to the canonical live canary matrix, parent readiness requirements, public-surface coverage, TypeScript child canary, Python child canary, `LIVE-CANARIES.md`, and both package changelogs.
+- The TypeScript child canary uses deterministic local artifact-installed transports. It proves `extraBody` injects only the deliberate JSON field, does not serialize `extraBody` / `extra_body` option names, rejects typed-field overrides before another network request, and rejects `extraBody` on multipart ASR before another network request.
+- The Python child canary proves `extra_body` injects only the deliberate JSON field, does not serialize SDK option names, rejects typed-field overrides before another network request, and verifies the public multipart ASR signature has neither a named `extra_body` parameter nor `**kwargs`.
+- Verification passed: focused RED/GREEN TS local extra-body parity test; focused Python local extra-body parity test; `node --check scripts\run-sdk-live-canaries.mjs`; `node --check scripts\sdk-live-canary-typescript.mjs`; `python -m py_compile scripts\sdk-live-canary-python.py`; surface coverage with `53` rows and no uncovered public surfaces; TypeScript typecheck; full TypeScript suite `221` tests; full Python suite `140` tests and `142` subtests; secret-scan policy; version sync; workflow policy; dry-run publish dispatch; Python compileall; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Rebuilt publishable artifacts and reverified them: `pnpm --dir typescript build`; `pnpm --dir typescript pack`; `python -m build python --outdir python\dist`; npm package scanner; Python wheel/sdist scanner; Twine check; clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `196fbe23d947f4c2dfcebdf8f24c66b9b8da22f7f21b88fcfbeca1e696adb1a4`, and source file count `37`. Current artifact hashes: npm `c7813b0a42aef47682d2334c3d6db991e2d854663e1759e79b0144388f02dd2a`; Python wheel `2d154d0b21ba1dab2aae652608f4f04478bd3c8403f7afb78052af80d87a85b7`; Python sdist `8ea23ff48c1a1f86d9f1e12a03937a2815b016b416261f1d547aa5f9972e1ee1`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `23` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `23` passed / `0` failed / `30` skipped and Python `23` passed / `0` failed / `30` skipped. The new `request.extra_body.local` row passed in both languages.
+- Second-opinion review from Nietzsche found one Python multipart false-green risk. It was fixed by using `inspect.signature()` and then by additionally failing on `inspect.Parameter.VAR_KEYWORD`. Follow-up review from Meitner found no remaining issue.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T17:48:39+03:00 - Agent 4
+- Extended error-mapping hardening with `error.rate_limit.local`. The RED TypeScript and Python parity tests first failed because the row was absent from the canonical matrix, parent readiness, child canaries, docs, and surface coverage.
+- Added the row to the canonical live canary matrix, parent readiness requirements, error-mapping surface coverage, TypeScript child canary, Python child canary, `LIVE-CANARIES.md`, and both package changelogs.
+- The TypeScript child canary uses a deterministic local installed-artifact transport that returns HTTP 429 with `Retry-After: 2` and `x-request-id`. It asserts `RateLimitError`, `status=429`, `type=rate_limit_error`, `retryAfterMs=2000`, request-id exposure, and exactly one request with `maxRetries: 0` so retry behavior cannot hide the first 429.
+- The Python child canary uses the same deterministic 429 shape and asserts `RateLimitError`, `status=429`, `type=rate_limit_error`, `retry_after_seconds=2.0`, request-id exposure, and exactly one request with `max_retries=0`.
+- Verification passed: RED failures for focused TS/Python parity tests; focused GREEN TS/Python parity tests; `node --check scripts\run-sdk-live-canaries.mjs`; `node --check scripts\sdk-live-canary-typescript.mjs`; `python -m py_compile scripts\sdk-live-canary-python.py`; surface coverage with `54` rows and no uncovered public surfaces; TypeScript typecheck; full TypeScript suite `222` tests; full Python suite `141` tests and `142` subtests; secret-scan policy; version sync; workflow policy; dry-run publish dispatch; Python compileall; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Rebuilt publishable artifacts and reverified them: `pnpm --dir typescript install --frozen-lockfile`; `pnpm --dir typescript build`; `pnpm --dir typescript pack`; `python -m build python --outdir python\dist`; npm package scanner; Python wheel/sdist scanner; Twine check; clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `dc9f88712251a6ec2cc16ad655dfa4303414ca9f9287e733bc03ca6c8e66a97a`, and source file count `37`. Current artifact hashes: npm `9083964f1738d71ff65ed723762af98eb35b88de9e5da2e2a20349c6a4ebe3fc`; Python wheel `57e02257c70ac06f4680d063ed8073f7384826e16fcb7fb5a0ae621a90949f63`; Python sdist `01948b0c244021c9fb73d9d2fe4e4442eb3f2d171b5a9c65e7844a90f220eebc`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `24` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `24` passed / `0` failed / `30` skipped and Python `24` passed / `0` failed / `30` skipped. The new `error.rate_limit.local` row passed in both languages with `errorType=rate_limit_error`, `errorStatus=429`, request id `req-local-rate-limit`, and retry-after metadata (`retryAfterMs=2000` in TS, `retryAfterSeconds=2` in Python).
+- Second-opinion review from Popper found the patch clean. Residual risk: it was a diff/narrow-test review, not an independent full live artifact canary run; Agent 4 separately refreshed the no-env artifact reports in this checkpoint.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T18:13:24+03:00 - Agent 4
+- Extended billing-adjacent error mapping with `error.insufficient_credits.local`. The RED TypeScript and Python parity tests first failed because the row was absent from the canonical matrix, parent readiness, child canaries, docs, and surface coverage.
+- Added the row to the canonical live canary matrix, parent readiness requirements, error-mapping surface coverage, TypeScript child canary, Python child canary, `LIVE-CANARIES.md`, and both package changelogs.
+- The TypeScript child canary uses the retry-capable deterministic local installed-artifact transport (`maxRetries: 1`) and a 402 response with `x-request-id`. It does not pass a per-request `maxRetries` override, asserts `InsufficientCreditsError`, `status=402`, `type=insufficient_credits`, request-id exposure, and exactly one request so retry behavior cannot mask the first 402.
+- The Python child canary uses the same retry-capable deterministic local transport (`max_retries=1`) and a 402 response with `x-request-id`. It does not pass a per-request `max_retries` override, asserts `InsufficientCreditsError`, `status=402`, `type=insufficient_credits`, request-id exposure, and exactly one request.
+- Verification passed: RED failures for focused TS/Python parity tests; focused GREEN TS/Python parity tests after removing the retry override; `node --check scripts\sdk-live-canary-typescript.mjs`; `python -m py_compile scripts\sdk-live-canary-python.py`; surface coverage with `55` rows and no uncovered public surfaces; TypeScript typecheck; full TypeScript suite `223` tests; full Python suite `142` tests and `142` subtests; secret-scan policy; version sync; workflow policy; dry-run publish dispatch; Python compileall; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Rebuilt publishable artifacts and reverified them after the follow-up fix: `pnpm --dir typescript install --frozen-lockfile`; `pnpm --dir typescript build`; `pnpm --dir typescript pack`; `python -m build python --outdir python\dist`; npm package scanner; Python wheel/sdist scanner; Twine check; clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `ffe9901413e24f6335ad9ec922fec0faa52c06ed3f89197e0ba201f10f09a8a1`, and source file count `37`. Current artifact hashes: npm `8fc0b11da1e9e29c1ded64dbf139955eed3da0ad90bfc7061039e39af0cc5c75`; Python wheel `200148b59dbce7b20574e6360c942fc298076c1dbbf667e08555deaf1764cd71`; Python sdist `b505bb6259711a1d913d950fd022345c85dab9275e90bfdaf72d4766195497cb`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `25` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `25` passed / `0` failed / `30` skipped and Python `25` passed / `0` failed / `30` skipped. The new `error.insufficient_credits.local` row passed in both languages with `errorType=insufficient_credits`, `errorStatus=402`, request id `req-local-insufficient-credits`, and `attempts=1`.
+- Second-opinion review from Peirce found one medium false-green issue: the first implementation disabled per-request retries and therefore did not prove 402 was not retry-masked under default retry behavior. Added RED checks that the row does not contain `maxRetries: 0` / `max_retries: 0`, removed the overrides, and reran verification. Follow-up review from Chandrasekhar found the patch clean. Residual risk: this remains deterministic local error-mapping coverage, not a production live credits-exhaustion test; the docs state that explicitly.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. It does not report stale source digest, source file count, or staged artifact digest mismatch for this refreshed pair.
+- No push, deploy, publish, registry mutation, RunPod provisioning, or secret/production setting change was performed.
+
+### 2026-05-25T18:44:04+03:00 - Agent 4
+- Extended request hardening with `request.unknown_fields.local`. The RED TypeScript and Python parity tests first failed because the row was absent from the canonical matrix, parent readiness, child canaries, docs, and surface coverage.
+- Added the row to the canonical live canary matrix, parent readiness requirements, public-surface coverage, TypeScript child canary, Python child canary, `LIVE-CANARIES.md`, both SDK READMEs, and both package changelogs.
+- The TypeScript SDK now rejects unknown direct request fields before network send for chat completions, embeddings, responses, audio speech, image generation, and voice pipeline request objects. Multipart ASR already rejects unsupported direct fields through its multipart validator. Python public method signatures remain closed, so unknown direct keywords raise `TypeError` before network send.
+- The new local artifact child canary verifies both languages reject unknown direct fields for responses, chat, embeddings, images, audio speech, audio transcriptions, and voice pipeline, while still allowing deliberate JSON extensions through `extraBody` / `extra_body`.
+- Verification passed: focused TS unknown tests; focused Python unknown-row test; `node --check scripts\sdk-live-canary-typescript.mjs`; `python -m py_compile scripts\sdk-live-canary-python.py`; surface coverage with `56` rows and no uncovered public surfaces; `pnpm --dir typescript install --frozen-lockfile`; TypeScript typecheck; full TypeScript suite `225` tests; full Python suite `143` tests and `142` subtests; `python -m compileall -q python\runinfra`; `node scripts\secret-scan-policy.mjs`; `node scripts\verify-version-sync.mjs`; `node scripts\verify-workflow-policy.mjs`; `node scripts\verify-publish-dispatch.mjs --dry-run --version 0.1.4`; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Rebuilt and reverified local publishable artifacts: `pnpm --dir typescript build`; `python -m build python --outdir python\dist`; `pnpm --dir typescript pack`; npm package scanner; Python wheel/sdist scanner; Twine check; and clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `5f366c2b855e2bc5daffd45ab58f3d546c1240e8ebbff789be5666853633a5ee`, and source file count `37`. Current artifact hashes: npm `d4a6867ddd4981b88fddea16858e4e26302c8f5b1c97380f9de806405a8f690d`; Python wheel `406b709f070f93d23601b5e91e5e95728f15546efc51e69c90c20a9817d213c6`; Python sdist `3a8c791e842ceda563fda364800518405715f80b10ceafa81a14b5f230964864`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `26` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `26` passed / `0` failed / `30` skipped and Python `26` passed / `0` failed / `30` skipped. The new `request.unknown_fields.local` row passed in both languages with `rejected=7` and `extraBodyField=present`.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports cannot be promoted as GA.
+- Verified `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` through the authenticated GitHub CLI token without printing the token: no open high/critical code-scanning alerts reported.
+- Second-opinion review: CodeRabbit CLI was not installed. Explorer Kuhn found no TypeScript contract findings and flagged a direct unit-test gap for embeddings, images, and audio speech; Agent 4 added those direct assertions and reran focused/full tests. Explorer Curie found no canary/docs/Python parity findings.
+- GA remains blocked. Before npm/PyPI GA publish, strict production artifact canaries still need real credentials, model IDs, multimodal fixtures, voice pipeline target, idempotency opt-in, and `56/56` passed rows in both languages, followed by promotion report verification and registry install/import proof.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-25T22:41:29+03:00 - Agent 4
+- Added a strict live-canary env-template generator to reduce the remaining production setup blocker without weakening promotion gates.
+- `scripts/run-sdk-live-canaries.mjs --write-env-template <path>` now exits before env-file loading, report writing, artifact install, or child live canaries. It writes a static template with canonical `RUNINFRA_*` names, safe defaults, blank placeholders, commented GitHub fixture-secret names, and legacy RunPipe aliases. It refuses to overwrite an existing output unless `--force-env-template` is passed.
+- The template writer checks the generated static text against the existing forbidden-content scanner and current sensitive env values before writing. Focused tests prove it does not copy current `RUNINFRA_API_KEY`, model, transcript, or `NPM_TOKEN` values into the file.
+- Updated root/package docs and `AGENT-NOTES.md` to point users at `.env.sdk-live.local`, which is covered by the existing `.env.*.local` gitignore rule.
+- Verification passed:
+  - RED focused template tests first failed because the runner ignored `--write-env-template` and attempted artifact canaries.
+  - GREEN focused docs/template tests passed.
+  - `node --check scripts\run-sdk-live-canaries.mjs`
+  - `pnpm --dir typescript test` passed `234` tests.
+  - `python -m pytest python\tests -q` passed `151` tests and `142` subtests.
+  - `node scripts\run-sdk-live-canaries.mjs --verify-surface-coverage` passed with `58` rows, `28` coverage surfaces, and no uncovered public surfaces or rows.
+  - `pnpm --dir typescript install --frozen-lockfile`, TypeScript no-emit typecheck, `node scripts\secret-scan-policy.mjs`, `node scripts\verify-version-sync.mjs`, `node scripts\verify-workflow-policy.mjs`, `node scripts\verify-publish-dispatch.mjs --dry-run --version 0.1.4`, and `python -m compileall -q python\runinfra` passed.
+  - Rebuilt artifacts with `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist`.
+  - Artifact scanners passed: npm package scanner, Python wheel/sdist scanner, `twine check`, and clean artifact install/import for npm, Python wheel, and Python sdist.
+  - `git diff --check` reported only the existing Windows LF-to-CRLF warnings for touched files.
+- CodeRabbit second-opinion review could not run because the CLI is not installed in this environment. A local adversarial review checked mode ordering, secret leakage, overwrite behavior, env-file conflicts, ignored filename docs, and promotion semantics; no blocking issue was found.
+- Refreshed no-env reports for the current source state:
+  - Source digest: `ed032ccf55c0cc073c645e308e25021ff92ed79a6ca0863a2c80edc1b8473c0b`
+  - Source file count: `37`
+  - NPM artifact SHA-256: `7431820f6c3de2ba7f05751affafb3e362aa4d4e4cde1f917e0e287927c61e18`
+  - Python wheel SHA-256: `b624d83c33b1c224d8b3618a936044645731b64570840d14cf32d919645a65f9`
+  - Python sdist SHA-256: `4221125a52f09fc0600ee33287b44ed22653dd95b8e6c44cc9e5bae3f21aa03d`
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+- Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` improved readiness to `43` ready rows and `15` blocked rows. Remaining missing inputs are the embedding model/dimensions, image model/size/response format, TTS model/voice or ref-audio pair/response format, ASR model/language/response format/fixture/expected text, voice-pipeline audio or ASR fixture, voice-pipeline expected text or ASR expected text, and `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1`.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the refreshed no-env reports still cannot promote as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-25T22:56:10+03:00 - Agent 4
+- Closed a shipped-source truth gap for the public voice pipeline surface. README/changelog already marked `client.voice.pipeline.create()` experimental, but TypeScript generated declarations and Python runtime help did not carry the same warning on the actual public SDK surface.
+- Added `@experimental` JSDoc to TypeScript `RunInfra.voice` and a `[EXPERIMENTAL]` Python docstring to `_Voice`, both stating that v0.1.4 voice pipeline is not live-canary verified and should be tested against a deployed pipeline before production use.
+- Added TS/Python regressions that first failed on the missing voice annotations, then passed after the source updates. Updated both package changelogs to record the annotation change.
+- Refreshed safe live catalog discovery with the scoped SDK-live env file. Discovery completed via `GET /models`, catalog count `1`, classified count `1`, invalid count `0`; it still only classified `RUNINFRA_LLM_MODEL` as `Qwen/Qwen2.5-0.5B-Instruct` and found no embedding/image/TTS/ASR candidates.
+- Verification passed:
+  - Focused TS voice annotation test.
+  - Focused Python voice annotation test.
+  - Python source compile.
+  - TypeScript no-emit typecheck.
+  - Full TypeScript suite: `234` tests.
+  - Full Python suite: `151` tests and `142` subtests.
+  - Surface coverage: `58` rows, `28` surfaces, no uncovered surfaces/rows.
+  - Secret scan, version sync, workflow policy.
+  - Rebuilt npm tarball, Python wheel, and Python sdist.
+  - npm package scanner, Python artifact scanner, `twine check`, and clean artifact install/import for npm, Python wheel, and Python sdist.
+  - `git diff --check` reported only the expected Windows LF-to-CRLF warnings.
+- CodeRabbit CLI is still not installed, so external CLI review could not run. Local adversarial review of the diff found no blocker: comments/docstrings only, no runtime behavior change, no secret/report/publish-path weakening.
+- Refreshed no-env reports for the current source state:
+  - Source digest: `e175d512b1658fc7f22378d4cc0b1ada9b75fd36fe003039353fc6f72f9cabd5`
+  - Source file count: `37`
+  - NPM artifact SHA-256: `8016165164a2800f71e1b4da82f489fcc25f4cb25c1ab072198c5585bda40c2b`
+  - Python wheel SHA-256: `fccfa11a1008df98175009cb442cf575a3362bd8c608de5e6f134a75e43b2729`
+  - Python sdist SHA-256: `80b75a54ef937cb9088030038011b006903d45b1333b1a14e97e13f4630e6d3f`
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+- Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows. Remaining missing inputs are still embedding model/dimensions, image model/size/response format, TTS model/voice or ref-audio pair/response format, ASR model/language/response format/fixture/expected text, voice-pipeline audio or ASR fixture, voice-pipeline expected text or ASR expected text, and `RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1`.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the refreshed no-env reports still cannot promote as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-25T19:07:12+03:00 - Agent 4
+- Extended browser-security hardening with `browser.api_key_guard.local`. The RED TypeScript and Python parity tests first failed because the row was absent from the canonical matrix, parent readiness, child canaries, docs, and surface coverage.
+- Added the row to the canonical live canary matrix, parent readiness requirements, public-surface coverage, TypeScript child canary, Python child canary, `LIVE-CANARIES.md`, both package changelogs, and TS/Python parity tests.
+- The TypeScript child canary now mutates deterministic browser-like globals around an installed artifact import and proves default construction fails as `invalid_runtime` in both `window` and worker-like runtimes, does not leak the API key in the error message, restores globals in `finally`, and still requires the explicit `dangerouslyAllowBrowser` opt-in for controlled non-public runtimes.
+- The Python child canary proves the installed package exposes no browser-token helper surface such as `BrowserRunInfra`, `BrowserToken`, `create_browser_token`, `dangerously_allow_browser`, or `dangerouslyAllowBrowser`.
+- Verification passed: focused TS browser API-key guard test; focused Python browser API-key guard test; `node --check scripts\sdk-live-canary-typescript.mjs`; `python -m py_compile scripts\sdk-live-canary-python.py`; surface coverage with `57` rows and no uncovered public surfaces; TypeScript typecheck; full TypeScript suite `226` tests; full Python suite `144` tests and `142` subtests; `node scripts\secret-scan-policy.mjs`; `node scripts\verify-version-sync.mjs`; `node scripts\verify-workflow-policy.mjs`; `node scripts\verify-publish-dispatch.mjs --dry-run --version 0.1.4`; `python -m compileall -q python\runinfra`; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Rebuilt and reverified local publishable artifacts: `pnpm --dir typescript install --frozen-lockfile`; `pnpm --dir typescript build`; `python -m build python --outdir python\dist`; `pnpm --dir typescript pack`; npm package scanner; Python wheel/sdist scanner; Twine check; and clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `aae00c3bca69c602a97d7654097b18ebf4c1bbe1351e6bb2b78e9bae6877cdf5`, and source file count `37`. Current artifact hashes: npm `dd67d3501fe5d7ae719b64ae9c125bc86e3ee9db9b4c709b128146434353fecd`; Python wheel `53d0d1f0cdcf3a4912458f9bf1ab34d85905007810bf8fc5ca9aa2639354c022`; Python sdist `58f8c61f41d95fd1e0f51e93be81ff56022499ad9fa8e38d56bf96957f185672`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `27` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `27` passed / `0` failed / `30` skipped and Python `27` passed / `0` failed / `30` skipped. The new `browser.api_key_guard.local` row passed in TypeScript with `windowGuard=invalid_runtime`, `workerGuard=invalid_runtime`, and `explicitOptIn=dangerouslyAllowBrowser`; it passed in Python with `browser_token_surface=absent`.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports cannot be promoted as GA.
+- Verified `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` through the authenticated GitHub CLI token without printing the token: no open high/critical code-scanning alerts reported.
+- Second-opinion review from Dalton found no findings in the scoped browser-guard diff and independently reran surface coverage at `57` rows. Residual GA blockers remain the same: strict production artifact canaries need real credentials, model IDs, multimodal fixtures, voice pipeline target, idempotency opt-in, and `57/57` passed rows in both languages, followed by promotion report verification and registry install/import proof.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-25T22:25:23+03:00 - Agent 4
+- Extended security hardening with `security.api_key_redaction.local`. The RED TypeScript and Python parity tests first failed because the row was absent from the canonical matrix, parent readiness, child canaries, docs, and surface coverage.
+- Added API-key redaction to transport-derived errors, SDK-error causes, response body read failures, status error bodies, and stream read failures in both SDKs. Python also now redacts custom-transport iterable JSON bodies that raise while `RunInfraResponse.json()` consumes them and suppresses unredacted traceback/cause/context chains at redaction boundaries.
+- Added TS/Python unit regressions proving lower-level transport errors, SDK errors with unsafe causes, response body read errors, status error bodies, and stream read errors that include the configured API key map to typed public errors without echoing the key. Python has additional traceback, explicit exception-chain, and custom iterable-body regressions.
+- Added installed-artifact local child canaries in both languages. They prove the public error omits the key, the request URL is credential-free, and the key is present only as an `Authorization: Bearer` header. TypeScript covers transport, SDK error cause, body, status, and stream redaction. Python covers transport, SDK error cause, default body, custom iterable body, status, stream, traceback output, and explicit exception-chain redaction.
+- Verification passed: focused RED/GREEN TS/Python parity and redaction tests; `node --check scripts\sdk-live-canary-typescript.mjs`; `python -m py_compile scripts\sdk-live-canary-python.py python\runinfra\__init__.py`; surface coverage with `58` rows and no uncovered public surfaces; TypeScript typecheck; full TypeScript suite `232` tests; full Python suite `151` tests and `142` subtests; secret-scan policy; version sync; workflow policy; dry-run publish dispatch; Python compileall; GitHub code scanning high/critical gate through `gh auth token` without printing the token; and `git diff --check` with expected Windows LF-to-CRLF warnings only.
+- Rebuilt and reverified local publishable artifacts: `pnpm --dir typescript build`; `pnpm --dir typescript pack`; `python -m build python --outdir python\dist`; npm package scanner; Python wheel/sdist scanner; Twine check; and clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed current-shell strict artifact readiness and no-env artifact live reports. Both use SDK `0.1.4`, package source `artifact`, source digest `9034e916b6f6727f5cc3139479f6ce89fa20a6e4206b1fd764aff3ac9af54e49`, and source file count `37`. Current artifact hashes: npm `cef3c64d413af647d89752ef2fd3770ed66368164aadba23eac0eb478b2f5200`; Python wheel `7381f716504ef1bb59a71397810f3c8ba9805e333904b1b697ffc69efbfff419`; Python sdist `3cb0374dc49c5d326c4eb0a58af06e86d509c7e332d9666ef9eda89b867d07dd`.
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report is TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped. The new `security.api_key_redaction.local` row passed in both languages with `errorType=connection_error`, `errorStatus=0`, `authorization=bearer`, and `urlRedacted=present`; TypeScript evidence includes `transportErrorRedacted`, `sdkErrorCauseRedacted`, `bodyReadErrorRedacted`, `statusErrorRedacted`, and `streamReadErrorRedacted`; Python evidence includes those plus `customBodyReadErrorRedacted`.
+- Second-opinion review from Ptolemy found and drove fixes for Python custom iterable JSON body leaks, Python non-2xx status error body leaks, false-green TypeScript custom-body evidence, Python traceback/exception-chain leaks, and safe-message SDK errors preserving unsafe causes in both SDKs. Final Ptolemy re-review passed with no remaining findings.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness rows, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports cannot be promoted as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T00:25:02+03:00 - Agent 4
+- Added a redacted missing-env patch mode for strict live-canary setup. `scripts\run-sdk-live-canaries.mjs --readiness-report <report.json> --write-missing-env-template <path>` now exits before env-file loading, report writing, artifact install, or child live canaries.
+- The missing patch mode reads only a redacted readiness report, validates schema/version/rows/row-coverage state, rejects unsupported missing requirements, emits only whitelisted canonical `RUNINFRA_*` placeholders or safe defaults, refuses overwrite unless `--force-env-template` is passed, and runs the existing forbidden-content/current-sensitive-env scanner before writing.
+- It intentionally does not diff or read an existing env file, so existing API keys, model IDs, fixture paths, transcripts, and registry tokens cannot appear as diff context. Focused tests prove already-set `RUNINFRA_API_KEY` and `RUNINFRA_LLM_MODEL` are not emitted when the redacted readiness report marks them satisfied.
+- Updated root/package docs, `LIVE-CANARIES.md`, and `AGENT-NOTES.md` to document the missing strict live-canary env patch and to state clearly that it is not promotion evidence.
+- Closed a local-path log hygiene gap in artifact-mode canary setup. The parent live-canary setup helper now pipes successful npm/pip setup output instead of inheriting it, so successful package installation does not print local wheel paths before child canaries run.
+- Second-opinion review found one important follow-up on that log-hygiene change: piping output without a bounded buffer and safe failure summary could make artifact setup failures opaque. Fixed before commit by setting an explicit `maxBuffer`, preserving a redacted stderr/stdout tail on setup failure, and keeping successful setup output quiet.
+- Exercised the new missing patch mode against the current redacted RunPipe env-backed readiness report using a disposable output path. It wrote `18` placeholder/default assignments and did not include `RUNINFRA_API_KEY=` or `RUNINFRA_LLM_MODEL=`.
+- Verification passed:
+  - RED missing-env patch tests first failed because the runner ignored the new flags and attempted artifact canaries.
+  - RED docs regression first failed because docs did not mention `--write-missing-env-template` and `--readiness-report`.
+  - RED log-hygiene regression first failed because `runChecked()` used `stdio: "inherit"`.
+  - GREEN focused tests passed for missing-env patch, static env template, docs, and artifact setup output.
+  - `node --check scripts\run-sdk-live-canaries.mjs` passed.
+  - TypeScript no-emit typecheck passed.
+  - Full TypeScript suite passed `238` tests.
+  - Full Python suite passed `151` tests and `142` subtests.
+  - Surface coverage passed with `58` rows, `28` coverage surfaces, and no uncovered public surfaces or rows.
+  - Secret-scan policy, version sync, workflow policy, dry-run publish dispatch, and Python compileall passed.
+  - Rebuilt artifacts with `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist`.
+  - Artifact scanners passed: npm package scanner, Python wheel/sdist scanner, `twine check`, and clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed no-env strict artifact readiness and live reports after the final runner change:
+  - Source digest: `345b1a9aa3778be93decbc12e8c9483d5faef898116b01268d59da8c9fe26730`
+  - Source file count: `37`
+  - NPM artifact SHA-256: `b28a489fff1aa80f5804d2ed38f0935af5b53cfec676e7c853be8cb865eaa9ec`
+  - Python wheel SHA-256: `77324ed9476f1e2ee8bab1255adc9f8ed1190eac550160df25d324dfeda3f267`
+  - Python sdist SHA-256: `a4299bd0afd9e93aba23683dbb1a26f7b84bc91e6a1d062a66e3d0e8042dbc5e`
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+- Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports still cannot promote as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T01:01:28+03:00 - Agent 4
+- Tightened the redacted missing-env patch mode so it only accepts strict preflight readiness reports from the live-canary runner. Reports must have schema version `1`, `strict: true`, valid generated timestamp, package source, current SDK candidate identity shape, canonical `expectedRows`, readiness rows in the exact canonical order, empty row-coverage errors, matching row/status/missing/summary counts, passed surface coverage, preflight parity `not_run`, and no child reports.
+- Followed focused TDD cycles. The new negative tests first failed because the runner accepted a report with no `expectedRows`, then because it accepted a synthetic report that copied canonical rows but omitted the strict preflight envelope, then because it accepted top-level `readiness.missing` that disagreed with ready rows. Separate row-drift and missing-drift regressions now prove `readiness.rows` names and top-level missing/status state must match the canonical rows.
+- Updated the missing-env patch test fixtures to build full strict preflight-like readiness reports from `scripts/live-canary-matrix.mjs`, keeping overwrite and leak-rejection coverage realistic instead of relying on partial synthetic reports.
+- Second-opinion review from Herschel found warnings before this final shape: synthetic canonical-row reports still passed, the negative tests did not isolate row-name drift, and top-level missing/status data could disagree with row state. All were fixed before final verification.
+- Verification passed:
+  - Focused missing-env/env-template/log-hygiene/review-fix group: `11` passed.
+  - `pnpm --dir typescript install --frozen-lockfile`.
+  - `node --check scripts\run-sdk-live-canaries.mjs`.
+  - TypeScript no-emit typecheck.
+  - Full TypeScript suite: `242` tests.
+  - Full Python suite: `151` tests and `142` subtests.
+  - Surface coverage: `58` rows, `28` coverage surfaces, no uncovered public surfaces or rows.
+  - Secret-scan policy, version sync, workflow policy, dry-run publish dispatch, and Python compileall.
+  - Rebuilt artifacts with `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist`.
+  - npm package scanner, Python wheel/sdist scanner, `twine check`, and clean artifact install/import for npm, Python wheel, and Python sdist.
+  - Missing-env patch generated from the redacted RunPipe env-backed readiness report wrote `18` placeholder/default assignments and did not include `RUNINFRA_API_KEY=` or `RUNINFRA_LLM_MODEL=`.
+- Refreshed no-env strict artifact readiness and live reports after the canonical-readiness hardening:
+  - Source digest: `59ae1a1fbd7c290a7bf7a2486ca0504b1d8b8e1f2a3cf02a673b3d8c80d4862e`
+  - Source file count: `37`
+  - NPM artifact SHA-256: `b28a489fff1aa80f5804d2ed38f0935af5b53cfec676e7c853be8cb865eaa9ec`
+  - Python wheel SHA-256: `d196fb96c14265d217c55183bf156f383a4441a5b0c3af73ff53248bcd2f173f`
+  - Python sdist SHA-256: `64a5575a3a7817a6fe81fffbf7b2998df16888a14e1fbcd4f6ca3d0c54abcd00`
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+- Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports still cannot promote as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T02:18:15+03:00 - Agent 4
+- Closed the remaining stale-report risk in redacted missing-env patch mode. `scripts\run-sdk-live-canaries.mjs --readiness-report <report> --write-missing-env-template <path>` now rejects otherwise strict readiness reports when `candidate.sourceDigestSha256` or `candidate.sourceFileCount` do not match the current checkout source manifest.
+- Followed a focused TDD cycle. The stale-candidate regression first failed because a report with an edited digest/count still wrote a missing-env template, then passed after the runner compared the report identity against the current `sourceDigestSha256()` and `sourceDigestFiles.length`.
+- Updated strict readiness fixtures in `typescript/src/index.test.ts` to use the current source identity instead of hardcoded placeholder values, so positive tests remain tied to the actual checkout.
+- Second-opinion review from Erdos found a low test-isolation gap: the stale-source test mutated digest and file count together, so either comparison could be removed without the test necessarily catching it. Fixed before commit by splitting into digest-only and source-file-count-only regressions backed by a shared helper.
+- Verification passed for this source state:
+  - Focused stale/missing-env/env-template/log-hygiene group: `14` TypeScript tests passed.
+  - `pnpm --dir typescript install --frozen-lockfile`.
+  - `node --check scripts\run-sdk-live-canaries.mjs`.
+  - TypeScript no-emit typecheck.
+  - Full TypeScript suite: `244` tests.
+  - Full Python suite: `151` tests and `142` subtests.
+  - Surface coverage: `58` rows, `28` coverage surfaces, no uncovered public surfaces or rows.
+  - Secret-scan policy, version sync, workflow policy, dry-run publish dispatch, and Python compileall.
+  - Rebuilt artifacts with `pnpm --dir typescript build`, `pnpm --dir typescript pack`, and `python -m build python --outdir python\dist`.
+  - npm package scanner, Python wheel/sdist scanner, `twine check`, and clean artifact install/import for npm, Python wheel, and Python sdist.
+- Refreshed no-env strict artifact readiness and live reports after the stale-source hardening:
+  - Source digest: `98eb288d2d2daa937807fddfa2eccf9afc9dbbc0886ee6a9aa43dd370ceeefc8`
+  - Source file count: `37`
+  - NPM artifact SHA-256: `b28a489fff1aa80f5804d2ed38f0935af5b53cfec676e7c853be8cb865eaa9ec`
+  - Python wheel SHA-256: `8b11d7b9e9ff34ad7f4919248b7723e20bbc01ae84fd30da43456af97e308068`
+  - Python sdist SHA-256: `0e341c3fbde00f3dbbe19c3dc856ad9b3032e2de9abe5a2a55db46c2bcd804f7`
+- Current-shell strict artifact readiness remains blocked because no live `RUNINFRA_*` canary environment is loaded: readiness summary `28` ready rows and `30` blocked rows. The no-env artifact live report remains TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+- Redacted no-network preflight against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local` remains `43` ready rows and `15` blocked rows.
+- Missing-env patch generation from the refreshed redacted RunPipe env-backed readiness report wrote `18` placeholder/default assignments and did not include `RUNINFRA_API_KEY=` or `RUNINFRA_LLM_MODEL=`.
+- `node scripts\verify-promotion-reports.mjs --readiness artifacts\sdk\live-canary-readiness-current-head.json --live artifacts\sdk\live-canary-current-head-noenv.json --artifacts-root .` fails as expected on blocked readiness, skipped live rows, strict summary count errors, and parent parity failure. This proves the current reports still cannot promote as GA.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T02:26:55+03:00 - Agent 4
+- Re-read current SDK state after commit `3c12ffb`. The SDK repo is clean on `main` and remains ahead of `origin/main` by `139` local commits.
+- Reconfirmed the current no-env and RunPipe env-backed readiness blockers:
+  - No-env strict artifact readiness: `28` ready rows and `30` blocked rows.
+  - No-env artifact live canaries: TypeScript `28` passed / `0` failed / `30` skipped and Python `28` passed / `0` failed / `30` skipped.
+  - RunPipe env-backed strict preflight: `43` ready rows and `15` blocked rows.
+  - Source digest remains `98eb288d2d2daa937807fddfa2eccf9afc9dbbc0886ee6a9aa43dd370ceeefc8`, source file count `37`.
+- Rechecked canonical registry availability without publishing. `node scripts\verify-clean-installs.mjs --package both --mode registry --version 0.1.4 --registry-attempts 1 --registry-retry-delay-ms 1000` still fails at preflight because npm `@runinfra/sdk@0.1.4` and PyPI `runinfra==0.1.4` are not available from the canonical registries.
+- Rechecked GitHub code-scanning release gate through the authenticated GitHub CLI token without printing the token. `node scripts\verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk` passed with no open high/critical alerts.
+- Refreshed model discovery against `C:\Users\jaber\RightNow-Full\RunPipe\.env.sdk-live.local`. The redacted report completed against `https://api.runinfra.ai/v1`, catalog count `1`, classified count `1`, invalid count `0`. It found only an LLM candidate bucket and no embedding, image, TTS, or ASR candidates, so the current catalog cannot unblock multimodal strict readiness by itself.
+- Rechecked RunPod state read-only. There is still one existing serverless LLM canary endpoint and no pods. No existing endpoint was found for embedding, image, TTS, ASR, or voice pipeline canary coverage. Do not copy raw RunPod template output into commits because template env fields can include sensitive operational details.
+- Rechecked local GA gap candidates before editing code:
+  - Python async/sync production ergonomics are already closed for `0.1.4`: README and changelog document sync-only use, FastAPI/asyncio worker-thread/background-job patterns, and `AsyncRunInfra` absence; Python tests assert this.
+  - Unshipped webhook delivery create/list are already kept out of the public runtime surface; README/changelogs/canary rows and clean-install checks assert absence.
+  - TS/Python request parameter surfaces are already closed around explicit typed parameters plus explicit `extraBody` escape hatches; unknown-field and extra-body canary rows cover this.
+- Current GA blockers remain external or live-input based, not a known local SDK code gap: trusted-publishing release has not happened, canonical registry install/import proof cannot pass, strict live multimodal inputs and deployed canary backends are missing, and promotion reports still correctly reject the candidate.
+- No push, deploy, publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed.
+
+### 2026-05-26T12:31:19+03:00 - Agent 4
+- Ported the current production-gateway Responses unsupported-parameter fix onto a fresh RunPipe worktree based on current `origin/main`, not the stale broad gateway branch and not the dirty active RunPipe checkout.
+- RunPipe gateway worktree:
+  - Path: `C:\Users\jaber\RightNow-Full\RunPipe-sdk-gateway-current-20260526`
+  - Branch: `fix/sdk-gateway-contracts-current-20260526`
+  - Base before patch: `e348caca7c737df09ca26b0b2f3ac99d36498238`
+  - Local fix commit: `81095bde29b1287da459e5a565c1ca002cdcc2ce` (`fix: reject unsupported responses parameters`)
+  - Branch relation after commit: `0` behind / `1` ahead of `origin/main`
+- The gateway adapter now rejects reserved or unsupported top-level `/v1/responses` body parameters before converting to chat completions. This includes the live SDK canary probe `runinfra_unsupported_parameter_probe` and stateful Responses fields the gateway does not implement, such as `previous_response_id`, `conversation`, `background`, `include`, `store`, and `n`.
+- The flat `/v1/responses` route and the pipeline-scoped `/api/v1/{pipelineId}/responses` route now preserve the specific `unsupported_parameter` error type. The pipeline-scoped route also returns v1 trace headers on that new early failure path.
+- Followed TDD:
+  - Helper regression first failed because `responsesRequestToChatCompletion()` silently returned `ok: true` for unsupported fields.
+  - Pipeline route regression first failed because the request returned `200` and proxied.
+  - Flat route regression first failed because it returned `invalid_request_error` instead of `unsupported_parameter`.
+  - All three passed after the scoped gateway fix.
+- Verification passed:
+  - Baseline focused tests before the patch were green after `pnpm install --frozen-lockfile`.
+  - `pnpm exec vitest run lib/api/responses-compat.test.ts app/api/v1/[...path]/route.test.ts app/api/v1/workspace-flat.test.ts`: `3` files, `184` tests passed.
+  - `pnpm typecheck` passed.
+  - `git diff --check` passed, with only Windows LF/CRLF warnings.
+  - `pnpm lint` exited `0` with existing repository warnings.
+  - Independent read-only subagent review found no real bugs or regressions in the scoped diff.
+- Broader repo caveat: full `pnpm test` on current RunPipe `origin/main` still fails in unrelated analytics/runbook/deployment-canary suites outside the six touched SDK-gateway files. Do not treat that full-suite run as proof this patch is bad or as proof the full RunPipe repo is currently release-clean.
+- Rechecked RunPod inventory read-only after the gateway commit. Sanitized result: one existing LLM serverless canary endpoint still exists (`runinfra-sdk-canary-llm-mpiw58hc`, endpoint id `xag4fq146bsff0`, L4/vLLM, model `Qwen/Qwen2.5-0.5B-Instruct`, min workers `0`, max workers `1`), no pods exist, and there are still no embedding, image, TTS, ASR, or voice-pipeline canary endpoints. Do not copy raw RunPod MCP endpoint output into commits or chat because worker environment fields include provider-managed secrets.
+- No push, deploy, production merge, registry publish, registry mutation, RunPod provisioning, secret rotation, or production setting change was performed. This commit is only a local RunPipe gateway fix candidate until it is pushed, reviewed, merged to main, deployed, and then proven by the live SDK canary row `error.body.unsupported_parameter`.

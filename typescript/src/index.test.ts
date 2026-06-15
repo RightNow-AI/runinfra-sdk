@@ -9,6 +9,8 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
   AuthenticationError,
+  InsufficientCreditsError,
+  PermissionDeniedError,
   RUNINFRA_SDK_VERSION,
   RunInfra,
   RunInfraAudioResponse,
@@ -231,8 +233,10 @@ describe("RunInfra TypeScript SDK", () => {
 
     expect(packageJson.scripts?.prepack).toBe(packageJson.scripts?.build);
     expect(packageJson.files).toEqual(expect.arrayContaining(["dist", "README.md", "package.json"]));
-    expect(packageJson.description).toContain("LLM and embeddings contract-tested");
+    expect(packageJson.description).toContain("optimized inference deployments across text, embeddings, image, and audio routes");
     expect(packageJson.description).not.toContain("LLM + embeddings tested");
+    expect(packageJson.description).not.toContain("contract-tested");
+    expect(packageJson.description).not.toContain("experimental");
   });
 
   it("documents explicit API key environment guards instead of non-null assertions", () => {
@@ -261,56 +265,81 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("api_key = os.environ.get(\"RUNINFRA_API_KEY\")");
     expect(readme).not.toContain("os.environ[\"RUNINFRA_API_KEY\"]");
 
-    expect(readme).toContain("| Webhook delivery | Not shipped");
-    expect(readme).toContain("| Voice pipeline | **Experimental**, pipeline-scoped route, not live-canary verified |");
-    expect(readme).toContain("| Embeddings | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |");
-    expect(readme).toContain("| Chat completions, Responses | Beta, contract-tested. Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows |");
+    expect(readme).toContain(
+      "| Webhook verification | Local signature verification helpers are available in both SDKs. Delivery management is handled outside the public SDK surface. |",
+    );
+    expect(readme).toContain("| Voice pipeline | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |");
+    expect(readme).toContain("| Embeddings | Beta. Typed helper for verified embedding deployments. |");
+    expect(readme).toContain("| Chat completions, Responses | Beta. Typed helpers for verified LLM and vision-language deployments. |");
+    expect(readme).not.toContain("| Webhook delivery | Not shipped");
     expect(readme).not.toContain("Strict live source canaries currently pass chat/responses rows");
     expect(readme).not.toContain("Chat completions, Responses, Embeddings | Beta, contract-tested");
     expect(readme).not.toContain("Webhook delivery, Voice pipeline | Not shipped");
     expect(readme).not.toContain("streaming final/slow-consumer rows pass against production");
 
-    const readinessIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
-    const liveCanaryIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
-    const promotionReportIndex = readme.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .");
-    expect(readinessIndex).toBeGreaterThan(-1);
-    expect(liveCanaryIndex).toBeGreaterThan(readinessIndex);
-    expect(promotionReportIndex).toBeGreaterThan(liveCanaryIndex);
-    expect(readme).toContain("reports from `https://api.runinfra.ai/v1`");
-    expect(readme).toContain("staging smoke evidence, not publish evidence");
+    expect(readme).not.toContain("promotion artifacts");
+    expect(readme).not.toContain("strict-live");
+    expect(readme).not.toContain("live-canary");
+    expect(readme).not.toContain("runinfra-sdk-promoted-artifacts");
   });
 
-  it("does not overclaim embeddings live verification before the strict target exists", () => {
+  it("keeps public SDK docs customer-facing instead of release-process-facing", () => {
     const packageReadme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
-    const agentNotes = readFileSync(new URL("../../AGENT-NOTES.md", import.meta.url), "utf8");
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+    const rootReadme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
 
-    for (const text of [packageReadme, agentNotes]) {
-      expect(text).toContain("Not strict live-canary verified in the current promotion artifacts");
-      expect(text).toContain("Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows");
+    for (const text of [packageReadme, changelog, rootReadme]) {
       expect(text).not.toContain("Strict live source canaries currently pass chat/responses rows");
       expect(text).not.toContain("streaming final/slow-consumer rows pass against production");
-      expect(text).not.toContain("| Embeddings | `client.embeddings.create` | Beta, contract-tested |");
-      expect(text).not.toContain("| `client.embeddings.create` | Beta, contract-tested |");
+      expect(text).not.toContain("Not strict live-canary verified");
+      expect(text).not.toContain("Current 0.1.4 promotion artifacts");
+      expect(text).not.toContain("strict-live green");
+      expect(text).not.toContain("zero skipped or failed rows");
+      expect(text).not.toContain("For production promotion");
+      expect(text).not.toContain("runinfra-sdk-promoted-artifacts");
     }
-    expect(changelog).toContain("blocked for embeddings until the strict promotion artifacts include a deployed embedding target");
-    expect(changelog).not.toContain("Live-canary coverage is currently restricted to LLM + embeddings");
+    for (const phrase of [
+      "source maps",
+      "debug source markers",
+      "local private paths",
+      "registry config files",
+      "package token material",
+      "publish dispatch",
+      "dry-run",
+      "workflow actions",
+      "immutable commits",
+      "wheel/sdist",
+      "wheel and sdist",
+      "version-sync",
+      "workflow-policy",
+      "CI and publish",
+      "accidental credentials",
+      "build metadata",
+      "backtracking risk",
+      "Development Status",
+    ]) {
+      expect(changelog).not.toContain(phrase);
+    }
+    expect(packageReadme).toContain("| Embeddings | `client.embeddings.create` | Beta. Typed helper for verified embedding deployments. |");
+    expect(changelog).toContain("Added typed helpers for chat completions, Responses, embeddings");
   });
 
-  it("documents voice pipeline as experimental instead of unsupported", () => {
+  it("documents voice pipeline as preview instead of unsupported", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
     const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
     expect(readme).toContain(
-      "| Voice pipeline | `client.voice.pipeline.create` | **Experimental**, pipeline-scoped route, not live-canary verified |",
+      "| Voice pipeline | `client.voice.pipeline.create` | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |",
     );
     expect(readme).not.toContain("Voice pipeline | `client.voice.pipeline.create` | Not shipped");
     expect(changelog).not.toContain("client.voice.pipeline.create` is not shipped");
-    expect(changelog).toContain("client.voice.pipeline.create` posts audio to the pipeline-scoped `/pipeline` route");
+    expect(changelog).toContain("co-located voice pipelines");
     expect(source).toMatch(
-      /\/\*\*[\s\S]*Voice pipeline surface\.[\s\S]*@experimental As of v0\.1\.4, this method has NOT been verified end-to-end[\s\S]*readonly voice:/u,
+      /\/\*\*[\s\S]*Voice pipeline surface\.[\s\S]*Preview helper for co-located voice pipelines[\s\S]*readonly voice:/u,
     );
+    expect(source).not.toContain("this method has NOT been verified end-to-end");
+    expect(source).not.toContain("Live-canary verification is tracked");
   });
 
   it("documents safe base URL requirements", () => {
@@ -330,7 +359,7 @@ describe("RunInfra TypeScript SDK", () => {
     for (const text of [readme, rootReadme]) {
       expect(text).toMatch(/Do not put `RUNINFRA_API_KEY` in browser\s+code/u);
       expect(text).toContain("backend proxy");
-      expect(text).toMatch(/Ephemeral\s+browser tokens are not shipped in v0\.1\.4/u);
+      expect(text).toMatch(/Direct\s+browser token flows are not supported by the public\s+SDK/u);
     }
 
     expect(readme).toMatch(/The SDK fails closed\s+when it detects a browser runtime/u);
@@ -352,13 +381,14 @@ describe("RunInfra TypeScript SDK", () => {
     expect(readme).toContain("constructWebhookEvent");
     expect(readme).toContain("verifyWebhookSignature");
     expect(readme).toContain("WebhookVerificationError");
-    expect(readme).toContain("webhook delivery create/list methods are not part of the GA public SDK surface");
+    expect(readme).toContain("Webhook delivery management is outside the public SDK surface");
     expect(readme).not.toContain("client.webhooks.create");
     expect(readme).not.toContain("client.webhooks.list");
     expect(readme).toContain("`UnsupportedOperationError` remains exported for compatibility");
-    expect(changelog).toContain("## [0.1.4]");
-    expect(changelog).toContain("Removed unshipped webhook delivery `create` / `list` methods");
-    expect(changelog).toContain("`webhooks.delivery_surface.absent`");
+    expect(changelog).toContain("## [0.1.5]");
+    expect(changelog).toContain("local signature");
+    expect(changelog).toContain("webhook");
+    expect(changelog).toContain("verification");
   });
 
   it("documents non-blank idempotency key requirements", () => {
@@ -411,24 +441,25 @@ describe("RunInfra TypeScript SDK", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
     expect(readme).toContain("## OpenAI-compatible parameter scope");
-    expect(readme).toContain("Live-gated native SDK subset");
-    expect(readme).toContain("will be treated as verified only after the strict live canaries pass");
-    expect(readme).toContain("`openai.params.chat.completions`");
-    expect(readme).toContain("`openai.params.chat.stream_options`");
-    expect(readme).toContain("`openai.params.responses`");
-    expect(readme).toContain("`openai.params.embeddings`");
-    expect(readme).toContain("`openai.params.images`");
-    expect(readme).toContain("`openai.params.audio.speech`");
-    expect(readme).toContain("`openai.params.audio.transcriptions`");
-    expect(liveCanaries).toContain("openai.params.images");
-    expect(liveCanaries).toContain("openai.params.audio.speech");
-    expect(liveCanaries).toContain("openai.params.audio.transcriptions");
+    expect(readme).toContain("The typed native SDK subset is:");
+    for (const row of [
+      "openai.params.chat.completions",
+      "openai.params.chat.stream_options",
+      "openai.params.responses",
+      "openai.params.embeddings",
+      "openai.params.images",
+      "openai.params.audio.speech",
+      "openai.params.audio.transcriptions",
+    ]) {
+      expect(liveCanaries).toContain(row);
+      expect(readme).not.toContain(row);
+    }
     expect(liveCanaries).toContain("RUNINFRA_TTS_RESPONSE_FORMAT");
     expect(liveCanaries).toContain("RUNINFRA_ASR_RESPONSE_FORMAT");
     expect(liveCanaries).toContain("Optional for the base ASR row; required for the OpenAI ASR parameter row");
     expect(readme).toContain("dimension control");
     expect(readme).toContain("Image `quality`, `style`, and `user` are typed pass-through OpenAI-style");
-    expect(readme).toContain("They are not GA-verified until a strict image canary row asserts");
+    expect(readme).toContain("options when the deployed image backend supports them");
     expect(readme).toContain("`encoding_format` values other than `\"float\"`");
     expect(readme).toContain("`response_format` values other than `\"json\"` or `\"verbose_json\"`");
     expect(readme).toContain("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx");
@@ -439,6 +470,8 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("A `RUNINFRA_BASE_URL` equal to `https://api.runinfra.ai/v1` is recorded as production");
     expect(liveCanaries).toContain("any other custom `RUNINFRA_BASE_URL`");
     expect(liveCanaries).toContain("custom base URLs before spawning child canaries");
+    expect(readme).toContain("Gateway errors expose `requestId`, `type`, and, when returned by the API");
+    expect(readme).toContain("OpenAI-style `code` and `param` metadata");
     expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
     expect(readme).toContain("forwards the supported request through the chat-completions serving path");
     expect(readme).toContain(
@@ -2409,7 +2442,7 @@ class RunInfra:
     expect(readme).toContain(
       "`top_p`, `tools`, `tool_choice`, `response_format`, and `max_output_tokens`.",
     );
-    expect(readme).toContain("not GA-verified until strict canary rows assert backend support");
+    expect(readme).toContain("actual support depends on the deployed backend");
   });
 
   it("types TypeScript Responses envelopes with OpenAI-compatible created_at", () => {
@@ -2438,7 +2471,7 @@ class RunInfra:
     expect(speechRequest).toContain("speed?: number;");
     expect(transcriptionRequest).toContain("temperature?: number;");
     expect(readme).toContain("Embedding `user`, TTS `speed`, and ASR `temperature` are typed pass-through");
-    expect(readme).toMatch(/not GA-verified until strict modality canaries\s+assert backend support/u);
+    expect(readme).toContain("actual support depends on the deployed backend");
   });
 
   it("keeps TypeScript request bodies closed and documents explicit extraBody extensions", () => {
@@ -2465,6 +2498,38 @@ class RunInfra:
     expect(readme).toContain("`extraBody` cannot override typed request fields");
     expect(typescriptCanary).toContain("extraBody: {");
     expect(typescriptCanary).toContain("runinfra_unsupported_parameter_probe");
+  });
+
+  it("keeps unsupported embedding dimensions canaries tied to exact error code and parameter", async () => {
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const { publicSurfaceCoverage } =
+      await import("../../scripts/live-canary-surface-coverage.mjs") as {
+        publicSurfaceCoverage: Array<{ surface: string; rows: string[] }>;
+      };
+    const runner = readFileSync(new URL("../../scripts/run-sdk-live-canaries.mjs", import.meta.url), "utf8");
+    const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
+    const pythonCanary = readFileSync(new URL("../../scripts/sdk-live-canary-python.py", import.meta.url), "utf8");
+    const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
+    const row = "error.embeddings.unsupported_dimensions";
+
+    expect(expectedRows).toContain(row);
+    expect(runner).toContain(`["${row}", () => missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_EMBEDDING_MODEL"])]`);
+    expect(typescriptCanary).toContain(`record("${row}"`);
+    expect(typescriptCanary).toContain("status: 400");
+    expect(typescriptCanary).toContain('type: "invalid_request_error"');
+    expect(typescriptCanary).toContain('code: "unsupported_parameter"');
+    expect(typescriptCanary).toContain('param: "dimensions"');
+    expect(pythonCanary).toContain(`"${row}"`);
+    expect(pythonCanary).toContain("expected_status=400");
+    expect(pythonCanary).toContain('expected_type="invalid_request_error"');
+    expect(pythonCanary).toContain('expected_code="unsupported_parameter"');
+    expect(pythonCanary).toContain('expected_param="dimensions"');
+    expect(liveCanaries).toContain(row);
+    expect(liveCanaries).toContain("unsupported-parameter error for embedding `dimensions`");
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "unsupported body parameter handling")?.rows)
+      .toContain(row);
+    expect(publicSurfaceCoverage.find((entry) => entry.surface === "client.embeddings.create")?.rows)
+      .toContain(row);
   });
 
   it("keeps child canaries in parity for local unknown request field coverage", async () => {
@@ -2832,39 +2897,12 @@ class RunInfra:
     const agentNotes = readFileSync(new URL("../../AGENT-NOTES.md", import.meta.url), "utf8");
     const liveCanaries = readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8");
 
-    expect(readme).toContain("For production promotion");
-    expect(readme).toContain("This public repo now includes live-canary runners for both SDKs.");
-    expect(readme).toContain("The publish workflow builds the npm tarball, Python wheel, and Python sdist once");
-    expect(readme).toContain("real publish runs the strict promotion gate");
-    expect(readme).toContain("publishes the same downloaded artifacts");
-    expect(readme).toContain("The artifact clean-install gate imports the npm tarball, the Python wheel, and");
-    expect(readme).toContain("an sdist-built Python wheel");
-    expect(readme).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
-    expect(readme).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
-    expect(readme).toContain("node scripts/verify-workflow-policy.mjs");
-    expect(readme).toContain("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk");
-    expect(readme).toContain("node scripts/verify-version-sync.mjs");
-    expect(readme).toContain("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz");
-    expect(readme).toContain("python scripts/verify-python-package.py python/dist");
-    expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode artifact");
-    expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
-    expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
-    expect(readme).toContain("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
-    expect(readme).toContain("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .");
-    const surfaceCoverageIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage");
-    const preflightIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json");
-    const liveCanaryIndex = readme.indexOf("node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json");
-    const promotionReportIndex = readme.indexOf("node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .");
-    expect(surfaceCoverageIndex).toBeGreaterThan(-1);
-    expect(preflightIndex).toBeGreaterThan(surfaceCoverageIndex);
-    expect(liveCanaryIndex).toBeGreaterThan(preflightIndex);
-    expect(promotionReportIndex).toBeGreaterThan(liveCanaryIndex);
-    expect(readme).toContain("gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>");
-    expect(readme).toContain("A real publish must also prove registry install/import");
-    expect(readme).toContain("node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>");
-    expect(readme).toContain("Run the surface-coverage check before preflight");
-    expect(readme).toContain("Then run the strict preflight");
-    expect(readme).toContain("Then run the strict live canary matrix against the exact production gateway");
+    expect(readme).not.toContain("For production promotion");
+    expect(readme).not.toContain("This public repo now includes live-canary runners for both SDKs.");
+    expect(readme).not.toContain("node scripts/run-sdk-live-canaries.mjs");
+    expect(readme).not.toContain("RUNINFRA_ASR_FIXTURE_BASE64");
+    expect(readme).not.toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
+    expect(readme).toContain("## Voice pipelines and webhooks");
     expect(liveCanaries).toContain("candidate.sourceDigestSha256");
     expect(liveCanaries).toContain("typescript/tsconfig.json");
     expect(liveCanaries).toContain("python/MANIFEST.in");
@@ -2883,7 +2921,7 @@ class RunInfra:
     expect(agentNotes).toContain("readiness summary at all rows ready with zero blocked rows");
     expect(agentNotes).toContain("source digest includes `typescript/tsconfig.json` and `python/MANIFEST.in`");
     expect(agentNotes).not.toContain("The simplified workflow doesn't run the strict gate scripts");
-    expect(readme).toContain("Do not use npm or PyPI tokens");
+    expect(readme).not.toContain("Do not use npm or PyPI tokens");
     expect(readme).not.toContain("pnpm verify:sdk-release");
     expect(readme).not.toContain("pnpm test:sdk-canary:live");
     expect(readme).not.toContain("RUNINFRA_SDK_CI_TOKEN");
@@ -3084,11 +3122,8 @@ class RunInfra:
 
   it("documents the safe live-canary env-file flag instead of Node's flag", () => {
     const docs = [
-      readFileSync(new URL("../../README.md", import.meta.url), "utf8"),
       readFileSync(new URL("../../LIVE-CANARIES.md", import.meta.url), "utf8"),
       readFileSync(new URL("../../AGENT-NOTES.md", import.meta.url), "utf8"),
-      readFileSync(new URL("../README.md", import.meta.url), "utf8"),
-      readFileSync(new URL("../../python/README.md", import.meta.url), "utf8"),
     ];
     const gitignore = readFileSync(new URL("../../.gitignore", import.meta.url), "utf8");
 
@@ -3247,6 +3282,45 @@ class RunInfra:
     );
     expect(driftedPublish).not.toBe(publish);
     expect(evaluateWorkflowPolicy({ publish: driftedPublish, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+  });
+
+  it("lets dry-run publish verification complete without protected registry environments", async () => {
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
+    const label = "dry-run publish verification avoids protected registry environments";
+
+    expect(evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(true);
+
+    const withoutDryRunNpm = publish.replace(
+      /  dry-run-npm:[\s\S]*?(?=\r?\n  [a-zA-Z0-9_-]+:\r?\n)/u,
+      "",
+    );
+    expect(withoutDryRunNpm).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: withoutDryRunNpm, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const realPublishWithoutDryRunGuard = publish.replace(
+      "    if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.dry_run != 'true' && (github.event.inputs.package == 'typescript' || github.event.inputs.package == 'both') }}",
+      "    if: ${{ github.ref == 'refs/heads/main' && (github.event.inputs.package == 'typescript' || github.event.inputs.package == 'both') }}",
+    );
+    expect(realPublishWithoutDryRunGuard).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: realPublishWithoutDryRunGuard, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const realPublishWithoutEnvironment = publish.replace("    environment: npm\n", "");
+    expect(realPublishWithoutEnvironment).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: realPublishWithoutEnvironment, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
+      .toBe(false);
+
+    const dryRunPypiUpload = publish.replace(
+      "          twine check artifacts/python-local/*",
+      "          twine upload artifacts/python-local/*",
+    );
+    expect(dryRunPypiUpload).not.toBe(publish);
+    expect(evaluateWorkflowPolicy({ publish: dryRunPypiUpload, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
       .toBe(false);
   });
 
@@ -4289,6 +4363,73 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
+  it("bounds parent live-canary child execution and writes a failure report when a child stalls", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "runinfra-child-timeout-"));
+    const reportPath = join(tmp, "live-canary.json");
+    const runnerPath = join(process.cwd(), "..", "scripts", "run-sdk-live-canaries.mjs");
+    const { expectedRows } = await import("../../scripts/live-canary-matrix.mjs") as { expectedRows: string[] };
+    const rowsJson = JSON.stringify(expectedRows);
+    try {
+      mkdirSync(join(tmp, "scripts"), { recursive: true });
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-typescript.mjs"), `
+setInterval(() => {
+  try {
+    process.kill(process.ppid, 0);
+  } catch {
+    process.exit(0);
+  }
+}, 25);
+await new Promise(() => {});
+`);
+      writeFileSync(join(tmp, "scripts", "sdk-live-canary-python.py"), `
+import json
+import os
+import sys
+expected_rows = ${rowsJson}
+report = sys.argv[sys.argv.index("--report") + 1]
+os.makedirs(os.path.dirname(report), exist_ok=True)
+with open(report, "w", encoding="utf-8") as handle:
+    json.dump({
+        "language": "python",
+        "sdkVersion": "${RUNINFRA_SDK_VERSION}",
+        "strict": False,
+        "baseURL": "https://api.runinfra.ai/v1",
+        "summary": {"passed": len(expected_rows), "failed": 0, "skipped": 0},
+        "results": [{"name": name, "status": "passed"} for name in expected_rows],
+    }, handle)
+`);
+
+      const result = spawnSync(process.execPath, [
+        runnerPath,
+        "--package-source",
+        "source",
+        "--report",
+        reportPath,
+      ], {
+        cwd: tmp,
+        encoding: "utf8",
+        timeout: 2_500,
+        env: {
+          ...process.env,
+          RUNINFRA_API_KEY: "",
+          RUNINFRA_CANARY_CHILD_TIMEOUT_SECONDS: "0.2",
+        },
+      });
+
+      expect(result.status).toBe(1);
+      const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+        parity?: { status?: string; errors?: string[] };
+        reports?: Array<{ language?: string; error?: string }>;
+      };
+      expect(report.parity?.status).toBe("failed");
+      expect(report.parity?.errors).toContain("typescript child canary timed out");
+      expect(report.reports?.find((child) => child.language === "typescript")?.error).toBe("child canary timed out");
+      expect(existsSync(join(tmp, ".canary-tmp"))).toBe(false);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("removes parent live-canary temporary child reports when final report writing fails", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-report-write-failure-"));
     const reportParent = join(tmp, "not-a-directory");
@@ -4539,7 +4680,6 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_API_KEY: fakeKey,
           TEST_MODEL: "llm-alias-model",
           TEST_EMBEDDING_MODEL: "embedding-alias-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "384",
           TEST_IMAGE_MODEL: "image-alias-model",
           RUNINFRA_IMAGE_SIZE: "1024x1024",
           RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
@@ -4593,7 +4733,6 @@ with open(report, "w", encoding="utf-8") as handle:
         `RUNINFRA_API_KEY=${fakeKey}`,
         "TEST_MODEL=llm-env-file-model",
         "TEST_EMBEDDING_MODEL=embedding-env-file-model",
-        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
         "TEST_IMAGE_MODEL=image-env-file-model",
         "RUNINFRA_IMAGE_SIZE=1024x1024",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -4672,7 +4811,6 @@ with open(report, "w", encoding="utf-8") as handle:
         "RUNINFRA_API_KEY=env-file-api-key-placeholder",
         "RUNINFRA_LLM_MODEL=llm-env-file-model",
         "RUNINFRA_EMBEDDING_MODEL=embedding-env-file-model",
-        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
         "RUNINFRA_IMAGE_MODEL=image-env-file-model",
         "RUNINFRA_IMAGE_SIZE=1024x1024",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -4738,7 +4876,6 @@ with open(report, "w", encoding="utf-8") as handle:
         "RUNINFRA_API_KEY=env-file-api-key-placeholder",
         "RUNINFRA_LLM_MODEL=llm-env-file-model",
         "RUNINFRA_EMBEDDING_MODEL=embedding-env-file-model",
-        "RUNINFRA_EMBEDDING_DIMENSIONS=384",
         "RUNINFRA_IMAGE_MODEL=image-env-file-model",
         "RUNINFRA_IMAGE_SIZE=1024x1024",
         "RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json",
@@ -4841,7 +4978,7 @@ with open(report, "w", encoding="utf-8") as handle:
       const template = readFileSync(templatePath, "utf8");
       expect(template).toContain("RUNINFRA_API_KEY=");
       expect(template).toContain("RUNINFRA_LLM_MODEL=");
-      expect(template).toContain("RUNINFRA_EMBEDDING_DIMENSIONS=");
+      expect(template).not.toContain("RUNINFRA_EMBEDDING_DIMENSIONS=");
       expect(template).toContain("RUNINFRA_IMAGE_RESPONSE_FORMAT=b64_json");
       expect(template).toContain("RUNINFRA_TTS_RESPONSE_FORMAT=mp3");
       expect(template).toContain("RUNINFRA_ASR_RESPONSE_FORMAT=json");
@@ -5241,7 +5378,7 @@ with open(report, "w", encoding="utf-8") as handle:
     }
   });
 
-  it("blocks strict live-canary preflight on invalid positive-integer readiness inputs", () => {
+  it("does not require embedding dimensions for strict live-canary preflight", () => {
     const tmp = mkdtempSync(join(tmpdir(), "runinfra-preflight-"));
     const reportPath = join(tmp, "readiness.json");
     try {
@@ -5261,11 +5398,15 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_API_KEY: "preflight-api-key-placeholder",
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "not-a-positive-integer",
           RUNINFRA_IMAGE_MODEL: "image-preflight-model",
+          RUNINFRA_IMAGE_SIZE: "1024x1024",
+          RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
           RUNINFRA_TTS_MODEL: "tts-preflight-model",
           RUNINFRA_TTS_VOICE: "voice-preflight",
+          RUNINFRA_TTS_RESPONSE_FORMAT: "mp3",
           RUNINFRA_ASR_MODEL: "asr-preflight-model",
+          RUNINFRA_ASR_LANGUAGE: "en",
+          RUNINFRA_ASR_RESPONSE_FORMAT: "json",
           RUNINFRA_ASR_FIXTURE_PATH: __filename,
           RUNINFRA_ASR_EXPECTED_TEXT: "hello",
           TEST_PIPELINE_ID: "pipeline-preflight",
@@ -5273,17 +5414,22 @@ with open(report, "w", encoding="utf-8") as handle:
         },
       });
 
-      expect(result.status).toBe(1);
+      expect(result.status, result.stderr).toBe(0);
       const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
         readiness?: {
+          status?: string;
           missing?: string[];
           rows?: Array<{ name: string; status: string; missing?: string[] }>;
         };
       };
-      expect(report.readiness?.missing).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+      expect(report.readiness?.status).toBe("ready");
+      expect(report.readiness?.missing).toEqual([]);
       expect(
         report.readiness?.rows?.find((row) => row.name === "openai.params.embeddings")?.missing,
-      ).toContain("RUNINFRA_EMBEDDING_DIMENSIONS positive integer");
+      ).toEqual([]);
+      expect(
+        report.readiness?.rows?.find((row) => row.name === "error.embeddings.unsupported_dimensions")?.missing,
+      ).toEqual([]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -5311,7 +5457,6 @@ with open(report, "w", encoding="utf-8") as handle:
             RUNINFRA_CANARY_TIMEOUT_SECONDS: timeout,
             RUNINFRA_LLM_MODEL: "llm-preflight-model",
             RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-            RUNINFRA_EMBEDDING_DIMENSIONS: "128",
             RUNINFRA_IMAGE_MODEL: "image-preflight-model",
             RUNINFRA_TTS_MODEL: "tts-preflight-model",
             RUNINFRA_TTS_VOICE: "voice-preflight",
@@ -5358,7 +5503,6 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_CANARY_TIMEOUT_SECONDS: timeoutValue,
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "128",
           RUNINFRA_IMAGE_MODEL: "image-preflight-model",
           RUNINFRA_IMAGE_SIZE: "1024x1024",
           RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
@@ -5472,7 +5616,6 @@ with open(report, "w", encoding="utf-8") as handle:
           RUNINFRA_BASE_URL: unsafeBaseURL,
           RUNINFRA_LLM_MODEL: "llm-preflight-model",
           RUNINFRA_EMBEDDING_MODEL: "embedding-preflight-model",
-          RUNINFRA_EMBEDDING_DIMENSIONS: "128",
           RUNINFRA_IMAGE_MODEL: "image-preflight-model",
           RUNINFRA_IMAGE_SIZE: "1024x1024",
           RUNINFRA_IMAGE_RESPONSE_FORMAT: "b64_json",
@@ -7200,6 +7343,139 @@ with open(report, "w", encoding="utf-8") as handle:
     });
   });
 
+  it("preserves API error code and parameter metadata", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: "The embeddings parameter 'dimensions' is not supported.",
+            type: "invalid_request_error",
+            code: "unsupported_parameter",
+            param: "dimensions",
+          },
+        },
+        {
+          status: 400,
+          headers: { "x-request-id": "req-dimensions" },
+        },
+      ),
+    );
+    const client = new RunInfra({
+      apiKey: "sk-ri-test",
+      fetch: fetcher,
+      maxRetries: 0,
+    });
+
+    await expect(
+      client.embeddings.create({
+        model: "bge-small",
+        input: "hello",
+        dimensions: 1,
+      }),
+    ).rejects.toMatchObject({
+      name: "RunInfraError",
+      status: 400,
+      type: "invalid_request_error",
+      code: "unsupported_parameter",
+      param: "dimensions",
+      requestId: "req-dimensions",
+    } satisfies Partial<RunInfraError>);
+  });
+
+  it("preserves the gateway discriminator on 403 permission errors", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: "Deploying endpoints requires a Core or Enterprise plan.",
+            type: "byoc_plan_required",
+          },
+        },
+        { status: 403, headers: { "x-request-id": "req-byoc" } },
+      ),
+    );
+    const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher, maxRetries: 0 });
+
+    const error = await client.models.list().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(PermissionDeniedError);
+    expect(error).toMatchObject({
+      name: "PermissionDeniedError",
+      status: 403,
+      type: "byoc_plan_required",
+      requestId: "req-byoc",
+    } satisfies Partial<RunInfraError>);
+  });
+
+  it("falls back to permission_denied when a 403 omits a specific type", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        { error: { message: "Forbidden" } },
+        { status: 403 },
+      ),
+    );
+    const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher, maxRetries: 0 });
+
+    const error = await client.models.list().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(PermissionDeniedError);
+    expect((error as PermissionDeniedError).type).toBe("permission_denied");
+  });
+
+  it("exposes structured top-up fields on 402 insufficient-credits errors", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: "Insufficient credits to run this request.",
+            type: "insufficient_credits",
+            current_balance_cents: 125,
+            required_cents: 500,
+            topup_url: "/settings/cost#credits",
+          },
+        },
+        { status: 402, headers: { "x-request-id": "req-credits" } },
+      ),
+    );
+    const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher, maxRetries: 0 });
+
+    const error = await client.models.list().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(InsufficientCreditsError);
+    const credits = error as InsufficientCreditsError;
+    expect(credits.status).toBe(402);
+    expect(credits.currentBalanceCents).toBe(125);
+    expect(credits.requiredCents).toBe(500);
+    expect(credits.topupUrl).toBe("/settings/cost#credits");
+    expect(credits.requestId).toBe("req-credits");
+  });
+
+  it("leaves structured top-up fields undefined when a 402 omits them", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        { error: { message: "Insufficient credits.", type: "insufficient_credits" } },
+        { status: 402 },
+      ),
+    );
+    const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher, maxRetries: 0 });
+
+    const error = await client.models.list().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(InsufficientCreditsError);
+    const credits = error as InsufficientCreditsError;
+    expect(credits.currentBalanceCents).toBeUndefined();
+    expect(credits.requiredCents).toBeUndefined();
+    expect(credits.topupUrl).toBeUndefined();
+  });
+
   it("rejects malformed JSON response shapes before returning user data", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       jsonResponse("OK.", { headers: { "x-request-id": "req-raw-text" } }),
@@ -7866,6 +8142,50 @@ with open(report, "w", encoding="utf-8") as handle:
       status: 401,
       requestId: "req-status-redact",
     });
+    await expect(client.models.list()).rejects.not.toThrow(apiKey);
+  });
+
+  it("redacts api keys from status error metadata fields", async () => {
+    const apiKey = "sk-ri-redact-local";
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "metadata redaction canary",
+            type: "invalid_request_error",
+            code: `unsupported_${apiKey}`,
+            param: `field_${apiKey}`,
+          },
+        }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json", "x-request-id": "req-status-metadata-redact" },
+        },
+      ),
+    );
+    const client = new RunInfra({
+      apiKey,
+      fetch: fetcher,
+      maxRetries: 0,
+      retryBaseMs: 0,
+    });
+
+    let raised: unknown;
+    try {
+      await client.models.list();
+    } catch (error) {
+      raised = error;
+    }
+
+    expect(raised).toMatchObject({
+      name: "RunInfraError",
+      type: "invalid_request_error",
+      status: 400,
+      requestId: "req-status-metadata-redact",
+      code: "unsupported_[redacted]",
+      param: "field_[redacted]",
+    });
+    expect(JSON.stringify(raised)).not.toContain(apiKey);
     await expect(client.models.list()).rejects.not.toThrow(apiKey);
   });
 

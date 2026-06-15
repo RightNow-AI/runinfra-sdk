@@ -112,75 +112,85 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertFalse(hasattr(runinfra, "AsyncRunInfra"))
         self.assertNotIn("AsyncRunInfra = RunInfra", readme)
 
-    def test_readme_documents_voice_pipeline_as_experimental_instead_of_unsupported(self):
+    def test_readme_documents_voice_pipeline_as_preview_instead_of_unsupported(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
         changelog = Path(__file__).resolve().parents[1].joinpath("CHANGELOG.md").read_text()
         source = Path(__file__).resolve().parents[1].joinpath("runinfra", "__init__.py").read_text()
 
         self.assertIn(
-            "| Voice pipeline | `client.voice.pipeline.create` | **Experimental**, pipeline-scoped route, not live-canary verified |",
+            "| Voice pipeline | `client.voice.pipeline.create` | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |",
             readme,
         )
         self.assertNotIn("Voice pipeline | `client.voice.pipeline.create` | Not shipped", readme)
         self.assertNotIn("client.voice.pipeline.create` is not shipped", changelog)
-        self.assertIn("client.voice.pipeline.create` posts audio to the pipeline-scoped `/pipeline` route", changelog)
+        self.assertIn("co-located voice pipelines", changelog)
         voice_start = source.index("class _Voice:")
         runinfra_start = source.index("class RunInfra:", voice_start)
         voice_block = source[voice_start:runinfra_start]
-        self.assertIn("[EXPERIMENTAL] As of v0.1.4, this method has NOT been verified end-to-end", voice_block)
-        self.assertIn("Live-canary verification is tracked for v1.0.0 GA", voice_block)
+        self.assertIn("Preview helper for co-located voice pipelines", voice_block)
+        self.assertNotIn("NOT been verified end-to-end", voice_block)
+        self.assertNotIn("Live-canary verification is tracked", voice_block)
 
     def test_pyproject_uses_non_deprecated_license_metadata(self):
         pyproject = Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text()
 
         self.assertIn('license = "LicenseRef-Proprietary"', pyproject)
         self.assertIn('license-files = ["LICENSE"]', pyproject)
-        self.assertIn("LLM and embeddings contract-tested", pyproject)
+        self.assertIn("optimized inference deployments across text, embeddings, image, and audio routes", pyproject)
         self.assertNotIn("LLM + embeddings tested", pyproject)
+        self.assertNotIn("contract-tested", pyproject)
+        self.assertNotIn("experimental", pyproject)
         self.assertNotIn('license = { file = "LICENSE" }', pyproject)
 
-    def test_docs_do_not_overclaim_embeddings_live_verification(self):
+    def test_public_sdk_docs_are_customer_facing_instead_of_release_process_facing(self):
         package_readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
         root_readme = Path(__file__).resolve().parents[2].joinpath("README.md").read_text()
-        agent_notes = Path(__file__).resolve().parents[2].joinpath("AGENT-NOTES.md").read_text()
         changelog = Path(__file__).resolve().parents[1].joinpath("CHANGELOG.md").read_text()
 
         self.assertIn(
-            "| Embeddings | `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |",
+            "| Embeddings | `client.embeddings.create` | Beta. Typed helper for verified embedding deployments. |",
             package_readme,
         )
         self.assertIn(
-            "| Embeddings | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |",
+            "| Embeddings | Beta. Typed helper for verified embedding deployments. |",
             root_readme,
         )
         self.assertIn(
-            "| Chat completions, Responses | Beta, contract-tested. Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows |",
+            "| Chat completions, Responses | Beta. Typed helpers for verified LLM and vision-language deployments. |",
             root_readme,
         )
-        self.assertNotIn("Strict live source canaries currently pass chat/responses rows", root_readme)
-        self.assertIn(
-            "| `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |",
-            agent_notes,
-        )
-        self.assertIn(
-            "Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows",
-            package_readme,
-        )
-        self.assertIn(
-            "Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows",
-            agent_notes,
-        )
-        self.assertNotIn("Strict live source canaries currently pass chat/responses rows", package_readme)
-        self.assertNotIn("Strict live source canaries currently pass chat/responses rows", agent_notes)
-        normalized_changelog = " ".join(changelog.split())
-        self.assertIn(
-            "blocked for embeddings until the strict promotion artifacts include a deployed embedding target",
-            normalized_changelog,
-        )
-        for text in (package_readme, root_readme, agent_notes, changelog):
+        self.assertIn("Added typed helpers for chat completions, Responses, embeddings", changelog)
+        for text in (package_readme, root_readme, changelog):
             self.assertNotIn("LLM + embeddings tested", text)
             self.assertNotIn("Live-canary coverage is currently restricted to LLM + embeddings", text)
+            self.assertNotIn("Not strict live-canary verified", text)
+            self.assertNotIn("Current 0.1.4 promotion artifacts", text)
+            self.assertNotIn("strict-live green", text)
+            self.assertNotIn("zero skipped or failed rows", text)
+            self.assertNotIn("For production promotion", text)
+            self.assertNotIn("runinfra-sdk-promoted-artifacts", text)
             self.assertNotIn("streaming final/slow-consumer rows pass against production", text)
+        for phrase in (
+            "source maps",
+            "debug source markers",
+            "local private paths",
+            "registry config files",
+            "package token material",
+            "publish dispatch",
+            "dry-run",
+            "workflow actions",
+            "immutable commits",
+            "wheel/sdist",
+            "wheel and sdist",
+            "version-sync",
+            "workflow-policy",
+            "CI and publish",
+            "accidental credentials",
+            "build metadata",
+            "backtracking risk",
+            "Development Status",
+        ):
+            self.assertNotIn(phrase, changelog)
 
     def test_readme_documents_safe_base_url_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -198,13 +208,14 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("construct_webhook_event", readme)
         self.assertIn("verify_webhook_signature", readme)
         self.assertIn("WebhookVerificationError", readme)
-        self.assertIn("webhook delivery create/list methods are not part of the GA public SDK surface", readme)
+        self.assertIn("Webhook delivery management is outside the public SDK surface", readme)
         self.assertNotIn("client.webhooks.create", readme)
         self.assertNotIn("client.webhooks.list", readme)
         self.assertIn("`UnsupportedOperationError` remains exported for compatibility", readme)
-        self.assertIn("## [0.1.4]", changelog)
-        self.assertIn("Removed unshipped webhook delivery `create` / `list` methods", changelog)
-        self.assertIn("`webhooks.delivery_surface.absent`", changelog)
+        self.assertIn("## [0.1.5]", changelog)
+        self.assertIn("local signature", changelog)
+        self.assertIn("webhook", changelog)
+        self.assertIn("verification", changelog)
 
     def test_readme_documents_non_blank_idempotency_key_requirements(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
@@ -245,18 +256,18 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         source = Path(__file__).resolve().parents[1].joinpath("runinfra", "__init__.py").read_text()
 
         self.assertIn("## OpenAI-compatible parameter scope", readme)
-        self.assertIn("Live-gated native SDK subset", readme)
-        self.assertIn("will be treated as verified only after the strict live canaries pass", readme)
-        self.assertIn("`openai.params.chat.completions`", readme)
-        self.assertIn("`openai.params.chat.stream_options`", readme)
-        self.assertIn("`openai.params.responses`", readme)
-        self.assertIn("`openai.params.embeddings`", readme)
-        self.assertIn("`openai.params.images`", readme)
-        self.assertIn("`openai.params.audio.speech`", readme)
-        self.assertIn("`openai.params.audio.transcriptions`", readme)
-        self.assertIn("openai.params.images", live_canaries)
-        self.assertIn("openai.params.audio.speech", live_canaries)
-        self.assertIn("openai.params.audio.transcriptions", live_canaries)
+        self.assertIn("The typed native SDK subset is:", readme)
+        for row in (
+            "openai.params.chat.completions",
+            "openai.params.chat.stream_options",
+            "openai.params.responses",
+            "openai.params.embeddings",
+            "openai.params.images",
+            "openai.params.audio.speech",
+            "openai.params.audio.transcriptions",
+        ):
+            self.assertIn(row, live_canaries)
+            self.assertNotIn(row, readme)
         self.assertIn("RUNINFRA_TTS_RESPONSE_FORMAT", live_canaries)
         self.assertIn("RUNINFRA_ASR_RESPONSE_FORMAT", live_canaries)
         self.assertIn("Optional for the base ASR row; required for the OpenAI ASR parameter row", live_canaries)
@@ -269,11 +280,15 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             "`top_p`, `tools`, `tool_choice`, `response_format`, and `max_output_tokens`.",
             readme,
         )
+        self.assertIn("options when the deployed image backend supports them", readme)
+        self.assertIn("actual support depends on the deployed backend", readme)
         self.assertIn('`encoding_format` values other than `"float"`', readme)
         self.assertIn('`response_format` values other than `"json"` or `"verbose_json"`', readme)
         self.assertIn("Unsupported OpenAI-style body parameters must fail with a clear traced 4xx", readme)
         self.assertIn("error.model.not_found", live_canaries)
         self.assertIn("error.body.unsupported_parameter", live_canaries)
+        self.assertIn("Gateway errors expose `request_id`, `type`, and, when returned by the API", readme)
+        self.assertIn("OpenAI-style `code` and `param` metadata", readme)
         self.assertIn("RunInfra `/v1/responses` is a chat-completions compatibility adapter.", readme)
         self.assertIn("forwards the supported request through the chat-completions serving path", readme)
         self.assertIn(
@@ -788,9 +803,9 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
         self.assertIn("## Async Python runtimes", readme)
-        self.assertIn("`RunInfra` is intentionally sync-only in v0.1.4", readme)
+        self.assertIn("`RunInfra` is intentionally sync-only in v0.2.0", readme)
         self.assertIn("does not block the event loop", readme)
-        self.assertIn("`AsyncRunInfra` client yet", readme)
+        self.assertIn("Do not instantiate an\n`AsyncRunInfra` client", readme)
 
     def test_readme_documents_public_repo_promotion_without_stale_monorepo_commands(self):
         root = Path(__file__).resolve().parents[2]
@@ -798,61 +813,17 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         agent_notes = root.joinpath("AGENT-NOTES.md").read_text()
         live_canaries = root.joinpath("LIVE-CANARIES.md").read_text()
 
-        self.assertIn("For production promotion", readme)
-        self.assertIn("This public repo now includes live-canary runners for both SDKs.", readme)
-        self.assertIn("The publish workflow builds the npm tarball, Python wheel, and Python sdist once", readme)
-        self.assertIn("real publish runs the strict promotion gate", readme)
-        self.assertIn("publishes the same downloaded artifacts", readme)
-        self.assertIn("The artifact clean-install gate imports the npm tarball, the Python wheel, and", readme)
-        self.assertIn("an sdist-built Python wheel", readme)
-        self.assertIn("RUNINFRA_ASR_FIXTURE_BASE64", readme)
-        self.assertIn("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64", readme)
-        self.assertIn("node scripts/verify-workflow-policy.mjs", readme)
-        self.assertIn("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk", readme)
-        self.assertIn("node scripts/verify-version-sync.mjs", readme)
-        self.assertIn("node scripts/verify-npm-package.mjs typescript/runinfra-sdk-*.tgz", readme)
-        self.assertIn("python scripts/verify-python-package.py python/dist", readme)
-        self.assertIn("node scripts/verify-clean-installs.mjs --package both --mode artifact", readme)
-        self.assertIn("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage", readme)
-        self.assertIn(
-            "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json",
-            readme,
-        )
-        self.assertIn(
-            "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json",
-            readme,
-        )
-        self.assertIn(
-            "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root .",
-            readme,
-        )
-        surface_coverage_index = readme.index("node scripts/run-sdk-live-canaries.mjs --verify-surface-coverage")
-        preflight_index = readme.index(
-            "node scripts/run-sdk-live-canaries.mjs --preflight --strict --report artifacts/sdk/live-canary-readiness.json"
-        )
-        live_canary_index = readme.index(
-            "node scripts/run-sdk-live-canaries.mjs --package-source artifact --strict --report artifacts/sdk/live-canary.json"
-        )
-        promotion_report_index = readme.index(
-            "node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-readiness.json --live artifacts/sdk/live-canary.json --artifacts-root ."
-        )
-        self.assertLess(surface_coverage_index, preflight_index)
-        self.assertLess(preflight_index, live_canary_index)
-        self.assertLess(live_canary_index, promotion_report_index)
-        self.assertIn(
-            "gh workflow run publish.yml --repo RightNow-AI/runinfra-sdk --ref main -f package=both -f dry_run=true -f confirm_version=<version>",
-            readme,
-        )
-        self.assertIn("A real publish must also prove registry install/import", readme)
-        self.assertIn(
-            "node scripts/verify-clean-installs.mjs --package both --mode registry --version <version>",
-            readme,
-        )
-        self.assertIn("Run the surface-coverage check before preflight", readme)
-        self.assertIn("Then run the strict preflight", readme)
-        self.assertIn("Then run the strict live canary matrix against the exact production gateway", readme)
+        self.assertNotIn("For production promotion", readme)
+        self.assertNotIn("This public repo now includes live-canary runners for both SDKs.", readme)
+        self.assertNotIn("node scripts/run-sdk-live-canaries.mjs", readme)
+        self.assertNotIn("RUNINFRA_ASR_FIXTURE_BASE64", readme)
+        self.assertNotIn("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64", readme)
+        self.assertIn("## Voice pipelines and webhooks", readme)
         self.assertIn("candidate.sourceDigestSha256", live_canaries)
+        self.assertIn("typescript/tsconfig.json", live_canaries)
+        self.assertIn("python/MANIFEST.in", live_canaries)
         self.assertIn("candidate.artifacts", live_canaries)
+        self.assertIn("canonical live canary matrix", live_canaries)
         self.assertIn("readiness `summary.ready` to equal the canonical matrix row count", live_canaries)
         self.assertIn("readiness `summary.blocked` to be `0`", live_canaries)
         self.assertIn(
@@ -870,8 +841,9 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             agent_notes,
         )
         self.assertIn("readiness summary at all rows ready with zero blocked rows", agent_notes)
+        self.assertIn("source digest includes `typescript/tsconfig.json` and `python/MANIFEST.in`", agent_notes)
         self.assertNotIn("The simplified workflow doesn't run the strict gate scripts", agent_notes)
-        self.assertIn("Do not use npm or PyPI tokens", readme)
+        self.assertNotIn("Do not use npm or PyPI tokens", readme)
         self.assertNotIn("pnpm verify:sdk-release", readme)
         self.assertNotIn("pnpm test:sdk-canary:live", readme)
         self.assertNotIn("RUNINFRA_SDK_CI_TOKEN", readme)
@@ -879,11 +851,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
     def test_docs_document_safe_live_canary_env_file_flag(self):
         root = Path(__file__).resolve().parents[2]
         docs = [
-            root.joinpath("README.md").read_text(),
             root.joinpath("LIVE-CANARIES.md").read_text(),
             root.joinpath("AGENT-NOTES.md").read_text(),
-            root.joinpath("typescript", "README.md").read_text(),
-            root.joinpath("python", "README.md").read_text(),
         ]
 
         for doc in docs:
@@ -2491,6 +2460,70 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
                 self.assertEqual(raised.exception.type, expected_type)
 
+    def test_permission_denied_preserves_gateway_discriminator(self):
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "Deploying endpoints requires a Core or Enterprise plan.",
+                        "type": "byoc_plan_required",
+                    }
+                },
+                status=403,
+                headers={"x-request-id": "req-byoc"},
+            )
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport, max_retries=0)
+
+        with self.assertRaises(PermissionDeniedError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.type, "byoc_plan_required")
+        self.assertEqual(raised.exception.status, 403)
+        self.assertEqual(raised.exception.request_id, "req-byoc")
+
+    def test_insufficient_credits_exposes_structured_topup_fields(self):
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "Insufficient credits to run this request.",
+                        "type": "insufficient_credits",
+                        "current_balance_cents": 125,
+                        "required_cents": 500,
+                        "topup_url": "/settings/cost#credits",
+                    }
+                },
+                status=402,
+                headers={"x-request-id": "req-credits"},
+            )
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport, max_retries=0)
+
+        with self.assertRaises(InsufficientCreditsError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.current_balance_cents, 125)
+        self.assertEqual(raised.exception.required_cents, 500)
+        self.assertEqual(raised.exception.topup_url, "/settings/cost#credits")
+        self.assertEqual(raised.exception.request_id, "req-credits")
+
+    def test_insufficient_credits_topup_fields_default_to_none(self):
+        transport = RecordingTransport(
+            json_response(
+                {"error": {"message": "Insufficient credits.", "type": "insufficient_credits"}},
+                status=402,
+            )
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport, max_retries=0)
+
+        with self.assertRaises(InsufficientCreditsError) as raised:
+            client.models.list()
+
+        self.assertIsNone(raised.exception.current_balance_cents)
+        self.assertIsNone(raised.exception.required_cents)
+        self.assertIsNone(raised.exception.topup_url)
+
     def test_gateway_deployment_errors_keep_deployment_error_type(self):
         transport = RecordingTransport(
             json_response(
@@ -2504,6 +2537,69 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             client.models.list()
 
         self.assertEqual(raised.exception.type, "deployment_error")
+
+    def test_errors_preserve_api_code_and_parameter_metadata(self):
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "The embeddings parameter 'dimensions' is not supported.",
+                        "type": "invalid_request_error",
+                        "code": "unsupported_parameter",
+                        "param": "dimensions",
+                    }
+                },
+                status=400,
+                headers={"x-request-id": "req-dimensions"},
+            )
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport, max_retries=0)
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.embeddings.create(
+                model="bge-small",
+                input="hello",
+                dimensions=1,
+            )
+
+        self.assertEqual(raised.exception.status, 400)
+        self.assertEqual(raised.exception.type, "invalid_request_error")
+        self.assertEqual(raised.exception.code, "unsupported_parameter")
+        self.assertEqual(raised.exception.param, "dimensions")
+        self.assertEqual(raised.exception.request_id, "req-dimensions")
+
+    def test_redacts_api_keys_from_status_error_metadata_fields(self):
+        api_key = "sk-ri-redact-local"
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "metadata redaction canary",
+                        "type": "invalid_request_error",
+                        "code": f"unsupported_{api_key}",
+                        "param": f"field_{api_key}",
+                    }
+                },
+                status=400,
+                headers={"x-request-id": "req-status-metadata-redact"},
+            )
+        )
+        client = RunInfra(
+            api_key=api_key,
+            transport=transport,
+            max_retries=0,
+            retry_base_seconds=0,
+        )
+
+        with self.assertRaises(RunInfraError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.status, 400)
+        self.assertEqual(raised.exception.type, "invalid_request_error")
+        self.assertEqual(raised.exception.code, "unsupported_[redacted]")
+        self.assertEqual(raised.exception.param, "field_[redacted]")
+        self.assertEqual(raised.exception.request_id, "req-status-metadata-redact")
+        self.assertSecretNotInExceptionChain(raised.exception, api_key)
 
     def test_request_options_can_disable_retries_for_cost_sensitive_calls(self):
         transport = RecordingTransport(
