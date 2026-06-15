@@ -10,7 +10,7 @@ Requires Python 3.9 or newer.
 pip install runinfra
 ```
 
-## Modality status (v0.1.5)
+## Modality status (v0.2.0)
 
 This SDK is in **beta**. The surfaces below have different verification levels:
 
@@ -111,7 +111,7 @@ RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gatewa
 
 ## Async Python runtimes
 
-`RunInfra` is intentionally sync-only in v0.1.5 and uses Python's standard
+`RunInfra` is intentionally sync-only in v0.2.0 and uses Python's standard
 library HTTP stack. FastAPI, Starlette, Django ASGI, and other asyncio apps
 should run SDK calls in a worker thread, task queue, or background job so an
 inference request does not block the event loop. Do not instantiate an
@@ -284,6 +284,8 @@ client.responses.create(
 
 The SDK exposes `AuthenticationError`, `PermissionDeniedError`, `RateLimitError`, `InsufficientCreditsError`, `DeploymentError`, `ModelNotFoundError`, `RunInfraTimeoutError`, `RunInfraConnectionError`, and `RunInfraStreamParseError`. `UnsupportedOperationError` remains exported for compatibility with older v0.1.x code, but current public helpers do not raise it.
 `RateLimitError` includes `retry_after_seconds` when the gateway returns `Retry-After`.
+`PermissionDeniedError.type` preserves a specific gateway discriminator on `403` responses when one is present (for example `byoc_plan_required` when a workspace below the deploy tier calls a BYOC-deployed endpoint); it falls back to `permission_denied`. Branch on `err.type` instead of matching the message string.
+`InsufficientCreditsError` includes `current_balance_cents`, `required_cents`, and `topup_url` when the gateway returns them on a `402` response, so you can render an exact top-up prompt without parsing the message.
 `RunInfraStreamParseError` includes `request_id` when a malformed SSE frame came from a traced gateway response.
 `RunInfraTimeoutError` also covers stalled streaming reads and default non-streaming body reads after headers arrive, and includes `request_id` when the response was traced.
 `RunInfraConnectionError` also covers streaming body transport failures and default non-streaming body transport failures after headers arrive, and includes `request_id` when the response was traced.

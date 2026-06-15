@@ -10,7 +10,7 @@ Requires Node.js 18 or newer.
 npm install @runinfra/sdk
 ```
 
-## Modality status (v0.1.5)
+## Modality status (v0.2.0)
 
 This SDK is in **beta**. The surfaces below have different verification levels:
 
@@ -247,6 +247,8 @@ await client.responses.create(
 
 The SDK exposes `AuthenticationError`, `PermissionDeniedError`, `RateLimitError`, `InsufficientCreditsError`, `DeploymentError`, `ModelNotFoundError`, `RunInfraTimeoutError`, `RunInfraConnectionError`, and `RunInfraStreamParseError`. `UnsupportedOperationError` remains exported for compatibility with older v0.1.x code, but current public helpers do not raise it.
 `RateLimitError` includes `retryAfterMs` when the gateway returns `Retry-After`.
+`PermissionDeniedError.type` preserves a specific gateway discriminator on `403` responses when one is present (for example `byoc_plan_required` when a workspace below the deploy tier calls a BYOC-deployed endpoint); it falls back to `permission_denied`. Branch on `err.type` instead of matching the message string.
+`InsufficientCreditsError` includes `currentBalanceCents`, `requiredCents`, and `topupUrl` when the gateway returns them on a `402` response, so you can render an exact top-up prompt without parsing the message.
 `RunInfraStreamParseError` includes `requestId` when a malformed SSE frame came from a traced gateway response.
 `RunInfraTimeoutError` also covers stalled streaming reads, stalled non-streaming JSON body reads, and stalled binary audio `arrayBuffer()` / `blob()` reads after headers arrive, and includes `requestId` when the response was traced.
 `RunInfraConnectionError` also covers streaming body transport failures, non-streaming JSON body transport failures, and binary audio `arrayBuffer()` / `blob()` transport failures after headers arrive, and includes `requestId` when the response was traced.

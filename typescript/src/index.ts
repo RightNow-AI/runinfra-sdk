@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const RUNINFRA_SDK_VERSION = "0.1.5";
+export const RUNINFRA_SDK_VERSION = "0.2.0";
 const MAX_AUTOMATIC_RETRY_AFTER_MS = 60_000;
 
 export interface RunInfraOptions {
@@ -376,8 +376,13 @@ export class AuthenticationError extends RunInfraError {
 }
 
 export class PermissionDeniedError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
-    super(message, { status, type: "permission_denied", requestId, code, param });
+  // `type` defaults to "permission_denied" but the gateway can supply a more
+  // specific discriminator on the 403 body (e.g. "byoc_plan_required" when a
+  // workspace below the deploy tier calls a BYOC-deployed endpoint). We thread
+  // it onto `.type` so callers can branch — `err instanceof PermissionDeniedError
+  // && err.type === "byoc_plan_required"` — instead of regex-scraping the message.
+  constructor(message: string, status: number, requestId?: string, code?: string, param?: string, type = "permission_denied") {
+    super(message, { status, type, requestId, code, param });
     this.name = "PermissionDeniedError";
   }
 }
@@ -390,9 +395,25 @@ export class RateLimitError extends RunInfraError {
 }
 
 export class InsufficientCreditsError extends RunInfraError {
-  constructor(message: string, status: number, requestId?: string, code?: string, param?: string) {
+  /** Remaining workspace balance in cents, when the gateway reports it. */
+  readonly currentBalanceCents?: number;
+  /** Credits this request needed, in cents, when the gateway reports it. */
+  readonly requiredCents?: number;
+  /** Where to top up, when the gateway reports it. */
+  readonly topupUrl?: string;
+  constructor(
+    message: string,
+    status: number,
+    requestId?: string,
+    code?: string,
+    param?: string,
+    details?: { currentBalanceCents?: number; requiredCents?: number; topupUrl?: string },
+  ) {
     super(message, { status, type: "insufficient_credits", requestId, code, param });
     this.name = "InsufficientCreditsError";
+    this.currentBalanceCents = details?.currentBalanceCents;
+    this.requiredCents = details?.requiredCents;
+    this.topupUrl = details?.topupUrl;
   }
 }
 
@@ -1343,19 +1364,39 @@ async function parseError(response: Response): Promise<{
   type: string;
   code?: string;
   param?: string;
+  currentBalanceCents?: number;
+  requiredCents?: number;
+  topupUrl?: string;
 }> {
   try {
     const body = (await response.json()) as {
-      error?: { message?: unknown; type?: unknown; code?: unknown; param?: unknown };
+      error?: {
+        message?: unknown;
+        type?: unknown;
+        code?: unknown;
+        param?: unknown;
+        current_balance_cents?: unknown;
+        required_cents?: unknown;
+        topup_url?: unknown;
+      };
     };
+    const error = body.error ?? {};
     return {
       message:
-        typeof body.error?.message === "string"
-          ? body.error.message
+        typeof error.message === "string"
+          ? error.message
           : `RunInfra request failed with status ${response.status}`,
-      type: typeof body.error?.type === "string" ? body.error.type : "api_error",
-      ...(typeof body.error?.code === "string" ? { code: body.error.code } : {}),
-      ...(typeof body.error?.param === "string" ? { param: body.error.param } : {}),
+      type: typeof error.type === "string" ? error.type : "api_error",
+      ...(typeof error.code === "string" ? { code: error.code } : {}),
+      ...(typeof error.param === "string" ? { param: error.param } : {}),
+      // Structured remediation fields the gateway ships on 402 insufficient_credits.
+      ...(typeof error.current_balance_cents === "number" && Number.isFinite(error.current_balance_cents)
+        ? { currentBalanceCents: error.current_balance_cents }
+        : {}),
+      ...(typeof error.required_cents === "number" && Number.isFinite(error.required_cents)
+        ? { requiredCents: error.required_cents }
+        : {}),
+      ...(typeof error.topup_url === "string" ? { topupUrl: error.topup_url } : {}),
     };
   } catch {
     return {
@@ -1375,11 +1416,29 @@ async function discardResponseBody(response: Response): Promise<void> {
 
 async function raiseForStatus(response: Response): Promise<void> {
   if (response.ok) return;
-  const { message, type, code, param } = await parseError(response);
+  const { message, type, code, param, currentBalanceCents, requiredCents, topupUrl } =
+    await parseError(response);
   const requestId = response.headers.get("x-request-id") ?? undefined;
   if (response.status === 401) throw new AuthenticationError(message, response.status, requestId, code, param);
-  if (response.status === 403) throw new PermissionDeniedError(message, response.status, requestId, code, param);
-  if (response.status === 402) throw new InsufficientCreditsError(message, response.status, requestId, code, param);
+  if (response.status === 403) {
+    // Keep a more specific gateway discriminator (e.g. "byoc_plan_required")
+    // on `.type` so callers can branch instead of regex-scraping the message.
+    throw new PermissionDeniedError(
+      message,
+      response.status,
+      requestId,
+      code,
+      param,
+      type !== "api_error" ? type : "permission_denied",
+    );
+  }
+  if (response.status === 402) {
+    throw new InsufficientCreditsError(message, response.status, requestId, code, param, {
+      currentBalanceCents,
+      requiredCents,
+      topupUrl,
+    });
+  }
   if (response.status === 404 || type === "model_not_found") {
     throw new ModelNotFoundError(message, response.status, requestId, code, param);
   }
@@ -1459,13 +1518,19 @@ function redactRunInfraError(error: RunInfraError, sensitiveValues: readonly str
     return new AuthenticationError(message, error.status, error.requestId, code, param);
   }
   if (error instanceof PermissionDeniedError) {
-    return new PermissionDeniedError(message, error.status, error.requestId, code, param);
+    // Preserve the gateway discriminator (e.g. "byoc_plan_required") through redaction.
+    return new PermissionDeniedError(message, error.status, error.requestId, code, param, error.type);
   }
   if (error instanceof RateLimitError) {
     return new RateLimitError(message, error.status, error.requestId, error.retryAfterMs, code, param);
   }
   if (error instanceof InsufficientCreditsError) {
-    return new InsufficientCreditsError(message, error.status, error.requestId, code, param);
+    // Carry the structured top-up fields through redaction (they hold no secrets).
+    return new InsufficientCreditsError(message, error.status, error.requestId, code, param, {
+      currentBalanceCents: error.currentBalanceCents,
+      requiredCents: error.requiredCents,
+      topupUrl: error.topupUrl,
+    });
   }
   if (error instanceof DeploymentError) {
     return new DeploymentError(message, error.status, error.requestId, code, param);

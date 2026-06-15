@@ -3,6 +3,19 @@
 All notable changes to `@runinfra/sdk` are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-06-15
+
+### Added
+- `InsufficientCreditsError` now exposes `currentBalanceCents`, `requiredCents`,
+  and `topupUrl` when the gateway includes them on a `402` response, so callers
+  can render a precise top-up prompt without parsing the message string.
+
+### Changed
+- `PermissionDeniedError.type` now preserves a specific gateway discriminator on
+  `403` responses (for example `byoc_plan_required` when a workspace below the
+  deploy tier calls a BYOC-deployed endpoint) instead of always reporting
+  `permission_denied`. Branch on `err.type` rather than scraping `err.message`.
+
 ## [0.1.5] - 2026-05-30
 
 ### Added

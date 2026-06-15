@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Mappi
 JsonDict = Dict[str, Any]
 Transport = Callable[["RunInfraRequest"], "RunInfraResponse"]
 ResponseBody = Union[bytes, Iterable[bytes]]
-__version__ = "0.1.5"
+__version__ = "0.2.0"
 _MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 60.0
 _WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH = 8192
 
@@ -168,7 +168,33 @@ class RateLimitError(RunInfraError):
 
 
 class InsufficientCreditsError(RunInfraError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int,
+        error_type: str = "insufficient_credits",
+        request_id: Optional[str] = None,
+        retry_after_seconds: Optional[float] = None,
+        code: Optional[str] = None,
+        param: Optional[str] = None,
+        current_balance_cents: Optional[int] = None,
+        required_cents: Optional[int] = None,
+        topup_url: Optional[str] = None,
+    ) -> None:
+        super().__init__(
+            message,
+            status=status,
+            error_type=error_type,
+            request_id=request_id,
+            retry_after_seconds=retry_after_seconds,
+            code=code,
+            param=param,
+        )
+        # Structured remediation fields the gateway ships on 402; any may be None.
+        self.current_balance_cents = current_balance_cents
+        self.required_cents = required_cents
+        self.topup_url = topup_url
 
 
 class DeploymentError(RunInfraError):
@@ -884,6 +910,20 @@ def _redacted_runinfra_error(
         return UnsupportedOperationError(message)
     if isinstance(error, WebhookVerificationError):
         return WebhookVerificationError(message)
+    if isinstance(error, InsufficientCreditsError):
+        # Carry the structured top-up fields through redaction (they hold no secrets).
+        return InsufficientCreditsError(
+            message,
+            status=error.status,
+            error_type=error.type,
+            request_id=error.request_id,
+            retry_after_seconds=error.retry_after_seconds,
+            code=code,
+            param=param,
+            current_balance_cents=error.current_balance_cents,
+            required_cents=error.required_cents,
+            topup_url=error.topup_url,
+        )
     try:
         return error.__class__(
             message,
@@ -954,6 +994,9 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
     error_type = "api_error"
     code: Optional[str] = None
     param: Optional[str] = None
+    current_balance_cents: Optional[int] = None
+    required_cents: Optional[int] = None
+    topup_url: Optional[str] = None
     try:
         body = response.json()
         if isinstance(body, dict) and isinstance(body.get("error"), dict):
@@ -966,6 +1009,18 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
                 code = error["code"]
             if isinstance(error.get("param"), str):
                 param = error["param"]
+            # Structured remediation fields the gateway ships on 402.
+            # `bool` is a subclass of `int`, so exclude it explicitly.
+            if isinstance(error.get("current_balance_cents"), int) and not isinstance(
+                error.get("current_balance_cents"), bool
+            ):
+                current_balance_cents = error["current_balance_cents"]
+            if isinstance(error.get("required_cents"), int) and not isinstance(
+                error.get("required_cents"), bool
+            ):
+                required_cents = error["required_cents"]
+            if isinstance(error.get("topup_url"), str):
+                topup_url = error["topup_url"]
     except Exception:
         pass
 
@@ -980,10 +1035,13 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
             param=param,
         )
     if response.status == 403:
+        # Default to "permission_denied", but keep a more specific gateway
+        # discriminator (e.g. "byoc_plan_required") so callers can branch on
+        # `.type` instead of regex-scraping the message.
         return PermissionDeniedError(
             message,
             status=response.status,
-            error_type="permission_denied",
+            error_type=error_type if error_type != "api_error" else "permission_denied",
             request_id=request_id,
             code=code,
             param=param,
@@ -996,6 +1054,9 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
             request_id=request_id,
             code=code,
             param=param,
+            current_balance_cents=current_balance_cents,
+            required_cents=required_cents,
+            topup_url=topup_url,
         )
     if response.status == 404 or error_type == "model_not_found":
         return ModelNotFoundError(

@@ -9,6 +9,8 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
   AuthenticationError,
+  InsufficientCreditsError,
+  PermissionDeniedError,
   RUNINFRA_SDK_VERSION,
   RunInfra,
   RunInfraAudioResponse,
@@ -7378,6 +7380,100 @@ with open(report, "w", encoding="utf-8") as handle:
       param: "dimensions",
       requestId: "req-dimensions",
     } satisfies Partial<RunInfraError>);
+  });
+
+  it("preserves the gateway discriminator on 403 permission errors", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: "Deploying endpoints requires a Core or Enterprise plan.",
+            type: "byoc_plan_required",
+          },
+        },
+        { status: 403, headers: { "x-request-id": "req-byoc" } },
+      ),
+    );
+    const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher, maxRetries: 0 });
+
+    const error = await client.models.list().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(PermissionDeniedError);
+    expect(error).toMatchObject({
+      name: "PermissionDeniedError",
+      status: 403,
+      type: "byoc_plan_required",
+      requestId: "req-byoc",
+    } satisfies Partial<RunInfraError>);
+  });
+
+  it("falls back to permission_denied when a 403 omits a specific type", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        { error: { message: "Forbidden" } },
+        { status: 403 },
+      ),
+    );
+    const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher, maxRetries: 0 });
+
+    const error = await client.models.list().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(PermissionDeniedError);
+    expect((error as PermissionDeniedError).type).toBe("permission_denied");
+  });
+
+  it("exposes structured top-up fields on 402 insufficient-credits errors", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: "Insufficient credits to run this request.",
+            type: "insufficient_credits",
+            current_balance_cents: 125,
+            required_cents: 500,
+            topup_url: "/settings/cost#credits",
+          },
+        },
+        { status: 402, headers: { "x-request-id": "req-credits" } },
+      ),
+    );
+    const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher, maxRetries: 0 });
+
+    const error = await client.models.list().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(InsufficientCreditsError);
+    const credits = error as InsufficientCreditsError;
+    expect(credits.status).toBe(402);
+    expect(credits.currentBalanceCents).toBe(125);
+    expect(credits.requiredCents).toBe(500);
+    expect(credits.topupUrl).toBe("/settings/cost#credits");
+    expect(credits.requestId).toBe("req-credits");
+  });
+
+  it("leaves structured top-up fields undefined when a 402 omits them", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        { error: { message: "Insufficient credits.", type: "insufficient_credits" } },
+        { status: 402 },
+      ),
+    );
+    const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher, maxRetries: 0 });
+
+    const error = await client.models.list().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(InsufficientCreditsError);
+    const credits = error as InsufficientCreditsError;
+    expect(credits.currentBalanceCents).toBeUndefined();
+    expect(credits.requiredCents).toBeUndefined();
+    expect(credits.topupUrl).toBeUndefined();
   });
 
   it("rejects malformed JSON response shapes before returning user data", async () => {

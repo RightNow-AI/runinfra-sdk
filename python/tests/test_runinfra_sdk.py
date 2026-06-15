@@ -803,7 +803,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
         self.assertIn("## Async Python runtimes", readme)
-        self.assertIn("`RunInfra` is intentionally sync-only in v0.1.5", readme)
+        self.assertIn("`RunInfra` is intentionally sync-only in v0.2.0", readme)
         self.assertIn("does not block the event loop", readme)
         self.assertIn("Do not instantiate an\n`AsyncRunInfra` client", readme)
 
@@ -2459,6 +2459,70 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                     client.models.list()
 
                 self.assertEqual(raised.exception.type, expected_type)
+
+    def test_permission_denied_preserves_gateway_discriminator(self):
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "Deploying endpoints requires a Core or Enterprise plan.",
+                        "type": "byoc_plan_required",
+                    }
+                },
+                status=403,
+                headers={"x-request-id": "req-byoc"},
+            )
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport, max_retries=0)
+
+        with self.assertRaises(PermissionDeniedError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.type, "byoc_plan_required")
+        self.assertEqual(raised.exception.status, 403)
+        self.assertEqual(raised.exception.request_id, "req-byoc")
+
+    def test_insufficient_credits_exposes_structured_topup_fields(self):
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "message": "Insufficient credits to run this request.",
+                        "type": "insufficient_credits",
+                        "current_balance_cents": 125,
+                        "required_cents": 500,
+                        "topup_url": "/settings/cost#credits",
+                    }
+                },
+                status=402,
+                headers={"x-request-id": "req-credits"},
+            )
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport, max_retries=0)
+
+        with self.assertRaises(InsufficientCreditsError) as raised:
+            client.models.list()
+
+        self.assertEqual(raised.exception.current_balance_cents, 125)
+        self.assertEqual(raised.exception.required_cents, 500)
+        self.assertEqual(raised.exception.topup_url, "/settings/cost#credits")
+        self.assertEqual(raised.exception.request_id, "req-credits")
+
+    def test_insufficient_credits_topup_fields_default_to_none(self):
+        transport = RecordingTransport(
+            json_response(
+                {"error": {"message": "Insufficient credits.", "type": "insufficient_credits"}},
+                status=402,
+            )
+        )
+        client = RunInfra(api_key="sk-ri-test", transport=transport, max_retries=0)
+
+        with self.assertRaises(InsufficientCreditsError) as raised:
+            client.models.list()
+
+        self.assertIsNone(raised.exception.current_balance_cents)
+        self.assertIsNone(raised.exception.required_cents)
+        self.assertIsNone(raised.exception.topup_url)
 
     def test_gateway_deployment_errors_keep_deployment_error_type(self):
         transport = RecordingTransport(
