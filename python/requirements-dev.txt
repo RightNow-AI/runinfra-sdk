@@ -1,4 +1,4 @@
 build==1.4.0
-pytest==8.4.2
+pytest==9.0.3
 typing_extensions==4.15.0
 twine==6.2.0
