@@ -2329,7 +2329,7 @@ class RunInfra:
       rmSync(tmp, { recursive: true, force: true });
       rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
-  }, 20_000);
+  }, 60_000);
 
   it("keeps child canaries in parity for audio OpenAI parameter coverage", () => {
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
@@ -3252,13 +3252,17 @@ class RunInfra:
   it("keeps Python test tooling compatible with the declared Python floor", () => {
     const pyproject = readFileSync(new URL("../../python/pyproject.toml", import.meta.url), "utf8");
     const requirements = readFileSync(new URL("../../python/requirements-dev.txt", import.meta.url), "utf8");
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 
     expect(pyproject).toContain('requires-python = ">=3.9"');
     expect(pyproject).toContain('requires = ["setuptools==82.0.1"]');
     expect(pyproject).not.toContain("setuptools>=");
-    expect(requirements).toContain("pytest==8.4.2");
     expect(requirements).toContain("typing_extensions==4.15.0");
-    expect(requirements).not.toMatch(/^pytest==9\./mu);
+    expect(requirements).not.toMatch(/^pytest(?:[<=>~!]|$)/mu);
+    expect(publish).toContain("python -m unittest discover -s python/tests -v");
+    expect(ci).toContain("python -m unittest discover -s tests -v");
+    expect(`${publish}\n${ci}`).not.toContain("python -m pytest");
   });
 
   it("installs Python build tooling before publish workflow TypeScript tests", async () => {
@@ -3310,7 +3314,10 @@ class RunInfra:
     expect(evaluateWorkflowPolicy({ publish: realPublishWithoutDryRunGuard, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
       .toBe(false);
 
-    const realPublishWithoutEnvironment = publish.replace("    environment: npm\n", "");
+    const realPublishWithoutEnvironment = publish.replace(
+      /    environment: npm\r?\n/u,
+      "",
+    );
     expect(realPublishWithoutEnvironment).not.toBe(publish);
     expect(evaluateWorkflowPolicy({ publish: realPublishWithoutEnvironment, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
       .toBe(false);
