@@ -8,11 +8,11 @@ history, no workspace identifiers, and no operational secrets.
 
 | Registry | Package | Source dir | Source version |
 |---|---|---|---|
-| npm | `@runinfra/sdk` | `typescript/` | `0.1.4` |
-| PyPI | `runinfra` | `python/` | `0.1.4` |
+| npm | `@runinfra/sdk` | `typescript/` | `0.2.0` |
+| PyPI | `runinfra` | `python/` | `0.2.0` |
 
-Registry latest remains `0.1.3` until the protected trusted-publish workflow
-publishes `0.1.4` from `main`.
+Registry latest is `0.2.0` on both npm and PyPI. Future releases must still use
+the protected trusted-publish workflow from `main`.
 
 ## What Ships
 
@@ -72,7 +72,7 @@ Important PyPI details:
 
 | Surface | Status |
 |---|---|
-| `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested. Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows |
+| `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested. Current 0.2.0 promotion artifacts are not strict-live green; the next publish requires fresh production artifact canaries with zero skipped or failed rows |
 | `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |
 | `client.images.generate` | Experimental, HTTP envelope matches the documented API but strict live canary coverage is still required |
 | `client.audio.speech.create` | Experimental, strict live canary coverage is still required |
@@ -81,7 +81,7 @@ Important PyPI details:
 | `client.webhooks.verifySignature`, `client.webhooks.constructEvent` | Local helpers, covered by unit tests |
 | Webhook delivery create/list | Not shipped and not exposed on the public SDK surface |
 
-Python remains sync-only in `0.1.4`. Do not claim async support until an
+Python remains sync-only in `0.2.0`. Do not claim async support until an
 `AsyncRunInfra` client has matching unit tests, streaming tests, live canaries,
 and clean-install coverage.
 
