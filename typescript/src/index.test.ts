@@ -3325,7 +3325,10 @@ class RunInfra:
     expect(evaluateWorkflowPolicy({ publish: realPublishWithoutDryRunGuard, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
       .toBe(false);
 
-    const realPublishWithoutEnvironment = publish.replace("    environment: npm\n", "");
+    const realPublishWithoutEnvironment = publish.replace(
+      /    environment: npm\r?\n/u,
+      "",
+    );
     expect(realPublishWithoutEnvironment).not.toBe(publish);
     expect(evaluateWorkflowPolicy({ publish: realPublishWithoutEnvironment, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
       .toBe(false);
