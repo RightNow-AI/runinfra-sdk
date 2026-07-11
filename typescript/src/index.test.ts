@@ -2918,6 +2918,10 @@ class RunInfra:
     expect(agentNotes).toContain("Registry latest is `0.2.0` on both npm and PyPI");
     expect(agentNotes).toContain("documented `require_live_canary=false` override");
     expect(agentNotes).toContain("Registry availability for 0.2.0 is therefore not strict live-canary evidence.");
+    expect(liveCanaries).toContain("explicitly dispatch with `require_live_canary=false`");
+    expect(liveCanaries).toContain("release using the override is not strict live-canary evidence");
+    expect(liveCanaries).not.toContain("A real publish cannot start");
+    expect(liveCanaries).not.toContain("cannot satisfy the real publish gate");
     expect(agentNotes).toContain("Clean artifact install/import now exercises the npm tarball, Python wheel, and");
     expect(agentNotes).toContain("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk");
     expect(agentNotes).toContain("the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files");
@@ -3260,22 +3264,45 @@ class RunInfra:
     const pullRequestTemplate = readFileSync(new URL("../../.github/PULL_REQUEST_TEMPLATE.md", import.meta.url), "utf8");
     const contributing = readFileSync(new URL("../../CONTRIBUTING.md", import.meta.url), "utf8");
     const unittestCommand = "python -m unittest discover -s tests -v";
+    const nonzeroDiscoveryGuard = "python -c \"import unittest; suite = unittest.defaultTestLoader.discover('tests'); count = suite.countTestCases(); print(f'Discovered {count} tests'); raise SystemExit(0 if count else 1)\"";
+    const normalizedCi = ci.replace(/\r\n/gu, "\n");
+    const normalizedPublish = publish.replace(/\r\n/gu, "\n");
+    const normalizedContributing = contributing.replace(/\r\n/gu, "\n");
 
     expect(pyproject).toContain('requires-python = ">=3.9"');
     expect(pyproject).toContain('requires = ["setuptools==82.0.1"]');
     expect(pyproject).not.toContain("setuptools>=");
     expect(requirements).toContain("typing_extensions==4.15.0");
     expect(requirements).not.toMatch(/^pytest(?:[<=>~!]|$)/mu);
-    expect(ci).toMatch(
-      /      - name: Test\r?\n        working-directory: python\r?\n        run: \|\r?\n          python -m pip install -e \.\r?\n          python -m unittest discover -s tests -v/u,
-    );
-    expect(publish).toMatch(
-      /      - name: Test Python\r?\n        working-directory: python\r?\n        run: \|\r?\n          python -m pip install -e \.\r?\n          python -m unittest discover -s tests -v/u,
-    );
+    expect(normalizedCi).toContain([
+      "      - name: Test",
+      "        working-directory: python",
+      "        run: |",
+      "          python -m pip install -e .",
+      `          ${nonzeroDiscoveryGuard}`,
+      `          ${unittestCommand}`,
+    ].join("\n"));
+    expect(normalizedPublish).toContain([
+      "      - name: Test Python",
+      "        working-directory: python",
+      "        run: |",
+      "          python -m pip install -e .",
+      `          ${nonzeroDiscoveryGuard}`,
+      `          ${unittestCommand}`,
+    ].join("\n"));
     expect(`${publish}\n${ci}`).not.toContain("python -m pytest");
     expect(`${publish}\n${ci}`).not.toContain("-s python/tests");
     expect(pullRequestTemplate).toContain(`from \`python/\`, \`${unittestCommand}\``);
-    expect(contributing).toContain(unittestCommand);
+    const contributingPythonBlock = [
+      "# Python",
+      "cd ../python",
+      "python -m pip install -e .",
+      unittestCommand,
+    ].join("\n");
+    expect(normalizedContributing).toContain(contributingPythonBlock);
+    const wrongCwdContributing = normalizedContributing.replace("cd ../python", "cd ..");
+    expect(wrongCwdContributing).not.toBe(normalizedContributing);
+    expect(wrongCwdContributing).not.toContain(contributingPythonBlock);
     expect(contributing).toContain("Run Python discovery from `python/`");
   });
 

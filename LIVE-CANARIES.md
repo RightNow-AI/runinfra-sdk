@@ -109,10 +109,14 @@ satisfy strict promotion.
 In the trusted-publish workflow, `build-artifacts` creates the npm tarball,
 Python wheel, and Python sdist once and uploads them as
 `runinfra-sdk-promoted-artifacts`. `promotion-gate`, `publish-npm`, and
-`publish-pypi` download that same artifact bundle. A real publish cannot start
-the registry jobs until strict readiness/live reports pass for the downloaded
-artifacts and `verify-promotion-reports.mjs` confirms the same source digest
-and all-passed rows.
+`publish-pypi` download that same artifact bundle. By default, the registry
+jobs wait for strict readiness/live reports for those artifacts and for
+`verify-promotion-reports.mjs` to confirm the same source digest and all-passed
+rows. If live-service canary infrastructure is unavailable, a maintainer may
+explicitly dispatch with `require_live_canary=false`. The workflow records the
+override, skips only those strict live-canary steps, and still requires build,
+unit, packaging, security, trusted-publish, and registry-install gates. A
+release using the override is not strict live-canary evidence.
 
 ## Required Environment
 
@@ -194,9 +198,12 @@ canonical live canary matrix exactly,
 so a shortened self-consistent report cannot satisfy the gate. The report's
 candidate source file count must also match the canonical live-canary source
 file manifest.
-Promotion evidence must come from strict child canaries against `https://api.runinfra.ai/v1`;
-reports generated with any other custom `RUNINFRA_BASE_URL` are useful for
-staging smoke tests but cannot satisfy the real publish gate.
+Strict live-canary evidence must come from child canaries against
+`https://api.runinfra.ai/v1`; reports generated with any other custom
+`RUNINFRA_BASE_URL` are useful for staging smoke tests but cannot satisfy that
+evidence requirement. The infrastructure-unavailable override permits a
+registry release without this evidence, but it cannot be used to claim method
+or model live readiness.
 
 ## Matrix Rows
 
