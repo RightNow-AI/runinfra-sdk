@@ -8,11 +8,17 @@ history, no workspace identifiers, and no operational secrets.
 
 | Registry | Package | Source dir | Source version |
 |---|---|---|---|
-| npm | `@runinfra/sdk` | `typescript/` | `0.1.4` |
-| PyPI | `runinfra` | `python/` | `0.1.4` |
+| npm | `@runinfra/sdk` | `typescript/` | `0.2.0` |
+| PyPI | `runinfra` | `python/` | `0.2.0` |
 
-Registry latest remains `0.1.3` until the protected trusted-publish workflow
-publishes `0.1.4` from `main`.
+Registry latest is `0.2.0` on both npm and PyPI. Future releases must still use
+the protected trusted-publish workflow from `main`.
+
+The 0.2.0 release used the documented `require_live_canary=false` override
+because live-service canary infrastructure was unavailable. The workflow
+skipped strict readiness, artifact live-canary, and promotion-report steps;
+build, unit, packaging, security, trusted-publish, and registry-install gates
+still ran. Registry availability for 0.2.0 is therefore not strict live-canary evidence.
 
 ## What Ships
 
@@ -72,8 +78,8 @@ Important PyPI details:
 
 | Surface | Status |
 |---|---|
-| `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested. Current 0.1.4 promotion artifacts are not strict-live green; publish requires fresh production artifact canaries with zero skipped or failed rows |
-| `client.embeddings.create` | Beta, contract-tested. Not strict live-canary verified in the current promotion artifacts |
+| `client.chat.completions.create`, `client.responses.create` | Beta, contract-tested. Published 0.2.0 artifacts are not strict-live verified because the infrastructure-unavailable override skipped those gates |
+| `client.embeddings.create` | Beta, contract-tested. Published 0.2.0 artifacts are not strict live-canary verified |
 | `client.images.generate` | Experimental, HTTP envelope matches the documented API but strict live canary coverage is still required |
 | `client.audio.speech.create` | Experimental, strict live canary coverage is still required |
 | `client.audio.transcriptions.create` | Experimental, strict live canary coverage is still required |
@@ -81,7 +87,7 @@ Important PyPI details:
 | `client.webhooks.verifySignature`, `client.webhooks.constructEvent` | Local helpers, covered by unit tests |
 | Webhook delivery create/list | Not shipped and not exposed on the public SDK surface |
 
-Python remains sync-only in `0.1.4`. Do not claim async support until an
+Python remains sync-only in `0.2.0`. Do not claim async support until an
 `AsyncRunInfra` client has matching unit tests, streaming tests, live canaries,
 and clean-install coverage.
 
@@ -114,7 +120,10 @@ node scripts/verify-promotion-reports.mjs --readiness artifacts/sdk/live-canary-
 The publish workflow builds the npm tarball, Python wheel, and Python sdist
 once, uploads them as `runinfra-sdk-promoted-artifacts`, downloads the same
 artifacts for strict readiness and live promotion reports, recomputes hashes
-with `--artifacts-root .`, and the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files. `dry_run=false` cannot bypass `promotion-gate`.
+with `--artifacts-root .`, and the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files. `dry_run=false` cannot bypass `promotion-gate`. The infrastructure-unavailable
+`require_live_canary=false` override skips only the strict live-canary steps
+inside that gate and records that fact in the workflow summary; it does not
+turn the release into strict live-canary evidence.
 
 Clean artifact install/import now exercises the npm tarball, Python wheel, and
 Python sdist. The sdist path builds and imports in a disposable consumer

@@ -2915,6 +2915,9 @@ class RunInfra:
     expect(liveCanaries).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
     expect(liveCanaries).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
     expect(agentNotes).toContain("`dry_run=false` cannot bypass `promotion-gate`");
+    expect(agentNotes).toContain("Registry latest is `0.2.0` on both npm and PyPI");
+    expect(agentNotes).toContain("documented `require_live_canary=false` override");
+    expect(agentNotes).toContain("Registry availability for 0.2.0 is therefore not strict live-canary evidence.");
     expect(agentNotes).toContain("Clean artifact install/import now exercises the npm tarball, Python wheel, and");
     expect(agentNotes).toContain("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk");
     expect(agentNotes).toContain("the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files");
