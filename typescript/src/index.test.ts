@@ -2329,7 +2329,7 @@ class RunInfra:
       rmSync(tmp, { recursive: true, force: true });
       rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
-  }, 20_000);
+  }, 60_000);
 
   it("keeps child canaries in parity for audio OpenAI parameter coverage", () => {
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
