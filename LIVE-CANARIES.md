@@ -198,8 +198,8 @@ canonical live canary matrix exactly,
 so a shortened self-consistent report cannot satisfy the gate. The report's
 candidate source file count must also match the canonical live-canary source
 file manifest.
-Strict live-canary evidence must come from child canaries against
-`https://api.runinfra.ai/v1`; reports generated with any other custom
+Strict live-canary evidence must come from
+strict child canaries against `https://api.runinfra.ai/v1`; reports generated with any other custom
 `RUNINFRA_BASE_URL` are useful for staging smoke tests but cannot satisfy that
 evidence requirement. The infrastructure-unavailable override permits a
 registry release without this evidence, but it cannot be used to claim method
