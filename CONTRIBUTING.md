@@ -19,7 +19,7 @@ pnpm build
 # Python
 cd ../python
 python -m pip install -e .
-python -m pytest tests/
+python -m unittest discover -s tests -v
 ```
 
 ## Branch + PR workflow
@@ -76,9 +76,11 @@ repo, so the PR title becomes the commit message — make it clean.
 
 Both SDKs have unit tests that mock the HTTP layer:
 - TypeScript: `typescript/src/index.test.ts` — runs via `vitest`.
-- Python: `python/tests/test_runinfra_sdk.py` — runs via `pytest`.
+- Python: `python/tests/test_runinfra_sdk.py` — runs via stdlib `unittest`.
 
 Add a test for any new behavior. Tests must not require network access.
+Run Python discovery from `python/`, as shown above, so imports resolve to the
+checkout under test instead of an installed package or sibling worktree.
 
 ## Releases
 

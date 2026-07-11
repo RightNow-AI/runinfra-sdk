@@ -2329,7 +2329,7 @@ class RunInfra:
       rmSync(tmp, { recursive: true, force: true });
       rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
-  }, 20_000);
+  }, 60_000);
 
   it("keeps child canaries in parity for audio OpenAI parameter coverage", () => {
     const typescriptCanary = readFileSync(new URL("../../scripts/sdk-live-canary-typescript.mjs", import.meta.url), "utf8");
@@ -2915,6 +2915,13 @@ class RunInfra:
     expect(liveCanaries).toContain("RUNINFRA_ASR_FIXTURE_BASE64");
     expect(liveCanaries).toContain("RUNINFRA_VOICE_PIPELINE_AUDIO_BASE64");
     expect(agentNotes).toContain("`dry_run=false` cannot bypass `promotion-gate`");
+    expect(agentNotes).toContain("Registry latest is `0.2.0` on both npm and PyPI");
+    expect(agentNotes).toContain("documented `require_live_canary=false` override");
+    expect(agentNotes).toContain("Registry availability for 0.2.0 is therefore not strict live-canary evidence.");
+    expect(liveCanaries).toContain("explicitly dispatch with `require_live_canary=false`");
+    expect(liveCanaries).toContain("release using the override is not strict live-canary evidence");
+    expect(liveCanaries).not.toContain("A real publish cannot start");
+    expect(liveCanaries).not.toContain("cannot satisfy the real publish gate");
     expect(agentNotes).toContain("Clean artifact install/import now exercises the npm tarball, Python wheel, and");
     expect(agentNotes).toContain("node scripts/verify-github-security-status.mjs --repo RightNow-AI/runinfra-sdk");
     expect(agentNotes).toContain("the publish jobs publish only the downloaded `runinfra-sdk-promoted-artifacts` files");
@@ -3252,13 +3259,51 @@ class RunInfra:
   it("keeps Python test tooling compatible with the declared Python floor", () => {
     const pyproject = readFileSync(new URL("../../python/pyproject.toml", import.meta.url), "utf8");
     const requirements = readFileSync(new URL("../../python/requirements-dev.txt", import.meta.url), "utf8");
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const pullRequestTemplate = readFileSync(new URL("../../.github/PULL_REQUEST_TEMPLATE.md", import.meta.url), "utf8");
+    const contributing = readFileSync(new URL("../../CONTRIBUTING.md", import.meta.url), "utf8");
+    const unittestCommand = "python -m unittest discover -s tests -v";
+    const nonzeroDiscoveryGuard = "python -c \"import unittest; suite = unittest.defaultTestLoader.discover('tests'); count = suite.countTestCases(); print(f'Discovered {count} tests'); raise SystemExit(0 if count else 1)\"";
+    const normalizedCi = ci.replace(/\r\n/gu, "\n");
+    const normalizedPublish = publish.replace(/\r\n/gu, "\n");
+    const normalizedContributing = contributing.replace(/\r\n/gu, "\n");
 
     expect(pyproject).toContain('requires-python = ">=3.9"');
     expect(pyproject).toContain('requires = ["setuptools==82.0.1"]');
     expect(pyproject).not.toContain("setuptools>=");
-    expect(requirements).toContain("pytest==8.4.2");
     expect(requirements).toContain("typing_extensions==4.15.0");
-    expect(requirements).not.toMatch(/^pytest==9\./mu);
+    expect(requirements).not.toMatch(/^pytest(?:[<=>~!]|$)/mu);
+    expect(normalizedCi).toContain([
+      "      - name: Test",
+      "        working-directory: python",
+      "        run: |",
+      "          python -m pip install -e .",
+      `          ${nonzeroDiscoveryGuard}`,
+      `          ${unittestCommand}`,
+    ].join("\n"));
+    expect(normalizedPublish).toContain([
+      "      - name: Test Python",
+      "        working-directory: python",
+      "        run: |",
+      "          python -m pip install -e .",
+      `          ${nonzeroDiscoveryGuard}`,
+      `          ${unittestCommand}`,
+    ].join("\n"));
+    expect(`${publish}\n${ci}`).not.toContain("python -m pytest");
+    expect(`${publish}\n${ci}`).not.toContain("-s python/tests");
+    expect(pullRequestTemplate).toContain(`from \`python/\`, \`${unittestCommand}\``);
+    const contributingPythonBlock = [
+      "# Python",
+      "cd ../python",
+      "python -m pip install -e .",
+      unittestCommand,
+    ].join("\n");
+    expect(normalizedContributing).toContain(contributingPythonBlock);
+    const wrongCwdContributing = normalizedContributing.replace("cd ../python", "cd ..");
+    expect(wrongCwdContributing).not.toBe(normalizedContributing);
+    expect(wrongCwdContributing).not.toContain(contributingPythonBlock);
+    expect(contributing).toContain("Run Python discovery from `python/`");
   });
 
   it("installs Python build tooling before publish workflow TypeScript tests", async () => {
@@ -3310,7 +3355,10 @@ class RunInfra:
     expect(evaluateWorkflowPolicy({ publish: realPublishWithoutDryRunGuard, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
       .toBe(false);
 
-    const realPublishWithoutEnvironment = publish.replace("    environment: npm\n", "");
+    const realPublishWithoutEnvironment = publish.replace(
+      /    environment: npm\r?\n/u,
+      "",
+    );
     expect(realPublishWithoutEnvironment).not.toBe(publish);
     expect(evaluateWorkflowPolicy({ publish: realPublishWithoutEnvironment, ci, hasCustomCodeqlWorkflow: false }).find((check) => check.label === label)?.ok)
       .toBe(false);

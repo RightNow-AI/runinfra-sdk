@@ -114,9 +114,11 @@ jobs:
           node scripts/verify-npm-package.mjs "$TGZ"
 
       - name: Test Python
+        working-directory: python
         run: |
-          python -m pip install -e python
-          python -m pytest python/tests/ -v
+          python -m pip install -e .
+          python -c "import unittest; suite = unittest.defaultTestLoader.discover('tests'); count = suite.countTestCases(); print(f'Discovered {count} tests'); raise SystemExit(0 if count else 1)"
+          python -m unittest discover -s tests -v
 
       - name: Build Python artifacts
         run: python -m build python --outdir artifacts/python-local
