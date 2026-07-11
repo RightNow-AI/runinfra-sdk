@@ -15,7 +15,7 @@
 
 - [ ] My code follows the style of this project (TS strict, no `any` in public surface; Python type hints + docstrings)
 - [ ] I have added tests for any new behavior
-- [ ] All tests pass locally (`pnpm test` for TS, `python -m pytest` for Python)
+- [ ] All tests pass locally (`pnpm --dir typescript test` for TS; from `python/`, `python -m unittest discover -s tests -v` for Python)
 - [ ] I have updated the relevant `CHANGELOG.md` files (typescript/ and/or python/)
 - [ ] I have NOT bumped the SDK version (maintainers handle that at release time)
 - [ ] I have NOT added any runtime dependencies (both SDKs are zero-dep by policy)

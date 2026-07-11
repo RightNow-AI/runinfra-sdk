@@ -3252,13 +3252,28 @@ class RunInfra:
   it("keeps Python test tooling compatible with the declared Python floor", () => {
     const pyproject = readFileSync(new URL("../../python/pyproject.toml", import.meta.url), "utf8");
     const requirements = readFileSync(new URL("../../python/requirements-dev.txt", import.meta.url), "utf8");
+    const publish = readFileSync(new URL("../../.github/workflows/publish.yml", import.meta.url), "utf8");
+    const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+    const pullRequestTemplate = readFileSync(new URL("../../.github/PULL_REQUEST_TEMPLATE.md", import.meta.url), "utf8");
+    const contributing = readFileSync(new URL("../../CONTRIBUTING.md", import.meta.url), "utf8");
+    const unittestCommand = "python -m unittest discover -s tests -v";
 
     expect(pyproject).toContain('requires-python = ">=3.9"');
     expect(pyproject).toContain('requires = ["setuptools==82.0.1"]');
     expect(pyproject).not.toContain("setuptools>=");
-    expect(requirements).toContain("pytest==8.4.2");
     expect(requirements).toContain("typing_extensions==4.15.0");
-    expect(requirements).not.toMatch(/^pytest==9\./mu);
+    expect(requirements).not.toMatch(/^pytest(?:[<=>~!]|$)/mu);
+    expect(ci).toMatch(
+      /      - name: Test\r?\n        working-directory: python\r?\n        run: \|\r?\n          python -m pip install -e \.\r?\n          python -m unittest discover -s tests -v/u,
+    );
+    expect(publish).toMatch(
+      /      - name: Test Python\r?\n        working-directory: python\r?\n        run: \|\r?\n          python -m pip install -e \.\r?\n          python -m unittest discover -s tests -v/u,
+    );
+    expect(`${publish}\n${ci}`).not.toContain("python -m pytest");
+    expect(`${publish}\n${ci}`).not.toContain("-s python/tests");
+    expect(pullRequestTemplate).toContain(`from \`python/\`, \`${unittestCommand}\``);
+    expect(contributing).toContain(unittestCommand);
+    expect(contributing).toContain("Run Python discovery from `python/`");
   });
 
   it("installs Python build tooling before publish workflow TypeScript tests", async () => {
