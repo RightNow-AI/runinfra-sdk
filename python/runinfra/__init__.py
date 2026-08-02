@@ -5,6 +5,7 @@ import json
 import hashlib
 import hmac
 import math
+import random
 import re
 import time
 import uuid
@@ -495,7 +496,9 @@ def _retry_delay_seconds(attempt: int, base_seconds: float, response: Optional[R
             return retry_after
     if base_seconds <= 0:
         return 0
-    return min(30.0, base_seconds * (2 ** max(0, attempt - 1)))
+    exponential = base_seconds * (2 ** max(0, attempt - 1))
+    jitter = random.random() * base_seconds
+    return min(30.0, exponential + jitter)
 
 
 def _discard_response_body(response: RunInfraResponse) -> None:
