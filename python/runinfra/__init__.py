@@ -5,6 +5,7 @@ import json
 import hashlib
 import hmac
 import math
+import random
 import re
 import time
 import uuid
@@ -789,7 +790,7 @@ def verify_webhook_signature(
     if abs(current_time - timestamp) > tolerance_seconds:
         raise WebhookVerificationError("Webhook signature timestamp is outside the allowed tolerance.")
     expected = _webhook_expected_signature(_webhook_payload_bytes(payload), timestamp, secret)
-    if not any(hmac.compare_digest(expected, signature) for signature in signatures):
+    if not any(hmac.compare_digest(expected, signature.lower()) for signature in signatures):
         raise WebhookVerificationError("Webhook signature verification failed.")
     return True
 
@@ -1700,7 +1701,11 @@ class _Speech:
             idempotent_replay_safe=False,
             request_options=request_options,
         )
-        content_type = response.headers.get("content-type", response.headers.get("Content-Type", "application/octet-stream"))
+        content_type = "application/octet-stream"
+        for key, value in response.headers.items():
+            if key.lower() == "content-type":
+                content_type = value
+                break
         request_id = _request_id_from_headers(response.headers)
         return AudioResponse(response.body, content_type, request_id)
 

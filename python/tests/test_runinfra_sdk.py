@@ -3529,6 +3529,25 @@ class RunInfraPythonSdkTest(unittest.TestCase):
 
         self.assertEqual(event["id"], "evt_123")
 
+    def test_construct_webhook_event_accepts_uppercase_hex_signature(self):
+        payload = b'{"id":"evt_123","type":"deployment.verified"}'
+        timestamp = 1_700_000_000
+        secret = "whsec_test_123"
+        signature = hmac.new(
+            secret.encode("utf-8"),
+            str(timestamp).encode("utf-8") + b"." + payload,
+            hashlib.sha256,
+        ).hexdigest().upper()
+
+        event = construct_webhook_event(
+            payload=payload,
+            signature_header=f"t={timestamp},v1={signature}",
+            secret=secret,
+            now=timestamp + 60,
+        )
+
+        self.assertEqual(event["id"], "evt_123")
+
     def test_construct_webhook_event_rejects_trailing_odd_hex_nibbles(self):
         payload = b'{"id":"evt_123","type":"deployment.verified"}'
         timestamp = 1_700_000_000
