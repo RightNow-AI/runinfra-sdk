@@ -2390,7 +2390,10 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         with patch("runinfra.time.sleep") as sleep:
             self.assertEqual(client.models.list()["data"], [])
 
-        sleep.assert_called_once_with(0.25)
+        self.assertEqual(sleep.call_count, 1)
+        delay = sleep.call_args[0][0]
+        self.assertGreaterEqual(delay, 0.25)
+        self.assertLessEqual(delay, 0.50)
         self.assertEqual(len(transport.calls), 2)
 
     def test_retries_ignore_non_plain_retry_after_delay_seconds(self):
@@ -2414,8 +2417,19 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                 with patch("runinfra.time.sleep") as sleep:
                     self.assertEqual(client.models.list()["data"], [])
 
-                sleep.assert_called_once_with(0.25)
+                self.assertEqual(sleep.call_count, 1)
+                delay = sleep.call_args[0][0]
+                self.assertGreaterEqual(delay, 0.25)
+                self.assertLessEqual(delay, 0.50)
                 self.assertEqual(len(transport.calls), 2)
+
+    def test_retry_delay_seconds_includes_jitter(self):
+        from runinfra import _retry_delay_seconds
+        delays = [_retry_delay_seconds(attempt=1, base_seconds=0.25) for _ in range(10)]
+        for delay in delays:
+            self.assertGreaterEqual(delay, 0.25)
+            self.assertLessEqual(delay, 0.50)
+        self.assertGreater(len(set(delays)), 1)
 
     def test_rate_limit_errors_expose_retry_after_seconds(self):
         transport = RecordingTransport(
