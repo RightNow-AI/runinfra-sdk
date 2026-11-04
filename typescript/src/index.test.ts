@@ -3270,7 +3270,17 @@ class RunInfra:
     const normalizedContributing = contributing.replace(/\r\n/gu, "\n");
 
     expect(pyproject).toContain('requires-python = ">=3.9"');
-    expect(pyproject).toContain('requires = ["setuptools==82.0.1"]');
+    // The whole [build-system] table, exactly: setuptools 84.1.0 builds on
+    // Python 3.10+ (every published artifact builds on 3.11); 3.9 keeps
+    // 82.0.1 because no fixed setuptools supports it. No other requirement
+    // may slip in beside these two.
+    expect(pyproject.replace(/\r\n/gu, "\n").match(/^\[build-system\]\n([\s\S]*?)\n\n/mu)?.[1]).toBe([
+      "requires = [",
+      "  \"setuptools==84.1.0; python_version >= '3.10'\",",
+      "  \"setuptools==82.0.1; python_version < '3.10'\",",
+      "]",
+      "build-backend = \"setuptools.build_meta\"",
+    ].join("\n"));
     expect(pyproject).not.toContain("setuptools>=");
     expect(requirements).toContain("typing_extensions==4.15.0");
     expect(requirements).not.toMatch(/^pytest(?:[<=>~!]|$)/mu);
