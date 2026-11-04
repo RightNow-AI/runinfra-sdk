@@ -84,6 +84,8 @@ pipeline-scoped key. Direct browser token flows are not supported by the public
 SDK. If you are deliberately using a controlled non-public browser-like runtime,
 pass `dangerouslyAllowBrowser: true` and own that risk.
 
+CI runs the unit tests on Node.js 20, 22 and 24. On Node.js 18 it type-checks, builds, packs and smoke-tests the installed package.
+
 Unknown TypeScript client option keys are rejected so typos such as `baseUrl` or `api_key` do not silently change the gateway, authentication, timeout, retry, or runtime-safety behavior. Use `baseURL` for custom server-side gateway URLs.
 
 ## Responses and streaming

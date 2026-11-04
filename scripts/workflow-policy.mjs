@@ -173,6 +173,11 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
   const ciPythonJob = jobBlock(ci, "python");
   const ciTypeScriptRequiredJob = jobBlock(ci, "typescript-required");
   const ciPythonRequiredJob = jobBlock(ci, "python-required");
+  const ciTypeScriptTestStep = stepBlockForCommand(ciTypeScriptJob, "pnpm test");
+  const ciTypeScriptTestConditions = Array.from(
+    ciTypeScriptTestStep.matchAll(/^(?:      - |        )if[ \t]*:[^\r\n]*/gmu),
+    ([condition]) => condition,
+  );
   const buildArtifactsJob = jobBlock(publish, "build-artifacts");
   const promotionGateJob = jobBlock(publish, "promotion-gate");
   const dryRunNpmJob = jobBlock(publish, "dry-run-npm");
@@ -434,8 +439,25 @@ export function evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow })
       ),
     },
     {
-      label: "CI tests every supported Node major",
+      label: "CI builds and smoke-tests every supported Node major",
       ok: jobHasMatrixVersions(ciTypeScriptJob, "node-version", ["18", "20", "22", "24"]),
+    },
+    {
+      label: "CI skips only unit tests on Node 18",
+      ok:
+        new RegExp(`(?:^|\\r?\\n)        run: ${escapeRegExp("pnpm test")}(?=\\r?\\n|$)`, "u")
+          .test(ciTypeScriptTestStep) &&
+        ciTypeScriptTestConditions.length === 1 &&
+        new RegExp(`^        if: ${escapeRegExp("${{ matrix.node-version != 18 }}")}$`, "u")
+          .test(ciTypeScriptTestConditions[0]) &&
+        ["pnpm exec tsc -p tsconfig.json --noEmit", "pnpm build", "pnpm pack"].every((command) => {
+          const step = stepBlockForCommand(ciTypeScriptJob, command);
+          const runCommand = new RegExp(
+            `(?:^|\\r?\\n)        run: (?:${escapeRegExp(command)}(?=\\r?\\n|$)|\\|\\r?\\n(?:          [^\\r\\n]*\\r?\\n|\\r?\\n)*?          ${escapeRegExp(command)}(?=\\r?\\n|$))`,
+            "u",
+          );
+          return step !== "" && runCommand.test(step) && !/^(?:      - |        )if[ \t]*:/mu.test(step);
+        }),
     },
     {
       label: "CI tests every supported Python minor",
