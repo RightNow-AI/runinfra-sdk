@@ -289,7 +289,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         self.assertIn("error.body.unsupported_parameter", live_canaries)
         self.assertIn("Gateway errors expose `request_id`, `type`, and, when returned by the API", readme)
         self.assertIn("OpenAI-style `code` and `param` metadata", readme)
-        self.assertIn("RunInfra `/v1/responses` is a chat-completions compatibility adapter.", readme)
+        self.assertIn("RightNow Inference `/v1/responses` is a chat-completions compatibility adapter.", readme)
         self.assertIn("forwards the supported request through the chat-completions serving path", readme)
         self.assertIn(
             "does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics",

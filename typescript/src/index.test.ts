@@ -472,7 +472,7 @@ describe("RunInfra TypeScript SDK", () => {
     expect(liveCanaries).toContain("custom base URLs before spawning child canaries");
     expect(readme).toContain("Gateway errors expose `requestId`, `type`, and, when returned by the API");
     expect(readme).toContain("OpenAI-style `code` and `param` metadata");
-    expect(readme).toContain("RunInfra `/v1/responses` is a chat-completions compatibility adapter.");
+    expect(readme).toContain("RightNow Inference `/v1/responses` is a chat-completions compatibility adapter.");
     expect(readme).toContain("forwards the supported request through the chat-completions serving path");
     expect(readme).toContain(
       "does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics",
