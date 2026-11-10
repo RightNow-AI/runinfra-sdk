@@ -1,6 +1,6 @@
-# RunInfra Python SDK
+# RightNow Inference Python SDK
 
-Access optimized RunInfra deployments through the verified public gateway.
+Access optimized RightNow Inference deployments through the verified public gateway.
 
 Requires Python 3.9 or newer.
 
@@ -31,7 +31,7 @@ error instead of silently falling back to another operation.
 ## Create a client
 
 Use a workspace-scoped key to reach verified active deployments through the `model` field.
-In the RunInfra dashboard, open Settings, API Keys, Create key, and keep Scope set to Workspace.
+In the RightNow Inference dashboard, open Settings, API Keys, Create key, and keep Scope set to Workspace.
 
 The Deploy tab can create a pipeline-scoped key for one optimized pipeline.
 The one-time secret is shown once after creation. Store it as `RUNINFRA_API_KEY`
@@ -67,7 +67,7 @@ client = RunInfra(
 
 The default base URL is `https://api.runinfra.ai/v1`.
 `pipeline_id` is stripped and URL-encoded before it is added to the base URL. Use either `pipeline_id` with the default base URL, or a pipeline-scoped `base_url` such as `https://api.runinfra.ai/v1/pipe_123`. If both point to the same pipeline, the SDK keeps the URL scoped once.
-RunInfra generated native SDK snippets prefer `pipeline_id` with the root `https://api.runinfra.ai/v1` base URL. OpenAI-compatible snippets use the pipeline-scoped base URL because the OpenAI SDK has no RunInfra pipeline option.
+RightNow Inference generated native SDK snippets prefer `pipeline_id` with the root `https://api.runinfra.ai/v1` base URL. OpenAI-compatible snippets use the pipeline-scoped base URL because the OpenAI SDK has no RightNow Inference pipeline option.
 Custom base URLs must use `http` or `https`. Other schemes and malformed URLs are rejected before a bearer API key can be sent.
 Remote custom base URLs must use `https`. Plain `http` is accepted only for local development hosts: `localhost`, `127.0.0.1`, `0.0.0.0`, and `[::1]`.
 Custom base URLs must not include usernames or passwords.
@@ -107,7 +107,7 @@ calls are not automatically retried. The Python type surface overloads
 `client.responses.create()` to return `RunInfraStream`; non-stream calls keep
 their typed response envelopes.
 
-RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gateway converts supported `input` and `instructions` values into chat messages, forwards the supported request through the chat-completions serving path, and rewraps the result into a Responses-style envelope. It does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics.
+RightNow Inference `/v1/responses` is a chat-completions compatibility adapter. The gateway converts supported `input` and `instructions` values into chat messages, forwards the supported request through the chat-completions serving path, and rewraps the result into a Responses-style envelope. It does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics.
 
 ## Async Python runtimes
 
@@ -302,7 +302,7 @@ The wheel ships `py.typed` so type checkers can inspect the package. Fixed-shape
 
 ## Webhook verification
 
-Webhook delivery management is outside the public SDK surface. The SDK includes local verification helpers for signed RunInfra webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
+Webhook delivery management is outside the public SDK surface. The SDK includes local verification helpers for signed RightNow Inference webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
 
 ```python
 import os

@@ -1,6 +1,6 @@
-# RunInfra TypeScript SDK
+# RightNow Inference TypeScript SDK
 
-Access optimized RunInfra deployments through the verified public gateway.
+Access optimized RightNow Inference deployments through the verified public gateway.
 
 Requires Node.js 18 or newer.
 
@@ -31,7 +31,7 @@ error instead of silently falling back to another operation.
 ## Create a client
 
 Use a workspace-scoped key to reach verified active deployments through the `model` field.
-In the RunInfra dashboard, open Settings, API Keys, Create key, and keep Scope set to Workspace.
+In the RightNow Inference dashboard, open Settings, API Keys, Create key, and keep Scope set to Workspace.
 
 The Deploy tab can create a pipeline-scoped key for one optimized pipeline.
 The one-time secret is shown once after creation. Store it as `RUNINFRA_API_KEY`
@@ -66,7 +66,7 @@ const client = new RunInfra({
 
 The default base URL is `https://api.runinfra.ai/v1`.
 `pipelineId` is trimmed and URL-encoded before it is added to the base URL. Use either `pipelineId` with the default base URL, or a pipeline-scoped `baseURL` such as `https://api.runinfra.ai/v1/pipe_123`. If both point to the same pipeline, the SDK keeps the URL scoped once.
-RunInfra generated native SDK snippets prefer `pipelineId` with the root `https://api.runinfra.ai/v1` base URL. OpenAI-compatible snippets use the pipeline-scoped base URL because the OpenAI SDK has no RunInfra pipeline option.
+RightNow Inference generated native SDK snippets prefer `pipelineId` with the root `https://api.runinfra.ai/v1` base URL. OpenAI-compatible snippets use the pipeline-scoped base URL because the OpenAI SDK has no RightNow Inference pipeline option.
 Custom base URLs must use `http` or `https`. Other schemes and malformed URLs are rejected before a bearer API key can be sent.
 Remote custom base URLs must use `https`. Plain `http` is accepted only for local development hosts: `localhost`, `127.0.0.1`, `0.0.0.0`, and `[::1]`.
 Custom base URLs must not include usernames or passwords.
@@ -74,12 +74,12 @@ Custom base URLs must not include query strings or fragments.
 
 ## Server-side only
 
-The TypeScript SDK targets Node.js 18 or newer. RunInfra API keys are bearer
+The TypeScript SDK targets Node.js 18 or newer. RightNow Inference API keys are bearer
 secrets. Do not put `RUNINFRA_API_KEY` in browser code and do not initialize
 this SDK in public client bundles with a secret API key. The SDK fails closed
 when it detects a browser runtime; keep calls on a Node.js server route,
 backend proxy, API service, or backend job. Browser apps should call your own
-server first, then your server calls RunInfra with the workspace or
+server first, then your server calls RightNow Inference with the workspace or
 pipeline-scoped key. Direct browser token flows are not supported by the public
 SDK. If you are deliberately using a controlled non-public browser-like runtime,
 pass `dangerouslyAllowBrowser: true` and own that risk.
@@ -111,7 +111,7 @@ releases the reader lock. If you manually advance the stream iterator, call
 released. Streaming transport-level backend cancellation is best effort, and
 streaming calls are not automatically retried.
 
-RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gateway converts supported `input` and `instructions` values into chat messages, forwards the supported request through the chat-completions serving path, and rewraps the result into a Responses-style envelope. It does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics.
+RightNow Inference `/v1/responses` is a chat-completions compatibility adapter. The gateway converts supported `input` and `instructions` values into chat messages, forwards the supported request through the chat-completions serving path, and rewraps the result into a Responses-style envelope. It does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics.
 
 ## Supported public routes
 
@@ -268,7 +268,7 @@ Successful JSON object responses include `_request_id` when the gateway returns 
 
 ## Webhook verification
 
-Webhook delivery management is outside the public SDK surface. The SDK includes local verification helpers for signed RunInfra webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
+Webhook delivery management is outside the public SDK surface. The SDK includes local verification helpers for signed RightNow Inference webhook deliveries once you receive them in your own server. Always verify the exact raw body before parsing JSON. The `RunInfra-Signature` timestamp must be a non-negative integer Unix second.
 
 ```ts
 import {

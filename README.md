@@ -1,4 +1,4 @@
-# RunInfra SDK
+# RightNow Inference SDK
 
 [![npm](https://img.shields.io/npm/v/%40runinfra%2Fsdk.svg?logo=npm&label=%40runinfra%2Fsdk)](https://www.npmjs.com/package/@runinfra/sdk)
 [![PyPI](https://img.shields.io/pypi/v/runinfra.svg?logo=pypi&label=runinfra)](https://pypi.org/project/runinfra/)
@@ -6,7 +6,7 @@
 [![SLSA provenance](https://img.shields.io/badge/SLSA-provenance-7eb35e?logo=sigstore)](https://docs.npmjs.com/about-package-provenance-statements)
 [![License](https://img.shields.io/badge/license-Proprietary-blue.svg)](./LICENSE)
 
-Official client SDKs for [RunInfra](https://runinfra.ai), the optimized
+Official client SDKs for [RightNow Inference](https://runinfra.ai), the optimized
 inference platform for serving open-source models on GPU backends that fit your
 workload.
 
@@ -79,9 +79,9 @@ See each package README and changelog for language-specific examples and exact h
 
 ## Browser security
 
-RunInfra API keys are bearer secrets. Do not put `RUNINFRA_API_KEY` in browser
+RightNow Inference API keys are bearer secrets. Do not put `RUNINFRA_API_KEY` in browser
 code. Browser apps should call your server route or backend proxy first, then
-your server calls RunInfra with the workspace or pipeline-scoped key. Direct
+your server calls RightNow Inference with the workspace or pipeline-scoped key. Direct
 browser token flows are not supported by the public SDK.
 
 ## License
@@ -91,7 +91,7 @@ licensing inquiries, contact `licensing@runinfra.ai`.
 
 ## Package provenance
 
-RunInfra publishes SDK packages through trusted publishing where the registry
+RightNow Inference publishes SDK packages through trusted publishing where the registry
 supports it. npm releases include provenance metadata, and PyPI releases use
 the configured trusted publisher chain.
 
@@ -110,7 +110,7 @@ Open an issue or pull request against this repo. See
 For **security issues**, do NOT open a GitHub issue - see
 [`SECURITY.md`](./SECURITY.md) for disclosure process.
 
-For RunInfra service issues (deployments, billing, account), email
+For RightNow Inference service issues (deployments, billing, account), email
 `support@runinfra.ai`.
 
 ---
