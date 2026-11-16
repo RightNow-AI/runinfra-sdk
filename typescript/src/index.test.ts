@@ -10,8 +10,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AuthenticationError,
   InsufficientCreditsError,
+  ModelNotFoundError,
   PermissionDeniedError,
   RUNINFRA_SDK_VERSION,
+  RateLimitError,
   RunInfra,
   RunInfraAudioResponse,
   RunInfraConnectionError,
@@ -21,7 +23,15 @@ import {
   RunInfraTimeoutError,
   WebhookVerificationError,
   constructWebhookEvent,
+  verifyBatchDelivery,
+  type BatchAnswerDelivery,
+  type BatchCreateRequest,
+  type BatchDelivery,
+  type BatchJob,
+  type BatchJobDetail,
+  type BatchListParams,
   type ResponsesCreateResponse,
+  type VerifyBatchDeliveryOptions,
   type RunInfraOptions,
   type RunInfraRequestOptions,
 } from "./index";
@@ -8845,5 +8855,979 @@ with open(report, "w", encoding="utf-8") as handle:
         }),
       ).toThrow("Webhook payload must be a string, Uint8Array, or ArrayBuffer.");
     }
+  });
+});
+
+// ─── Batch jobs ─────────────────────────────────────────────────────
+//
+// The answers under ../test-fixtures/batch are recorded shapes with made-up identifiers (get-completed,
+// get-first-job, list, create-model-not-sold, create-no-authorization, deliveries) or typed from the service's
+// documented wire (the files named built-*). Nothing here opens a socket: every call goes through an injected fetch.
+
+interface BatchApiFixture {
+  request: { method: string; url: string; header_names: string[]; body: Record<string, unknown> | null };
+  status: number;
+  request_id: string;
+  body: Record<string, unknown>;
+}
+
+interface BatchRefusalFixture {
+  name: string;
+  status: number;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+  expect: {
+    error_class: string;
+    type: string;
+    status: number;
+    code: string;
+    param: string | null;
+    reason: string | null;
+    retry_after_seconds: number | null;
+    request_id: string;
+  };
+}
+
+interface BatchDeliveryRecord {
+  headers: Record<string, string>;
+  body: string;
+}
+
+function batchFixture<T>(name: string): T {
+  return JSON.parse(readFileSync(new URL(`../test-fixtures/batch/${name}`, import.meta.url), "utf8")) as T;
+}
+
+function batchAnswer(fixture: BatchApiFixture, headers: Record<string, string> = {}): Response {
+  return jsonResponse(fixture.body, {
+    status: fixture.status,
+    headers: { "x-request-id": fixture.request_id, ...headers },
+  });
+}
+
+function batchRefusalResponse(refusal: BatchRefusalFixture): Response {
+  return jsonResponse(refusal.body, {
+    status: refusal.status,
+    headers: { "x-request-id": refusal.expect.request_id, ...refusal.headers },
+  });
+}
+
+/** The two recorded refusals, in the shape of the built ones. */
+function recordedBatchRefusal(
+  name: string,
+  expectation: Pick<BatchRefusalFixture["expect"], "error_class" | "type">,
+): BatchRefusalFixture {
+  const fixture = batchFixture<BatchApiFixture>(name);
+  const error = fixture.body.error as { code: string; param: string | null };
+  return {
+    name,
+    status: fixture.status,
+    headers: {},
+    body: fixture.body,
+    expect: {
+      ...expectation,
+      status: fixture.status,
+      code: error.code,
+      param: error.param,
+      reason: null,
+      retry_after_seconds: null,
+      request_id: fixture.request_id,
+    },
+  };
+}
+
+function allBatchRefusals(): BatchRefusalFixture[] {
+  return [
+    ...batchFixture<{ refusals: BatchRefusalFixture[] }>("built-refusals.json").refusals,
+    recordedBatchRefusal("create-model-not-sold.json", { error_class: "ModelNotFoundError", type: "model_not_found" }),
+    recordedBatchRefusal("create-no-authorization.json", { error_class: "AuthenticationError", type: "auth_error" }),
+  ];
+}
+
+const BATCH_ERROR_CLASSES: Record<string, new (...args: never[]) => RunInfraError> = {
+  AuthenticationError,
+  InsufficientCreditsError,
+  ModelNotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
+  RunInfraError,
+};
+
+// Obviously fake values, built at run time: no key and no signing secret is written in this file.
+const BATCH_TEST_API_KEY = ["sk", "ri", "batch", "unit", "test"].join("-");
+const BATCH_TEST_SECRET_BYTES = Buffer.from("runinfra batch unit test secret!", "utf8");
+const BATCH_TEST_SECRET = `whsec_${BATCH_TEST_SECRET_BYTES.toString("base64")}`;
+const BATCH_BASE_URL = "https://api.runinfra.ai/v1";
+
+function batchClient(fetcher: typeof fetch, options: Partial<RunInfraOptions> = {}): RunInfra {
+  return new RunInfra({ apiKey: BATCH_TEST_API_KEY, fetch: fetcher, ...options });
+}
+
+function sentHeader(init: RequestInit, name: string): string | undefined {
+  const entry = Object.entries(init.headers as Record<string, string>).find(
+    ([key]) => key.toLowerCase() === name.toLowerCase(),
+  );
+  return entry?.[1];
+}
+
+/** Signs a delivery by the gateway's rule: "v1," + base64(HMAC-SHA-256(key, "<id>.<timestamp>.<raw body>")). */
+function signBatchDelivery(
+  body: string,
+  id: string,
+  timestamp: number | string,
+  key: Buffer = BATCH_TEST_SECRET_BYTES,
+): Record<string, string> {
+  const signature = createHmac("sha256", key).update(`${id}.${timestamp}.${body}`, "utf8").digest("base64");
+  return {
+    "webhook-id": id,
+    "webhook-timestamp": String(timestamp),
+    "webhook-signature": `v1,${signature}`,
+    "x-rightnow-signature-version": "1",
+    "content-type": "application/json",
+  };
+}
+
+const batchCreateRequest: BatchCreateRequest = {
+  model: "deepseek-v4-1-flash-1017",
+  input_url: "https://example.org/batch-fixture/file.jsonl",
+  destination: { type: "webhook", url: "https://example.org/batch-fixture/hook" },
+  max_cost_cents: 100,
+  window_hours: 24,
+  name: "nightly-evals",
+};
+
+describe("RunInfra TypeScript SDK batch jobs", () => {
+  it("creates a job with the recorded request shape, the idempotency key and the parsed job", async () => {
+    const fixture = batchFixture<BatchApiFixture>("built-create-200.json");
+    const fetcher = vi.fn().mockResolvedValue(batchAnswer(fixture));
+    const client = batchClient(fetcher);
+
+    const answer = await client.batches.create(batchCreateRequest, { idempotencyKey: "batch-unit-create-01" });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(fixture.request.url);
+    expect(url).toBe(`${BATCH_BASE_URL}/batches`);
+    expect(init.method).toBe(fixture.request.method);
+    expect(JSON.parse(init.body as string)).toEqual(fixture.request.body);
+    for (const name of fixture.request.header_names) {
+      expect(sentHeader(init, name), name).toBeTruthy();
+    }
+    expect(sentHeader(init, "Authorization")).toBe(`Bearer ${BATCH_TEST_API_KEY}`);
+    expect(sentHeader(init, "Content-Type")).toBe("application/json");
+    expect(sentHeader(init, "Idempotency-Key")).toBe("batch-unit-create-01");
+    expect(sentHeader(init, "X-RunInfra-SDK")).toBe("typescript");
+
+    expect(answer._request_id).toBe(fixture.request_id);
+    expect(answer.batch).toEqual((fixture.body as { batch: BatchJob }).batch);
+    expect(answer.batch.batch_state).toBe("validating");
+    expect(answer.batch.made_by).toEqual({ kind: "key" });
+    expect(answer.batch.max_cost_cents).toBe(100);
+    expect(answer.batch.end_reason).toBeNull();
+    expect(answer.batch).not.toHaveProperty("errors");
+    expect(answer.batch).not.toHaveProperty("quote");
+  });
+
+  it("runs the README example: a create with an idempotency key, then a read of the job", async () => {
+    const created = batchFixture<BatchApiFixture>("built-create-200.json");
+    const read = batchFixture<BatchApiFixture>("get-completed.json");
+    const fetcher = vi.fn().mockResolvedValueOnce(batchAnswer(created)).mockResolvedValueOnce(batchAnswer(read));
+    const client = batchClient(fetcher);
+
+    const { batch } = await client.batches.create(
+      {
+        model: "deepseek-v4-1-flash-1017",
+        input_url: "https://example.org/batch/input.jsonl",
+        destination: { type: "webhook", url: "https://example.org/batch/answers" },
+        max_cost_cents: 100,
+        window_hours: 24,
+        name: "nightly-evals",
+      },
+      { idempotencyKey: "nightly-evals-2026-11-16" },
+    );
+
+    const job = await client.batches.retrieve(batch.id);
+
+    const [createUrl, createInit] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(createUrl).toBe(`${BATCH_BASE_URL}/batches`);
+    expect(createInit.method).toBe("POST");
+    expect(sentHeader(createInit, "Idempotency-Key")).toBe("nightly-evals-2026-11-16");
+    expect(createInit.body).toBe(
+      '{"model":"deepseek-v4-1-flash-1017","input_url":"https://example.org/batch/input.jsonl",' +
+        '"destination":{"type":"webhook","url":"https://example.org/batch/answers"},"max_cost_cents":100,' +
+        '"window_hours":24,"name":"nightly-evals"}',
+    );
+    const [readUrl, readInit] = fetcher.mock.calls[1] as [string, RequestInit];
+    expect(readUrl).toBe(`${BATCH_BASE_URL}/batches/${batch.id}`);
+    expect(readInit.method).toBe("GET");
+    expect([job.batch.batch_state, job.batch.errors, job.batch.cost_microcents]).toEqual([
+      "completed",
+      [{ code: "invalid_request", count: 1, first_lines: [2] }],
+      2127,
+    ]);
+  });
+
+  it("leaves out the optional create members and sends no idempotency header unless asked", async () => {
+    const fixture = batchFixture<BatchApiFixture>("built-create-200.json");
+    const fetcher = vi.fn().mockResolvedValue(batchAnswer(fixture));
+    const client = batchClient(fetcher);
+
+    await client.batches.create({
+      model: batchCreateRequest.model,
+      input_url: batchCreateRequest.input_url,
+      destination: batchCreateRequest.destination,
+      max_cost_cents: 1,
+    });
+
+    const init = fetcher.mock.calls[0]?.[1] as RequestInit;
+    expect(init.body).toBe(
+      '{"model":"deepseek-v4-1-flash-1017","input_url":"https://example.org/batch-fixture/file.jsonl",' +
+        '"destination":{"type":"webhook","url":"https://example.org/batch-fixture/hook"},"max_cost_cents":1}',
+    );
+    expect(sentHeader(init, "Idempotency-Key")).toBeUndefined();
+  });
+
+  it("never retries a create without an idempotency key", async () => {
+    const refusal = allBatchRefusals().find((entry) => entry.name === "ask-again")!;
+    const fetcher = vi.fn().mockResolvedValue(batchRefusalResponse(refusal));
+    const client = batchClient(fetcher, { maxRetries: 2, retryBaseMs: 0 });
+
+    await expect(client.batches.create(batchCreateRequest)).rejects.toMatchObject({
+      status: 503,
+      code: "datastore_unavailable",
+      retryAfterMs: 5_000,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries an asked-again create with the same idempotency key and the same body", async () => {
+    const fixture = batchFixture<BatchApiFixture>("built-create-200.json");
+    const askAgain = allBatchRefusals().find((entry) => entry.name === "ask-again")!;
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(batchRefusalResponse({ ...askAgain, headers: { "Retry-After": "0" } }))
+      .mockRejectedValueOnce(new TypeError("socket closed"))
+      .mockResolvedValueOnce(batchAnswer(fixture));
+    const client = batchClient(fetcher, { maxRetries: 2, retryBaseMs: 0 });
+
+    const answer = await client.batches.create(batchCreateRequest, { idempotencyKey: "batch-unit-create-02" });
+
+    expect(answer.batch.id).toBe((fixture.body as { batch: BatchJob }).batch.id);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    const sent = fetcher.mock.calls.map((call) => call[1] as RequestInit);
+    expect(sent.map((init) => sentHeader(init, "Idempotency-Key"))).toEqual([
+      "batch-unit-create-02",
+      "batch-unit-create-02",
+      "batch-unit-create-02",
+    ]);
+    expect(new Set(sent.map((init) => init.body)).size).toBe(1);
+    expect(new Set(sent.map((init) => sentHeader(init, "X-Client-Request-Id"))).size).toBe(1);
+  });
+
+  it("never retries a 409 on a batch route: it is a final refusal", async () => {
+    const refusals = allBatchRefusals();
+    const reused = refusals.find((entry) => entry.name === "idempotency-key-reused")!;
+    const ended = refusals.find((entry) => entry.name === "batch-ended")!;
+
+    const createFetch = vi.fn().mockResolvedValue(batchRefusalResponse(reused));
+    await expect(
+      batchClient(createFetch, { maxRetries: 2, retryBaseMs: 0 }).batches.create(batchCreateRequest, {
+        idempotencyKey: "batch-unit-create-03",
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "invalid_request", param: "Idempotency-Key" });
+    expect(createFetch).toHaveBeenCalledTimes(1);
+
+    const readFetch = vi.fn().mockResolvedValue(batchRefusalResponse(ended));
+    await expect(
+      batchClient(readFetch, { maxRetries: 2, retryBaseMs: 0 }).batches.retrieve("00000000-0000-4000-8000-0000000000a1"),
+    ).rejects.toMatchObject({ status: 409, code: "batch_ended" });
+    expect(readFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives a create at least 30 seconds by default and honors an explicit per-call timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: AbortSignal[] = [];
+      const hangingFetch = vi.fn((_: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        const signal = init!.signal as AbortSignal;
+        signals.push(signal);
+        signal.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+      }));
+      const client = batchClient(hangingFetch as unknown as typeof fetch, { timeoutMs: 5_000, maxRetries: 0 });
+
+      const withDefault = client.batches.create(batchCreateRequest).then(() => null, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(signals[0]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(await withDefault).toBeInstanceOf(RunInfraTimeoutError);
+
+      const withExplicit = client.batches
+        .create(batchCreateRequest, { timeoutMs: 1_000 })
+        .then(() => null, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(signals[1]?.aborted).toBe(true);
+      expect(await withExplicit).toBeInstanceOf(RunInfraTimeoutError);
+
+      // The floor is the create's alone: a read keeps the client's own timeout.
+      const read = client.batches.list().then(() => null, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(signals[2]?.aborted).toBe(true);
+      expect(await read).toBeInstanceOf(RunInfraTimeoutError);
+
+      // A client whose timeout is already longer keeps it.
+      const patient = batchClient(hangingFetch as unknown as typeof fetch, { maxRetries: 0 });
+      const withClientDefault = patient.batches.create(batchCreateRequest).then(() => null, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect(signals[3]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await withClientDefault).toBeInstanceOf(RunInfraTimeoutError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lists jobs with the gateway's query names and parses the recorded page", async () => {
+    const fixture = batchFixture<BatchApiFixture>("list.json");
+    const fetcher = vi.fn().mockImplementation(async () => batchAnswer(fixture));
+    const client = batchClient(fetcher);
+
+    const page = await client.batches.list();
+    const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(fixture.request.url);
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+    expect(sentHeader(init, "Content-Type")).toBeUndefined();
+    expect(sentHeader(init, "Authorization")).toBe(`Bearer ${BATCH_TEST_API_KEY}`);
+
+    const recorded = fixture.body as { batches: BatchJob[]; next_cursor: string | null };
+    expect(page.batches).toEqual(recorded.batches);
+    expect(page.next_cursor).toBeNull();
+    expect(page._request_id).toBe(fixture.request_id);
+    expect(page.batches.map((job) => job.id)).toEqual([
+      "00000000-0000-4000-8000-0000000000a1",
+      "00000000-0000-4000-8000-0000000000a2",
+    ]);
+    for (const job of page.batches) {
+      expect(job.batch_state).toBe("completed");
+      expect(job.end_reason).toBe("all_done");
+      expect(job.notice).toBe("batch_ended");
+      expect(job.destination_type).toBe("webhook");
+      expect(job.lines_total - job.lines_invalid).toBe(job.succeeded);
+      expect(job).not.toHaveProperty("errors");
+    }
+
+    await client.batches.list({ limit: 2, cursor: "bmV4dC1wYWdl", state: "completed", model: "deepseek-v4-1-flash-1017" });
+    expect(fetcher.mock.calls[1]?.[0]).toBe(
+      `${BATCH_BASE_URL}/batches?limit=2&cursor=bmV4dC1wYWdl&state=completed&model=deepseek-v4-1-flash-1017`,
+    );
+    await client.batches.list({ state: "running" });
+    expect(fetcher.mock.calls[2]?.[0]).toBe(`${BATCH_BASE_URL}/batches?state=running`);
+  });
+
+  it("reads one job with its check errors and quote from the recorded answers", async () => {
+    for (const name of ["get-completed.json", "get-first-job.json"]) {
+      const fixture = batchFixture<BatchApiFixture>(name);
+      const fetcher = vi.fn().mockResolvedValue(batchAnswer(fixture));
+      const recorded = (fixture.body as { batch: BatchJobDetail }).batch;
+
+      const answer = await batchClient(fetcher).batches.retrieve(recorded.id);
+
+      const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(fixture.request.url);
+      expect(init.method).toBe("GET");
+      expect(init.body).toBeUndefined();
+      expect(answer.batch).toEqual(recorded);
+      expect(answer._request_id).toBe(fixture.request_id);
+      expect(answer.batch.batch_state).toBe("completed");
+      expect(answer.batch.pause_reason).toBeNull();
+      expect(answer.batch.check_error).toBeNull();
+      expect(answer.batch.errors).toEqual([{ code: "invalid_request", count: 1, first_lines: [2] }]);
+      expect(answer.batch.quote).toBeNull();
+      expect(answer.batch.cost_microcents).toBeGreaterThan(0);
+      expect(Date.parse(answer.batch.expires_at) - Date.parse(answer.batch.created_at)).toBe(24 * 3_600_000);
+    }
+  });
+
+  it("cancels a job with a bodyless POST that is sent once", async () => {
+    const fixture = batchFixture<BatchApiFixture>("built-cancel-200.json");
+    const fetcher = vi.fn().mockResolvedValue(batchAnswer(fixture));
+    const batchId = (fixture.body as { batch_id: string }).batch_id;
+
+    const answer = await batchClient(fetcher).batches.cancel(batchId);
+
+    const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(fixture.request.url);
+    expect(url).toBe(`${BATCH_BASE_URL}/batches/${batchId}/cancel`);
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+    expect(sentHeader(init, "Content-Type")).toBeUndefined();
+    expect(answer).toEqual({ batch_id: batchId, batch_state: "cancelled", _request_id: fixture.request_id });
+
+    const askAgain = allBatchRefusals().find((entry) => entry.name === "ask-again")!;
+    const busy = vi.fn().mockResolvedValue(batchRefusalResponse(askAgain));
+    await expect(
+      batchClient(busy, { maxRetries: 2, retryBaseMs: 0 }).batches.cancel(batchId, { idempotencyKey: "batch-unit-cancel" }),
+    ).rejects.toMatchObject({ status: 503, retryAfterMs: 5_000 });
+    expect(busy).toHaveBeenCalledTimes(1);
+  });
+
+  it("raises a 503 that asks for a wait above five seconds after one request, with that wait", async () => {
+    const notOpen = allBatchRefusals().find((entry) => entry.name === "batch-not-open")!;
+    expect(notOpen.headers["Retry-After"]).toBe("60");
+    const batchId = "00000000-0000-4000-8000-0000000000a1";
+    const calls: Array<[string, (client: RunInfra) => Promise<unknown>]> = [
+      ["retrieve", (client) => client.batches.retrieve(batchId)],
+      ["list", (client) => client.batches.list()],
+      ["create", (client) => client.batches.create(batchCreateRequest, { idempotencyKey: "batch-unit-long-wait" })],
+    ];
+
+    for (const [method, call] of calls) {
+      const fetcher = vi.fn().mockImplementation(async () => batchRefusalResponse(notOpen));
+      const started = Date.now();
+      const error = await call(batchClient(fetcher, { maxRetries: 2, retryBaseMs: 0 })).then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+
+      expect(fetcher, method).toHaveBeenCalledTimes(1);
+      expect(error, method).toMatchObject({ status: 503, code: "batch_not_open", retryAfterMs: 60_000 });
+      expect(Date.now() - started, method).toBeLessThan(2_000);
+    }
+
+    // Six seconds is above the line too; an HTTP date far ahead as well.
+    for (const retryAfter of ["6", new Date(Date.now() + 3_600_000).toUTCString()]) {
+      const fetcher = vi.fn().mockImplementation(async () =>
+        batchRefusalResponse({ ...notOpen, headers: { "Retry-After": retryAfter } }),
+      );
+      await expect(
+        batchClient(fetcher, { maxRetries: 2, retryBaseMs: 0 }).batches.retrieve(batchId),
+      ).rejects.toMatchObject({ status: 503 });
+      expect(fetcher, retryAfter).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("asks a read again on a 503 whose Retry-After is five seconds or less, after that wait", async () => {
+    const fixture = batchFixture<BatchApiFixture>("get-completed.json");
+    const askAgain = allBatchRefusals().find((entry) => entry.name === "ask-again")!;
+    expect(askAgain.headers["Retry-After"]).toBe("5");
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(batchRefusalResponse(askAgain))
+        .mockResolvedValueOnce(batchAnswer(fixture));
+      const pending = batchClient(fetcher, { maxRetries: 1, retryBaseMs: 0 }).batches.retrieve(
+        "00000000-0000-4000-8000-0000000000a1",
+      );
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      const answer = await pending;
+
+      expect(answer.batch.id).toBe("00000000-0000-4000-8000-0000000000a1");
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps waiting for a long Retry-After on every other route", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({ error: { message: "busy", type: "api_error" } }, { status: 503, headers: { "Retry-After": "60" } }),
+        )
+        .mockResolvedValueOnce(jsonResponse({ object: "list", data: [] }));
+      const pending = batchClient(fetcher, { maxRetries: 1, retryBaseMs: 0 }).models.list();
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect((await pending).data).toEqual([]);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("maps every refusal of the batch routes to a typed error that keeps its code, member, reason, wait and request id", async () => {
+    const refusals = allBatchRefusals();
+    expect(refusals.length).toBeGreaterThan(30);
+    const batchId = "00000000-0000-4000-8000-0000000000a1";
+    const calls: Array<[string, (client: RunInfra) => Promise<unknown>]> = [
+      ["create", (client) => client.batches.create(batchCreateRequest, { idempotencyKey: "batch-unit-refusal" })],
+      ["list", (client) => client.batches.list()],
+      ["retrieve", (client) => client.batches.retrieve(batchId)],
+      ["cancel", (client) => client.batches.cancel(batchId)],
+    ];
+
+    for (const refusal of refusals) {
+      for (const [method, call] of calls) {
+        const label = `${refusal.name} on ${method}`;
+        const fetcher = vi.fn().mockImplementation(async () => batchRefusalResponse(refusal));
+        const error = await call(batchClient(fetcher, { maxRetries: 0 })).then(
+          () => null,
+          (thrown: unknown) => thrown,
+        );
+
+        expect(fetcher, label).toHaveBeenCalledTimes(1);
+        expect(error, label).toBeInstanceOf(RunInfraError);
+        const refused = error as RunInfraError;
+        expect(refused.constructor, label).toBe(BATCH_ERROR_CLASSES[refusal.expect.error_class]);
+        expect(refused.name, label).toBe(refusal.expect.error_class);
+        expect(refused.status, label).toBe(refusal.expect.status);
+        expect(refused.type, label).toBe(refusal.expect.type);
+        expect(refused.code, label).toBe(refusal.expect.code);
+        expect(refused.param ?? null, label).toBe(refusal.expect.param);
+        expect(refused.reason ?? null, label).toBe(refusal.expect.reason);
+        expect(refused.retryAfterMs ?? null, label).toBe(
+          refusal.expect.retry_after_seconds === null ? null : refusal.expect.retry_after_seconds * 1000,
+        );
+        expect(refused.requestId, label).toBe(refusal.expect.request_id);
+        expect(refused.message, label).toBe((refusal.body.error as { message: string }).message);
+      }
+    }
+  });
+
+  it("keeps a refusal's reason and wait when the API key is redacted from its message", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            reason: "partner",
+            message: `echoed ${BATCH_TEST_API_KEY} by mistake`,
+            type: "invalid_request_error",
+            param: null,
+            code: "flex_not_available",
+          },
+          request_id: "req_built-fixture-redaction",
+        },
+        { status: 409, headers: { "x-request-id": "req_built-fixture-redaction", "Retry-After": "7" } },
+      ),
+    );
+
+    const error = (await batchClient(fetcher).batches.list().then(() => null, (thrown: unknown) => thrown)) as RunInfraError;
+
+    expect(error.message).toBe("echoed [redacted] by mistake");
+    expect(error.message).not.toContain(BATCH_TEST_API_KEY);
+    expect(error).toMatchObject({ status: 409, code: "flex_not_available", reason: "partner", retryAfterMs: 7_000 });
+  });
+
+  it("leaves the errors of every other route as they were", async () => {
+    const busy = (): Response =>
+      jsonResponse(
+        { error: { reason: "model", message: "busy", type: "api_error", code: "datastore_unavailable" } },
+        { status: 503, headers: { "Retry-After": "5" } },
+      );
+    const missing = (): Response =>
+      jsonResponse({ error: { message: "gone", type: "not_found_error", code: "not_found" } }, { status: 404 });
+    const client = batchClient(vi.fn().mockImplementationOnce(async () => busy()).mockImplementationOnce(async () => missing()), {
+      maxRetries: 0,
+    });
+
+    const unavailable = (await client.models.list().then(() => null, (thrown: unknown) => thrown)) as RunInfraError;
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.retryAfterMs).toBeUndefined();
+    expect(unavailable.reason).toBeUndefined();
+
+    const notFound = await client.models.retrieve("some-model").then(() => null, (thrown: unknown) => thrown);
+    expect(notFound).toBeInstanceOf(ModelNotFoundError);
+    expect((notFound as RunInfraError).type).toBe("model_not_found");
+  });
+
+  it("refuses malformed batch calls before anything is sent", async () => {
+    const fetcher = vi.fn();
+    const client = batchClient(fetcher);
+    const invalid = { status: 0, type: "invalid_request_options" };
+
+    await expect(
+      client.batches.create({ ...batchCreateRequest, unknown_member: true } as unknown as BatchCreateRequest),
+    ).rejects.toMatchObject({ ...invalid, message: "Unknown batch request field: unknown_member" });
+    await expect(
+      client.batches.create({ ...batchCreateRequest, model: " " }),
+    ).rejects.toMatchObject(invalid);
+    await expect(
+      client.batches.create({ ...batchCreateRequest, input_url: "" }),
+    ).rejects.toMatchObject({ ...invalid, message: "input_url must be a non-empty string" });
+    await expect(
+      client.batches.create({ ...batchCreateRequest, destination: "https://example.org" as unknown as BatchCreateRequest["destination"] }),
+    ).rejects.toMatchObject({ ...invalid, message: "destination must be an object" });
+    await expect(
+      client.batches.create({
+        ...batchCreateRequest,
+        destination: { type: "webhook" } as unknown as BatchCreateRequest["destination"],
+      }),
+    ).rejects.toMatchObject({ ...invalid, message: "destination.url must be a string" });
+    await expect(
+      client.batches.create({ ...batchCreateRequest, max_cost_cents: 1.5 }),
+    ).rejects.toMatchObject({ ...invalid, message: "max_cost_cents must be an integer" });
+    await expect(
+      client.batches.create({ ...batchCreateRequest, max_cost_cents: "100" as unknown as number }),
+    ).rejects.toMatchObject({ ...invalid, message: "max_cost_cents must be an integer" });
+    await expect(
+      client.batches.create({ ...batchCreateRequest, name: 7 as unknown as string }),
+    ).rejects.toMatchObject({ ...invalid, message: "name must be a string" });
+    await expect(
+      client.batches.create(batchCreateRequest, { idempotencyKey: "   " }),
+    ).rejects.toMatchObject({ ...invalid, message: "idempotencyKey must not be blank" });
+    await expect(
+      client.batches.list({ limit: "2" as unknown as number }),
+    ).rejects.toMatchObject({ ...invalid, message: "limit must be an integer" });
+    await expect(
+      client.batches.list({ page: 2 } as unknown as BatchListParams),
+    ).rejects.toMatchObject({ ...invalid, message: "Unknown batch list param: page" });
+    await expect(client.batches.retrieve("  ")).rejects.toMatchObject({ ...invalid, message: "batchId must not be blank" });
+    await expect(client.batches.cancel(undefined as unknown as string)).rejects.toMatchObject({
+      ...invalid,
+      message: "batchId must be a string",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("does not re-enforce the gateway's bounds: an out-of-range cap is sent and the gateway's refusal comes back", async () => {
+    const refusal = allBatchRefusals().find((entry) => entry.name === "invalid-request-member")!;
+    const fetcher = vi.fn().mockResolvedValue(batchRefusalResponse(refusal));
+
+    await expect(
+      batchClient(fetcher).batches.create({ ...batchCreateRequest, max_cost_cents: 0 }),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_request", param: "max_cost_cents" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("encodes a batch id into the path", async () => {
+    const fetcher = vi.fn().mockImplementation(async () => jsonResponse({ batch_id: "x", batch_state: "cancelling" }));
+    const client = batchClient(fetcher);
+
+    await client.batches.cancel("a/b?c");
+    await client.batches.retrieve(" spaced id ");
+
+    expect(fetcher.mock.calls[0]?.[0]).toBe(`${BATCH_BASE_URL}/batches/a%2Fb%3Fc/cancel`);
+    expect(fetcher.mock.calls[1]?.[0]).toBe(`${BATCH_BASE_URL}/batches/spaced%20id`);
+  });
+});
+
+describe("RunInfra TypeScript SDK batch delivery verification", () => {
+  const batchId = "00000000-0000-4000-8000-0000000000a1";
+  const testId = "bdt_0123456789abcdef0123456789abcdef";
+  const answerId = "bdl_000000000000400080000000000000a1_1_1";
+  const errorId = "bdl_000000000000400080000000000000a1_3_2";
+  const testBody = `{"id":"${testId}","test":true,"value":"unit-test-echo-value"}`;
+  const answerBody = JSON.stringify({
+    id: answerId,
+    batch_id: batchId,
+    custom_id: "line-1",
+    line: 1,
+    attempt: 1,
+    test: false,
+    response: { id: "chatcmpl-unit", object: "chat.completion", choices: [{ index: 0, message: { role: "assistant", content: "one" } }] },
+    usage: { prompt_tokens: 37, completion_tokens: 14, total_tokens: 51 },
+    cost: { microcents: 679 },
+  });
+  const errorBody = JSON.stringify({
+    id: errorId,
+    batch_id: batchId,
+    custom_id: null,
+    line: 3,
+    attempt: 2,
+    test: false,
+    error: { code: "link_changed" },
+    usage: null,
+    cost: null,
+  });
+  // When the deliveries below were signed. A check that is not about the clock names this moment as `now`.
+  const timestamp = 1_794_788_172;
+  const verifyAt = (
+    options: Omit<VerifyBatchDeliveryOptions, "secret"> & { secret?: string },
+  ): BatchDelivery => verifyBatchDelivery({ secret: BATCH_TEST_SECRET, now: timestamp, ...options });
+  const outsideTolerance = "Batch delivery timestamp is outside the allowed tolerance.";
+  const badSignature = "Batch delivery signature verification failed.";
+
+  it("verifies and types the three deliveries signed by the gateway's rule", () => {
+    const test = verifyAt({ payload: testBody, headers: signBatchDelivery(testBody, testId, timestamp) });
+    expect(test).toEqual({ id: testId, test: true, value: "unit-test-echo-value" });
+    if (!test.test) throw new Error("expected the test delivery");
+    expect(test.value).toBe("unit-test-echo-value");
+
+    const answer = verifyAt({ payload: answerBody, headers: signBatchDelivery(answerBody, answerId, timestamp) });
+    if (answer.test || answer.error) throw new Error("expected an answered line");
+    expect(answer.custom_id).toBe("line-1");
+    expect(answer.line).toBe(1);
+    expect(answer.response.object).toBe("chat.completion");
+    expect(answer.usage).toEqual({ prompt_tokens: 37, completion_tokens: 14, total_tokens: 51 });
+    expect(answer.cost).toEqual({ microcents: 679 });
+
+    const failed = verifyAt({ payload: errorBody, headers: signBatchDelivery(errorBody, errorId, timestamp) });
+    if (failed.test || !failed.error) throw new Error("expected a failed line");
+    expect(failed.error.code).toBe("link_changed");
+    expect(failed.custom_id).toBeNull();
+    expect(failed.line).toBe(3);
+    expect(failed.usage).toBeNull();
+    expect(failed.cost).toBeNull();
+  });
+
+  it("answers deliveries the way the README handler does: the test's value comes back, a line gets a 2xx", async () => {
+    const signingSecret = BATCH_TEST_SECRET;
+    const seen: string[] = [];
+    const handle = async (request: Request): Promise<Response> => {
+      const rawBody = await request.text();
+      const delivery = verifyBatchDelivery({
+        payload: rawBody,
+        headers: request.headers,
+        secret: signingSecret,
+      });
+
+      if (delivery.test) {
+        // The create's test delivery: reply 2xx with a body that contains delivery.value.
+        return new Response(delivery.value, { status: 200 });
+      }
+      if (delivery.error) {
+        seen.push(`${delivery.custom_id ?? `line ${delivery.line}`}: ${delivery.error.code}`);
+      } else {
+        seen.push(`${delivery.custom_id}: ${String(delivery.response.object)} ${delivery.cost?.microcents}`);
+      }
+      return new Response(null, { status: 204 });
+    };
+    // The handler names no clock, so the deliveries are signed now, as the gateway signs them when it sends them.
+    const signedNow = Math.floor(Date.now() / 1000);
+    const post = (body: string, id: string): Request =>
+      new Request("https://example.org/batch/answers", {
+        method: "POST",
+        headers: signBatchDelivery(body, id, signedNow),
+        body,
+      });
+
+    const tested = await handle(post(testBody, testId));
+    expect(tested.status).toBe(200);
+    expect(await tested.text()).toContain("unit-test-echo-value");
+    expect((await handle(post(answerBody, answerId))).status).toBe(204);
+    expect((await handle(post(errorBody, errorId))).status).toBe(204);
+    expect(seen).toEqual(["line-1: chat.completion 679", "line 3: link_changed"]);
+  });
+
+  it("refuses a delivery older than 300 seconds by default, so a captured delivery cannot be replayed later", () => {
+    const headers = signBatchDelivery(testBody, testId, timestamp);
+    const options = { payload: testBody, headers, secret: BATCH_TEST_SECRET };
+
+    // The suite's deliveries were signed long before today: with the real clock and no option they are too old.
+    expect(() => verifyBatchDelivery(options)).toThrow(WebhookVerificationError);
+    expect(() => verifyBatchDelivery(options)).toThrow(outsideTolerance);
+
+    // The same rule against a named clock: 300 seconds pass, 301 do not, in either direction.
+    expect(verifyBatchDelivery({ ...options, now: timestamp + 300 }).id).toBe(testId);
+    expect(verifyBatchDelivery({ ...options, now: timestamp - 300 }).id).toBe(testId);
+    expect(() => verifyBatchDelivery({ ...options, now: timestamp + 301 })).toThrow(outsideTolerance);
+    expect(() => verifyBatchDelivery({ ...options, now: timestamp - 301 })).toThrow(outsideTolerance);
+
+    // And against the real clock: signed just now passes, signed 301 seconds ago does not.
+    const realNow = Math.floor(Date.now() / 1000);
+    expect(
+      verifyBatchDelivery({ ...options, headers: signBatchDelivery(testBody, testId, realNow) }).id,
+    ).toBe(testId);
+    expect(() =>
+      verifyBatchDelivery({ ...options, headers: signBatchDelivery(testBody, testId, realNow - 301) }),
+    ).toThrow(outsideTolerance);
+  });
+
+  it("passes the same old delivery with the check turned off, with `now` set, or with a wider tolerance", () => {
+    const headers = signBatchDelivery(testBody, testId, timestamp);
+    const options = { payload: testBody, headers, secret: BATCH_TEST_SECRET };
+
+    expect(() => verifyBatchDelivery(options)).toThrow(outsideTolerance);
+    expect(verifyBatchDelivery({ ...options, toleranceSeconds: null }).id).toBe(testId);
+    expect(verifyBatchDelivery({ ...options, toleranceSeconds: null, now: timestamp + 86_400 * 365 }).id).toBe(testId);
+    expect(verifyBatchDelivery({ ...options, now: timestamp }).id).toBe(testId);
+    expect(verifyBatchDelivery({ ...options, toleranceSeconds: 3_600, now: timestamp + 3_600 }).id).toBe(testId);
+    expect(() => verifyBatchDelivery({ ...options, toleranceSeconds: 10, now: timestamp + 11 })).toThrow(outsideTolerance);
+    expect(() => verifyBatchDelivery({ ...options, toleranceSeconds: 0, now: timestamp + 1 })).toThrow(outsideTolerance);
+    expect(verifyBatchDelivery({ ...options, toleranceSeconds: 0, now: timestamp }).id).toBe(testId);
+
+    // Turning the clock check off turns nothing else off.
+    expect(() =>
+      verifyBatchDelivery({ ...options, payload: testBody.replace("echo", "echO"), toleranceSeconds: null }),
+    ).toThrow(badSignature);
+
+    for (const toleranceSeconds of [-1, Number.NaN, Number.POSITIVE_INFINITY, "300", true]) {
+      expect(() =>
+        verifyBatchDelivery({ ...options, now: timestamp, toleranceSeconds: toleranceSeconds as unknown as number }),
+      ).toThrow("Batch delivery tolerance must be a non-negative number, or null to turn the check off.");
+    }
+    expect(() => verifyBatchDelivery({ ...options, now: Number.NaN })).toThrow(
+      "Batch delivery verification clock must be a non-negative finite number.",
+    );
+  });
+
+  it("rejects a changed body, a changed timestamp, a changed id and a wrong secret", () => {
+    const headers = signBatchDelivery(answerBody, answerId, timestamp);
+
+    expect(() => verifyAt({ payload: answerBody.replace('"one"', '"two"'), headers })).toThrow(badSignature);
+    expect(() =>
+      verifyAt({ payload: answerBody, headers: { ...headers, "webhook-timestamp": String(timestamp + 1) } }),
+    ).toThrow(badSignature);
+    expect(() =>
+      verifyAt({ payload: answerBody, headers: { ...headers, "webhook-id": answerId.replace("_1_1", "_1_2") } }),
+    ).toThrow(badSignature);
+    const otherSecret = `whsec_${Buffer.from("another unit test secret, 32 b!!", "utf8").toString("base64")}`;
+    expect(() => verifyAt({ payload: answerBody, headers, secret: otherSecret })).toThrow(badSignature);
+    expect(() => verifyAt({ payload: answerBody, headers, secret: otherSecret })).toThrow(WebhookVerificationError);
+  });
+
+  it("takes the raw body only: the same JSON serialized again does not verify", () => {
+    const spaced = `{ "id": "${testId}", "test": true, "value": "unit-test-echo-value" }`;
+    const headers = signBatchDelivery(spaced, testId, timestamp);
+
+    expect(verifyAt({ payload: spaced, headers }).id).toBe(testId);
+    const bytes = new TextEncoder().encode(spaced);
+    expect(verifyAt({ payload: bytes, headers }).test).toBe(true);
+    expect(verifyAt({ payload: bytes.buffer.slice(0) as ArrayBuffer, headers }).test).toBe(true);
+    expect(() => verifyAt({ payload: JSON.stringify(JSON.parse(spaced)), headers })).toThrow(badSignature);
+    expect(() => verifyAt({ payload: JSON.parse(spaced) as unknown as string, headers })).toThrow(
+      WebhookVerificationError,
+    );
+  });
+
+  it("reads the headers in any case, from a plain object or a Headers object", () => {
+    const signed = signBatchDelivery(testBody, testId, timestamp);
+    const upper = Object.fromEntries(Object.entries(signed).map(([name, value]) => [name.toUpperCase(), value]));
+    const mixed = {
+      "Webhook-Id": signed["webhook-id"],
+      "Webhook-Timestamp": signed["webhook-timestamp"],
+      "Webhook-Signature": [signed["webhook-signature"]!],
+      Host: "example.org",
+    };
+
+    for (const headers of [signed, upper, mixed, new Headers(signed), new Headers(upper)]) {
+      expect(verifyAt({ payload: testBody, headers }).id).toBe(testId);
+    }
+  });
+
+  it("uses the secret's decoded bytes as the key, with or without the whsec_ prefix", () => {
+    const headers = signBatchDelivery(testBody, testId, timestamp);
+
+    expect(verifyAt({ payload: testBody, headers, secret: BATCH_TEST_SECRET_BYTES.toString("base64") }).id).toBe(testId);
+    expect(verifyAt({ payload: testBody, headers, secret: `  ${BATCH_TEST_SECRET}\n` }).id).toBe(testId);
+
+    // Signed with the secret's TEXT as the key: that is not the rule, and it does not verify.
+    const textKeyed = signBatchDelivery(testBody, testId, timestamp, Buffer.from(BATCH_TEST_SECRET, "utf8"));
+    expect(() => verifyAt({ payload: testBody, headers: textKeyed })).toThrow(badSignature);
+
+    for (const secret of ["", "   ", "whsec_", "whsec_not base64!", "whsec_abc", undefined, 42]) {
+      expect(() =>
+        verifyBatchDelivery({ payload: testBody, headers, now: timestamp, secret: secret as unknown as string }),
+      ).toThrow(WebhookVerificationError);
+    }
+  });
+
+  it("rejects missing, repeated and malformed headers and bodies that are no delivery", () => {
+    const headers = signBatchDelivery(testBody, testId, timestamp);
+
+    for (const name of ["webhook-id", "webhook-timestamp", "webhook-signature"]) {
+      const without = { ...headers };
+      delete without[name];
+      expect(() => verifyAt({ payload: testBody, headers: without })).toThrow(
+        `Batch delivery header ${name} is missing.`,
+      );
+    }
+    expect(() => verifyAt({ payload: testBody, headers: { ...headers, "Webhook-Id": testId } })).toThrow(
+      "Batch delivery header webhook-id is present more than once.",
+    );
+    expect(() => verifyAt({ payload: testBody, headers: { ...headers, "webhook-timestamp": "soon" } })).toThrow(
+      "Batch delivery timestamp must be a non-negative integer.",
+    );
+    expect(() => verifyAt({ payload: testBody, headers: "webhook-id" as unknown as Headers })).toThrow(
+      WebhookVerificationError,
+    );
+    expect(() =>
+      verifyAt({ payload: testBody, headers: { ...headers, "webhook-signature": `v1,${"A".repeat(8_200)}` } }),
+    ).toThrow("Batch delivery header webhook-signature is too large.");
+
+    for (const body of ["not json", "[1,2]", '"text"', '{"test":true}', '{"id":"bdt_x","test":"yes"}']) {
+      expect(() => verifyAt({ payload: body, headers: signBatchDelivery(body, testId, timestamp) })).toThrow(
+        WebhookVerificationError,
+      );
+    }
+  });
+
+  it("accepts one matching signature among several", () => {
+    const headers = signBatchDelivery(testBody, testId, timestamp);
+    const other = signBatchDelivery(testBody, testId, timestamp, Buffer.from("a rotated-away unit test secret!", "utf8"));
+
+    expect(
+      verifyAt({
+        payload: testBody,
+        headers: { ...headers, "webhook-signature": `${other["webhook-signature"]} ${headers["webhook-signature"]}` },
+      }).id,
+    ).toBe(testId);
+    expect(() =>
+      verifyAt({
+        payload: testBody,
+        headers: { ...headers, "webhook-signature": `v2,${headers["webhook-signature"]!.slice(3)}` },
+      }),
+    ).toThrow(badSignature);
+  });
+
+  it("verifies the stored deliveries with their stored headers and raw bodies, and reads their shapes", () => {
+    const { count, records } = batchFixture<{ count: number; records: BatchDeliveryRecord[] }>("deliveries.json");
+    expect(records).toHaveLength(count);
+    expect(records).toHaveLength(4);
+
+    for (const record of records) {
+      const parsed = JSON.parse(record.body) as BatchDelivery;
+      const signedAt = Number(record.headers["webhook-timestamp"]);
+      expect(record.headers["webhook-id"]).toBe(parsed.id);
+      expect(record.headers["webhook-timestamp"]).toMatch(/^[0-9]{10}$/u);
+      expect(record.headers["webhook-signature"]).toMatch(/^v1,[A-Za-z0-9+/]{43}=$/u);
+      expect(record.headers["x-rightnow-signature-version"]).toBe("1");
+      expect(record.headers["content-type"]).toBe("application/json");
+      expect(Buffer.byteLength(record.body, "utf8")).toBe(Number(record.headers["content-length"]));
+
+      // The stored signature is the made-up secret's over the stored raw body: it verifies as it is.
+      const stored = { payload: record.body, headers: record.headers, secret: BATCH_TEST_SECRET };
+      expect(verifyBatchDelivery({ ...stored, now: signedAt })).toEqual(parsed);
+      expect(verifyBatchDelivery({ ...stored, toleranceSeconds: null })).toEqual(parsed);
+      // It was signed long ago, so with the real clock and no option it is refused as too old.
+      expect(() => verifyBatchDelivery(stored)).toThrow(outsideTolerance);
+      // One changed byte of the body, or another secret, and it no longer verifies.
+      expect(() =>
+        verifyBatchDelivery({ ...stored, now: signedAt, payload: record.body.replace('"test":', '"test" :') }),
+      ).toThrow(badSignature);
+      const otherSecret = `whsec_${Buffer.from("another unit test secret, 32 b!!", "utf8").toString("base64")}`;
+      expect(() => verifyBatchDelivery({ ...stored, now: signedAt, secret: otherSecret })).toThrow(badSignature);
+    }
+
+    const [test, ...lines] = records.map((record) => JSON.parse(record.body) as BatchDelivery);
+    if (!test || !test.test) throw new Error("expected the stored test delivery first");
+    expect(test.id).toMatch(/^bdt_[0-9a-f]{32}$/u);
+    expect(Object.keys(test).sort()).toEqual(["id", "test", "value"]);
+    expect(test.value).toMatch(/^[A-Za-z0-9_-]{32}$/u);
+
+    expect(lines.map((line) => (line as BatchAnswerDelivery).line)).toEqual([1, 3, 4]);
+    for (const line of lines) {
+      if (line.test || line.error) throw new Error("expected a stored answered line");
+      expect(line.id).toBe(`bdl_${batchId.replace(/-/gu, "")}_${line.line}_${line.attempt}`);
+      expect(line.batch_id).toBe(batchId);
+      expect(line.custom_id).toBe(`line-${line.line}`);
+      expect(line.attempt).toBe(1);
+      expect(Object.keys(line).sort()).toEqual(
+        ["attempt", "batch_id", "cost", "custom_id", "id", "line", "response", "test", "usage"],
+      );
+      expect(line.response.object).toBe("chat.completion");
+      expect(line.usage).toEqual({
+        prompt_tokens: expect.any(Number),
+        completion_tokens: expect.any(Number),
+        total_tokens: expect.any(Number),
+      });
+      expect(line.usage!.total_tokens).toBe(line.usage!.prompt_tokens + line.usage!.completion_tokens);
+      expect(line.cost).toEqual({ microcents: expect.any(Number) });
+    }
+
+    // What the three lines cost is what the stored job says it cost.
+    const job = batchFixture<BatchApiFixture>("get-completed.json").body.batch as BatchJobDetail;
+    expect(lines.reduce((sum, line) => sum + ((line as BatchAnswerDelivery).cost?.microcents ?? 0), 0)).toBe(
+      job.cost_microcents,
+    );
   });
 });

@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import io
@@ -10,11 +11,13 @@ import re
 import stat
 import tarfile
 import tempfile
+import time
 import traceback
 import unittest
 import warnings
 import zipfile
 from collections import UserDict
+from email.message import Message
 from email.utils import formatdate
 from pathlib import Path
 from typing import Literal, Union, get_type_hints
@@ -50,6 +53,7 @@ from runinfra import (
     TranscriptionResponse,
     WebhookVerificationError,
     construct_webhook_event,
+    verify_batch_delivery,
 )
 
 
@@ -3692,6 +3696,1001 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                     str(caught.exception),
                     "Webhook payload must be a string, bytes, or bytearray.",
                 )
+
+
+# --- Batch jobs -------------------------------------------------------------
+#
+# The answers under tests/fixtures/batch are recorded shapes with made-up identifiers (get-completed,
+# get-first-job, list, create-model-not-sold, create-no-authorization, deliveries) or typed from the service's
+# documented wire (the files named built-*). Nothing here opens a socket: every call goes through an injected
+# transport.
+
+BATCH_FIXTURES = Path(__file__).resolve().parent.joinpath("fixtures", "batch")
+# Obviously fake values, built at run time: no key and no signing secret is written in this file.
+BATCH_TEST_API_KEY = "-".join(["sk", "ri", "batch", "unit", "test"])
+BATCH_TEST_SECRET_BYTES = b"runinfra batch unit test secret!"
+BATCH_TEST_SECRET = "whsec_" + base64.b64encode(BATCH_TEST_SECRET_BYTES).decode("ascii")
+BATCH_BASE_URL = "https://api.runinfra.ai/v1"
+BATCH_ID = "00000000-0000-4000-8000-0000000000a1"
+BATCH_CREATE_REQUEST = {
+    "model": "deepseek-v4-1-flash-1017",
+    "input_url": "https://example.org/batch-fixture/file.jsonl",
+    "destination": {"type": "webhook", "url": "https://example.org/batch-fixture/hook"},
+    "max_cost_cents": 100,
+    "window_hours": 24,
+    "name": "nightly-evals",
+}
+BATCH_ERROR_CLASSES = {
+    "AuthenticationError": AuthenticationError,
+    "InsufficientCreditsError": InsufficientCreditsError,
+    "ModelNotFoundError": ModelNotFoundError,
+    "PermissionDeniedError": PermissionDeniedError,
+    "RateLimitError": RateLimitError,
+    "RunInfraError": RunInfraError,
+}
+
+
+def batch_fixture(name):
+    return json.loads(BATCH_FIXTURES.joinpath(name).read_text(encoding="utf-8"))
+
+
+def batch_answer(fixture, headers=None):
+    return json_response(
+        fixture["body"],
+        status=fixture["status"],
+        headers={"x-request-id": fixture["request_id"], **(headers or {})},
+    )
+
+
+def batch_refusal_response(refusal, headers=None):
+    return json_response(
+        refusal["body"],
+        status=refusal["status"],
+        headers={"x-request-id": refusal["expect"]["request_id"], **(refusal["headers"] if headers is None else headers)},
+    )
+
+
+def recorded_batch_refusal(name, error_class, error_type):
+    """One of the two recorded refusals, in the shape of the built ones."""
+    fixture = batch_fixture(name)
+    error = fixture["body"]["error"]
+    return {
+        "name": name,
+        "status": fixture["status"],
+        "headers": {},
+        "body": fixture["body"],
+        "expect": {
+            "error_class": error_class,
+            "type": error_type,
+            "status": fixture["status"],
+            "code": error["code"],
+            "param": error["param"],
+            "reason": None,
+            "retry_after_seconds": None,
+            "request_id": fixture["request_id"],
+        },
+    }
+
+
+def all_batch_refusals():
+    return [
+        *batch_fixture("built-refusals.json")["refusals"],
+        recorded_batch_refusal("create-model-not-sold.json", "ModelNotFoundError", "model_not_found"),
+        recorded_batch_refusal("create-no-authorization.json", "AuthenticationError", "auth_error"),
+    ]
+
+
+def batch_refusal(name):
+    return next(refusal for refusal in all_batch_refusals() if refusal["name"] == name)
+
+
+def batch_client(transport, **options):
+    return RunInfra(api_key=BATCH_TEST_API_KEY, transport=transport, **options)
+
+
+class ScriptedTransport(RecordingTransport):
+    """A recording transport whose scripted answers may also be transport failures to raise."""
+
+    def __call__(self, request):
+        answer = super().__call__(request)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+
+def sent_header(request, name):
+    for key, value in request.headers.items():
+        if key.lower() == name.lower():
+            return value
+    return None
+
+
+def sign_batch_delivery(body, delivery_id, timestamp, key=BATCH_TEST_SECRET_BYTES):
+    """Sign a delivery by the gateway's rule: "v1," + base64(HMAC-SHA-256(key, "<id>.<timestamp>.<raw body>"))."""
+    raw = body.encode("utf-8") if isinstance(body, str) else body
+    signed = f"{delivery_id}.{timestamp}.".encode("utf-8") + raw
+    signature = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode("ascii")
+    return {
+        "webhook-id": delivery_id,
+        "webhook-timestamp": str(timestamp),
+        "webhook-signature": f"v1,{signature}",
+        "x-rightnow-signature-version": "1",
+        "content-type": "application/json",
+    }
+
+
+class RunInfraPythonSdkBatchTest(unittest.TestCase):
+    def test_create_sends_the_recorded_request_shape_and_parses_the_job(self):
+        fixture = batch_fixture("built-create-200.json")
+        transport = RecordingTransport(batch_answer(fixture))
+        client = batch_client(transport)
+
+        answer = client.batches.create(
+            model="deepseek-v4-1-flash-1017",
+            input_url="https://example.org/batch-fixture/file.jsonl",
+            destination={"type": "webhook", "url": "https://example.org/batch-fixture/hook"},
+            max_cost_cents=100,
+            window_hours=24,
+            name="nightly-evals",
+            request_options={"idempotency_key": "batch-unit-create-01"},
+        )
+
+        self.assertEqual(len(transport.calls), 1)
+        request = transport.calls[0]
+        self.assertEqual(request.url, fixture["request"]["url"])
+        self.assertEqual(request.url, f"{BATCH_BASE_URL}/batches")
+        self.assertEqual(request.method, fixture["request"]["method"])
+        self.assertEqual(json.loads(request.body), fixture["request"]["body"])
+        for name in fixture["request"]["header_names"]:
+            self.assertTrue(sent_header(request, name), name)
+        self.assertEqual(sent_header(request, "Authorization"), f"Bearer {BATCH_TEST_API_KEY}")
+        self.assertEqual(sent_header(request, "Content-Type"), "application/json")
+        self.assertEqual(sent_header(request, "Idempotency-Key"), "batch-unit-create-01")
+        self.assertEqual(sent_header(request, "X-RunInfra-SDK"), "python")
+
+        self.assertEqual(answer["_request_id"], fixture["request_id"])
+        self.assertEqual(answer["batch"], fixture["body"]["batch"])
+        self.assertEqual(answer["batch"]["batch_state"], "validating")
+        self.assertEqual(answer["batch"]["made_by"], {"kind": "key"})
+        self.assertEqual(answer["batch"]["max_cost_cents"], 100)
+        self.assertIsNone(answer["batch"]["end_reason"])
+        self.assertNotIn("errors", answer["batch"])
+        self.assertNotIn("quote", answer["batch"])
+
+    def test_readme_example_creates_with_an_idempotency_key_then_reads_the_job(self):
+        transport = RecordingTransport(
+            batch_answer(batch_fixture("built-create-200.json")),
+            batch_answer(batch_fixture("get-completed.json")),
+        )
+        client = batch_client(transport)
+
+        created = client.batches.create(
+            model="deepseek-v4-1-flash-1017",
+            input_url="https://example.org/batch/input.jsonl",
+            destination={"type": "webhook", "url": "https://example.org/batch/answers"},
+            max_cost_cents=100,
+            window_hours=24,
+            name="nightly-evals",
+            request_options={"idempotency_key": "nightly-evals-2026-11-16"},
+        )
+
+        job = client.batches.retrieve(created["batch"]["id"])
+
+        create_request, read_request = transport.calls
+        self.assertEqual((create_request.method, create_request.url), ("POST", f"{BATCH_BASE_URL}/batches"))
+        self.assertEqual(sent_header(create_request, "Idempotency-Key"), "nightly-evals-2026-11-16")
+        self.assertEqual(
+            create_request.body,
+            b'{"model":"deepseek-v4-1-flash-1017","input_url":"https://example.org/batch/input.jsonl",'
+            b'"destination":{"type":"webhook","url":"https://example.org/batch/answers"},"max_cost_cents":100,'
+            b'"window_hours":24,"name":"nightly-evals"}',
+        )
+        self.assertEqual((read_request.method, read_request.url), ("GET", f"{BATCH_BASE_URL}/batches/{BATCH_ID}"))
+        self.assertEqual(
+            (job["batch"]["batch_state"], job["batch"]["errors"], job["batch"]["cost_microcents"]),
+            ("completed", [{"code": "invalid_request", "count": 1, "first_lines": [2]}], 2127),
+        )
+
+    def test_create_leaves_out_optional_members_and_sends_no_idempotency_header_unless_asked(self):
+        transport = RecordingTransport(batch_answer(batch_fixture("built-create-200.json")))
+
+        batch_client(transport).batches.create(
+            model="deepseek-v4-1-flash-1017",
+            input_url="https://example.org/batch-fixture/file.jsonl",
+            destination={"type": "webhook", "url": "https://example.org/batch-fixture/hook"},
+            max_cost_cents=1,
+        )
+
+        request = transport.calls[0]
+        self.assertEqual(
+            request.body,
+            b'{"model":"deepseek-v4-1-flash-1017","input_url":"https://example.org/batch-fixture/file.jsonl",'
+            b'"destination":{"type":"webhook","url":"https://example.org/batch-fixture/hook"},"max_cost_cents":1}',
+        )
+        self.assertIsNone(sent_header(request, "Idempotency-Key"))
+
+    def test_create_is_never_retried_without_an_idempotency_key(self):
+        transport = RecordingTransport(batch_refusal_response(batch_refusal("ask-again")))
+        client = batch_client(transport, max_retries=2, retry_base_seconds=0)
+
+        with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as caught:
+            client.batches.create(**BATCH_CREATE_REQUEST)
+
+        self.assertEqual(caught.exception.status, 503)
+        self.assertEqual(caught.exception.code, "datastore_unavailable")
+        self.assertEqual(caught.exception.retry_after_seconds, 5.0)
+        self.assertEqual(len(transport.calls), 1)
+        sleep.assert_not_called()
+
+    def test_create_asked_again_is_retried_with_the_same_idempotency_key_and_body(self):
+        fixture = batch_fixture("built-create-200.json")
+        transport = ScriptedTransport(
+            batch_refusal_response(batch_refusal("ask-again")),
+            OSError("socket closed"),
+            batch_answer(fixture),
+        )
+        client = batch_client(transport, max_retries=2, retry_base_seconds=0)
+
+        with patch("runinfra.time.sleep") as sleep:
+            answer = client.batches.create(
+                **BATCH_CREATE_REQUEST,
+                request_options={"idempotency_key": "batch-unit-create-02"},
+            )
+
+        self.assertEqual(answer["batch"]["id"], fixture["body"]["batch"]["id"])
+        self.assertEqual(len(transport.calls), 3)
+        self.assertEqual(
+            [sent_header(request, "Idempotency-Key") for request in transport.calls],
+            ["batch-unit-create-02"] * 3,
+        )
+        self.assertEqual(len({request.body for request in transport.calls}), 1)
+        self.assertEqual(len({sent_header(request, "X-Client-Request-Id") for request in transport.calls}), 1)
+        # The first wait is the gateway's own Retry-After; the second is the client's backoff.
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [5.0, 0])
+
+    def test_a_409_on_a_batch_route_is_a_final_refusal_and_is_never_retried(self):
+        create_transport = RecordingTransport(batch_refusal_response(batch_refusal("idempotency-key-reused")))
+        with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as caught:
+            batch_client(create_transport, max_retries=2, retry_base_seconds=0).batches.create(
+                **BATCH_CREATE_REQUEST,
+                request_options={"idempotency_key": "batch-unit-create-03"},
+            )
+        self.assertEqual(
+            (caught.exception.status, caught.exception.code, caught.exception.param),
+            (409, "invalid_request", "Idempotency-Key"),
+        )
+        self.assertEqual(len(create_transport.calls), 1)
+
+        read_transport = RecordingTransport(batch_refusal_response(batch_refusal("batch-ended")))
+        with self.assertRaises(RunInfraError) as caught:
+            batch_client(read_transport, max_retries=2, retry_base_seconds=0).batches.retrieve(BATCH_ID)
+        self.assertEqual((caught.exception.status, caught.exception.code), (409, "batch_ended"))
+        self.assertEqual(len(read_transport.calls), 1)
+        sleep.assert_not_called()
+
+    def test_create_default_timeout_is_at_least_30_seconds_and_an_explicit_one_is_honored(self):
+        fixture = batch_fixture("built-create-200.json")
+
+        def timeouts(method_call, **options):
+            transport = RecordingTransport(batch_answer(fixture))
+            method_call(batch_client(transport, **options))
+            return transport.calls[0].timeout_seconds
+
+        create = lambda client: client.batches.create(**BATCH_CREATE_REQUEST)  # noqa: E731
+        # A client whose own timeout is shorter: the create alone is given 30 seconds.
+        self.assertEqual(timeouts(create, timeout_seconds=5), 30.0)
+        self.assertEqual(
+            timeouts(
+                lambda client: client.batches.create(**BATCH_CREATE_REQUEST, request_options={"timeout_seconds": 1}),
+                timeout_seconds=5,
+            ),
+            1.0,
+        )
+        self.assertIsNone(timeouts(lambda client: client.batches.list(), timeout_seconds=5))
+        # A client whose timeout is already longer keeps it (None leaves the transport's own default in force).
+        self.assertIsNone(timeouts(create))
+        self.assertIsNone(timeouts(create, timeout_seconds=30))
+
+    def test_create_default_timeout_reaches_the_default_transport(self):
+        fixture = batch_fixture("built-create-200.json")
+        seen = []
+
+        class Answer:
+            status = 200
+            headers = {"content-type": "application/json", "x-request-id": fixture["request_id"]}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(fixture["body"]).encode("utf-8")
+
+        def fake_urlopen(_request, timeout=None):
+            seen.append(timeout)
+            return Answer()
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            RunInfra(api_key=BATCH_TEST_API_KEY, timeout_seconds=5).batches.create(**BATCH_CREATE_REQUEST)
+            RunInfra(api_key=BATCH_TEST_API_KEY).batches.create(**BATCH_CREATE_REQUEST)
+            RunInfra(api_key=BATCH_TEST_API_KEY, timeout_seconds=5).batches.retrieve(BATCH_ID)
+
+        self.assertEqual(seen, [30.0, 120.0, 5.0])
+
+    def test_list_sends_the_gateway_query_names_and_parses_the_recorded_page(self):
+        fixture = batch_fixture("list.json")
+        transport = RecordingTransport(batch_answer(fixture), batch_answer(fixture), batch_answer(fixture))
+        client = batch_client(transport)
+
+        page = client.batches.list()
+
+        request = transport.calls[0]
+        self.assertEqual(request.url, fixture["request"]["url"])
+        self.assertEqual(request.method, "GET")
+        self.assertIsNone(request.body)
+        self.assertIsNone(sent_header(request, "Content-Type"))
+        self.assertEqual(sent_header(request, "Authorization"), f"Bearer {BATCH_TEST_API_KEY}")
+        self.assertEqual(page["batches"], fixture["body"]["batches"])
+        self.assertIsNone(page["next_cursor"])
+        self.assertEqual(page["_request_id"], fixture["request_id"])
+        self.assertEqual(
+            [job["id"] for job in page["batches"]],
+            [BATCH_ID, "00000000-0000-4000-8000-0000000000a2"],
+        )
+        for job in page["batches"]:
+            self.assertEqual(job["batch_state"], "completed")
+            self.assertEqual(job["end_reason"], "all_done")
+            self.assertEqual(job["notice"], "batch_ended")
+            self.assertEqual(job["destination_type"], "webhook")
+            self.assertEqual(job["lines_total"] - job["lines_invalid"], job["succeeded"])
+            self.assertNotIn("errors", job)
+
+        client.batches.list(limit=2, cursor="bmV4dC1wYWdl", state="completed", model="deepseek-v4-1-flash-1017")
+        self.assertEqual(
+            transport.calls[1].url,
+            f"{BATCH_BASE_URL}/batches?limit=2&cursor=bmV4dC1wYWdl&state=completed&model=deepseek-v4-1-flash-1017",
+        )
+        client.batches.list(state="running")
+        self.assertEqual(transport.calls[2].url, f"{BATCH_BASE_URL}/batches?state=running")
+
+    def test_retrieve_reads_the_recorded_job_with_its_check_errors_and_quote(self):
+        for name in ("get-completed.json", "get-first-job.json"):
+            with self.subTest(name=name):
+                fixture = batch_fixture(name)
+                recorded = fixture["body"]["batch"]
+                transport = RecordingTransport(batch_answer(fixture))
+
+                answer = batch_client(transport).batches.retrieve(recorded["id"])
+
+                request = transport.calls[0]
+                self.assertEqual(request.url, fixture["request"]["url"])
+                self.assertEqual(request.method, "GET")
+                self.assertIsNone(request.body)
+                self.assertEqual(answer["batch"], recorded)
+                self.assertEqual(answer["_request_id"], fixture["request_id"])
+                self.assertEqual(answer["batch"]["batch_state"], "completed")
+                self.assertIsNone(answer["batch"]["pause_reason"])
+                self.assertIsNone(answer["batch"]["check_error"])
+                self.assertEqual(
+                    answer["batch"]["errors"],
+                    [{"code": "invalid_request", "count": 1, "first_lines": [2]}],
+                )
+                self.assertIsNone(answer["batch"]["quote"])
+                self.assertGreater(answer["batch"]["cost_microcents"], 0)
+                self.assertEqual(set(recorded), set(get_type_hints(runinfra.BatchJobDetail)))
+
+    def test_typed_job_names_exactly_the_members_the_recorded_answers_carry(self):
+        listed = batch_fixture("list.json")["body"]["batches"][0]
+        self.assertEqual(set(listed), set(get_type_hints(runinfra.BatchJob)))
+        self.assertEqual(
+            set(get_type_hints(runinfra.BatchJobDetail)) - set(get_type_hints(runinfra.BatchJob)),
+            {"errors", "quote"},
+        )
+        self.assertIs(get_type_hints(runinfra.RunInfra(api_key=BATCH_TEST_API_KEY).batches.create)["return"], runinfra.BatchCreateResponse)
+        client = batch_client(RecordingTransport())
+        self.assertIs(get_type_hints(client.batches.list)["return"], runinfra.BatchListResponse)
+        self.assertIs(get_type_hints(client.batches.retrieve)["return"], runinfra.BatchRetrieveResponse)
+        self.assertIs(get_type_hints(client.batches.cancel)["return"], runinfra.BatchCancelResponse)
+        for method in (client.batches.create, client.batches.list, client.batches.retrieve, client.batches.cancel):
+            self.assertNotIn(
+                inspect.Parameter.VAR_KEYWORD,
+                {parameter.kind for parameter in inspect.signature(method).parameters.values()},
+            )
+
+    def test_cancel_is_a_bodyless_post_that_is_sent_once(self):
+        fixture = batch_fixture("built-cancel-200.json")
+        batch_id = fixture["body"]["batch_id"]
+        transport = RecordingTransport(batch_answer(fixture))
+
+        answer = batch_client(transport).batches.cancel(batch_id)
+
+        request = transport.calls[0]
+        self.assertEqual(request.url, fixture["request"]["url"])
+        self.assertEqual(request.url, f"{BATCH_BASE_URL}/batches/{batch_id}/cancel")
+        self.assertEqual(request.method, "POST")
+        self.assertIsNone(request.body)
+        self.assertIsNone(sent_header(request, "Content-Type"))
+        self.assertEqual(
+            answer,
+            {"batch_id": batch_id, "batch_state": "cancelled", "_request_id": fixture["request_id"]},
+        )
+
+        busy = RecordingTransport(batch_refusal_response(batch_refusal("ask-again")))
+        with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as caught:
+            batch_client(busy, max_retries=2, retry_base_seconds=0).batches.cancel(
+                batch_id,
+                request_options={"idempotency_key": "batch-unit-cancel"},
+            )
+        self.assertEqual((caught.exception.status, caught.exception.retry_after_seconds), (503, 5.0))
+        self.assertEqual(len(busy.calls), 1)
+        sleep.assert_not_called()
+
+    def test_a_503_that_asks_for_a_wait_above_five_seconds_is_raised_after_one_request_with_that_wait(self):
+        not_open = batch_refusal("batch-not-open")
+        self.assertEqual(not_open["headers"]["Retry-After"], "60")
+        calls = {
+            "retrieve": lambda client: client.batches.retrieve(BATCH_ID),
+            "list": lambda client: client.batches.list(),
+            "create": lambda client: client.batches.create(
+                **BATCH_CREATE_REQUEST,
+                request_options={"idempotency_key": "batch-unit-long-wait"},
+            ),
+        }
+
+        for method, call in calls.items():
+            with self.subTest(method=method):
+                transport = RecordingTransport(batch_refusal_response(not_open), batch_answer(batch_fixture("get-completed.json")))
+                with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as caught:
+                    call(batch_client(transport, max_retries=2, retry_base_seconds=0))
+
+                self.assertEqual(len(transport.calls), 1)
+                sleep.assert_not_called()
+                self.assertEqual(
+                    (caught.exception.status, caught.exception.code, caught.exception.retry_after_seconds),
+                    (503, "batch_not_open", 60.0),
+                )
+
+        # Six seconds is above the line too; an HTTP date far ahead as well.
+        for retry_after in ("6", formatdate(time.time() + 3_600, usegmt=True)):
+            with self.subTest(retry_after=retry_after):
+                transport = RecordingTransport(batch_refusal_response(not_open, headers={"Retry-After": retry_after}))
+                with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as caught:
+                    batch_client(transport, max_retries=2, retry_base_seconds=0).batches.retrieve(BATCH_ID)
+                self.assertEqual(caught.exception.status, 503)
+                self.assertEqual(len(transport.calls), 1)
+                sleep.assert_not_called()
+
+    def test_a_read_is_asked_again_on_a_503_whose_retry_after_is_five_seconds_or_less(self):
+        fixture = batch_fixture("get-completed.json")
+        ask_again = batch_refusal("ask-again")
+        self.assertEqual(ask_again["headers"]["Retry-After"], "5")
+        transport = RecordingTransport(batch_refusal_response(ask_again), batch_answer(fixture))
+
+        with patch("runinfra.time.sleep") as sleep:
+            answer = batch_client(transport, max_retries=1, retry_base_seconds=0).batches.retrieve(BATCH_ID)
+
+        self.assertEqual(answer["batch"]["id"], BATCH_ID)
+        self.assertEqual(len(transport.calls), 2)
+        sleep.assert_called_once_with(5.0)
+
+    def test_every_other_route_keeps_waiting_for_a_long_retry_after(self):
+        transport = RecordingTransport(
+            json_response({"error": {"message": "busy", "type": "api_error"}}, status=503, headers={"Retry-After": "60"}),
+            json_response({"object": "list", "data": []}),
+        )
+
+        with patch("runinfra.time.sleep") as sleep:
+            answer = batch_client(transport, max_retries=1, retry_base_seconds=0).models.list()
+
+        self.assertEqual(answer["data"], [])
+        self.assertEqual(len(transport.calls), 2)
+        sleep.assert_called_once_with(60.0)
+
+    def test_every_refusal_of_the_batch_routes_is_a_typed_error_with_its_code_member_reason_wait_and_request_id(self):
+        refusals = all_batch_refusals()
+        self.assertGreater(len(refusals), 30)
+        calls = {
+            "create": lambda client: client.batches.create(
+                **BATCH_CREATE_REQUEST,
+                request_options={"idempotency_key": "batch-unit-refusal"},
+            ),
+            "list": lambda client: client.batches.list(),
+            "retrieve": lambda client: client.batches.retrieve(BATCH_ID),
+            "cancel": lambda client: client.batches.cancel(BATCH_ID),
+        }
+
+        for refusal in refusals:
+            expected = refusal["expect"]
+            for method, call in calls.items():
+                with self.subTest(refusal=refusal["name"], method=method):
+                    transport = RecordingTransport(batch_refusal_response(refusal))
+                    with self.assertRaises(RunInfraError) as caught:
+                        call(batch_client(transport, max_retries=0))
+                    error = caught.exception
+
+                    self.assertEqual(len(transport.calls), 1)
+                    self.assertIs(type(error), BATCH_ERROR_CLASSES[expected["error_class"]])
+                    self.assertEqual(error.status, expected["status"])
+                    self.assertEqual(error.type, expected["type"])
+                    self.assertEqual(error.code, expected["code"])
+                    self.assertEqual(error.param, expected["param"])
+                    self.assertEqual(error.reason, expected["reason"])
+                    self.assertEqual(error.retry_after_seconds, expected["retry_after_seconds"])
+                    self.assertEqual(error.request_id, expected["request_id"])
+                    self.assertEqual(str(error), refusal["body"]["error"]["message"])
+
+    def test_a_refusal_keeps_its_reason_and_wait_when_the_api_key_is_redacted_from_its_message(self):
+        transport = RecordingTransport(
+            json_response(
+                {
+                    "error": {
+                        "reason": "partner",
+                        "message": f"echoed {BATCH_TEST_API_KEY} by mistake",
+                        "type": "invalid_request_error",
+                        "param": None,
+                        "code": "flex_not_available",
+                    },
+                    "request_id": "req_built-fixture-redaction",
+                },
+                status=409,
+                headers={"x-request-id": "req_built-fixture-redaction", "Retry-After": "7"},
+            )
+        )
+
+        with self.assertRaises(RunInfraError) as caught:
+            batch_client(transport).batches.list()
+
+        error = caught.exception
+        self.assertEqual(str(error), "echoed [redacted] by mistake")
+        self.assertNotIn(BATCH_TEST_API_KEY, str(error))
+        self.assertEqual(
+            (error.status, error.code, error.reason, error.retry_after_seconds),
+            (409, "flex_not_available", "partner", 7.0),
+        )
+
+    def test_errors_of_every_other_route_are_as_they_were(self):
+        transport = RecordingTransport(
+            json_response(
+                {"error": {"reason": "model", "message": "busy", "type": "api_error", "code": "datastore_unavailable"}},
+                status=503,
+                headers={"Retry-After": "5"},
+            ),
+            json_response({"error": {"message": "gone", "type": "not_found_error", "code": "not_found"}}, status=404),
+        )
+        client = batch_client(transport, max_retries=0)
+
+        with self.assertRaises(RunInfraError) as unavailable:
+            client.models.list()
+        self.assertEqual(unavailable.exception.status, 503)
+        self.assertIsNone(unavailable.exception.retry_after_seconds)
+        self.assertIsNone(unavailable.exception.reason)
+
+        with self.assertRaises(ModelNotFoundError) as not_found:
+            client.models.retrieve("some-model")
+        self.assertEqual(not_found.exception.type, "model_not_found")
+
+    def test_malformed_batch_calls_are_refused_before_anything_is_sent(self):
+        transport = RecordingTransport()
+        client = batch_client(transport)
+        base = dict(BATCH_CREATE_REQUEST)
+        cases = [
+            (lambda: client.batches.create(**{**base, "model": " "}), "model must not be blank"),
+            (lambda: client.batches.create(**{**base, "input_url": ""}), "input_url must be a non-empty string"),
+            (lambda: client.batches.create(**{**base, "destination": "https://example.org"}), "destination must be a mapping"),
+            (lambda: client.batches.create(**{**base, "destination": {"type": "webhook"}}), "destination.url must be a string"),
+            (lambda: client.batches.create(**{**base, "max_cost_cents": 1.5}), "max_cost_cents must be an integer"),
+            (lambda: client.batches.create(**{**base, "max_cost_cents": "100"}), "max_cost_cents must be an integer"),
+            (lambda: client.batches.create(**{**base, "max_cost_cents": True}), "max_cost_cents must be an integer"),
+            (lambda: client.batches.create(**{**base, "window_hours": "24"}), "window_hours must be an integer"),
+            (lambda: client.batches.create(**{**base, "name": 7}), "name must be a string"),
+            (
+                lambda: client.batches.create(**base, request_options={"idempotency_key": "   "}),
+                "idempotency_key must not be blank",
+            ),
+            (
+                lambda: client.batches.create(**base, extra_body={"model": "other"}),
+                "extra_body must not override typed request field: model",
+            ),
+            (lambda: client.batches.list(limit="2"), "limit must be an integer"),
+            (lambda: client.batches.list(state=""), "state must be a non-empty string"),
+            (lambda: client.batches.retrieve("  "), "batch_id must not be blank"),
+            (lambda: client.batches.cancel(None), "batch_id must be a string"),
+        ]
+
+        for call, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaises(RunInfraError) as caught:
+                    call()
+                self.assertEqual((caught.exception.status, caught.exception.type), (0, "invalid_request_options"))
+                self.assertEqual(str(caught.exception), message)
+        with self.assertRaises(TypeError):
+            client.batches.create(**base, unknown_member=True)
+        with self.assertRaises(TypeError):
+            client.batches.list(page=2)
+        self.assertEqual(transport.calls, [])
+
+    def test_gateway_bounds_are_not_re_enforced_locally(self):
+        transport = RecordingTransport(batch_refusal_response(batch_refusal("invalid-request-member")))
+
+        with self.assertRaises(RunInfraError) as caught:
+            batch_client(transport).batches.create(**{**BATCH_CREATE_REQUEST, "max_cost_cents": 0})
+
+        self.assertEqual(
+            (caught.exception.status, caught.exception.code, caught.exception.param),
+            (400, "invalid_request", "max_cost_cents"),
+        )
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_a_batch_id_is_encoded_into_the_path(self):
+        transport = RecordingTransport(
+            json_response({"batch_id": "x", "batch_state": "cancelling"}),
+            json_response({"batch": {}}),
+        )
+        client = batch_client(transport)
+
+        client.batches.cancel("a/b?c")
+        client.batches.retrieve(" spaced id ")
+
+        self.assertEqual(transport.calls[0].url, f"{BATCH_BASE_URL}/batches/a%2Fb%3Fc/cancel")
+        self.assertEqual(transport.calls[1].url, f"{BATCH_BASE_URL}/batches/spaced%20id")
+
+    def test_extra_body_rides_a_create_for_deliberate_extensions(self):
+        transport = RecordingTransport(batch_answer(batch_fixture("built-create-200.json")))
+
+        batch_client(transport).batches.create(**BATCH_CREATE_REQUEST, extra_body={"future_member": 1})
+
+        self.assertEqual(json.loads(transport.calls[0].body), {**BATCH_CREATE_REQUEST, "future_member": 1})
+
+
+class RunInfraPythonSdkBatchDeliveryTest(unittest.TestCase):
+    TEST_ID = "bdt_0123456789abcdef0123456789abcdef"
+    TEST_BODY = '{"id":"bdt_0123456789abcdef0123456789abcdef","test":true,"value":"unit-test-echo-value"}'
+    ANSWER_ID = "bdl_000000000000400080000000000000a1_1_1"
+    ANSWER_BODY = json.dumps(
+        {
+            "id": "bdl_000000000000400080000000000000a1_1_1",
+            "batch_id": BATCH_ID,
+            "custom_id": "line-1",
+            "line": 1,
+            "attempt": 1,
+            "test": False,
+            "response": {
+                "id": "chatcmpl-unit",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "one"}}],
+            },
+            "usage": {"prompt_tokens": 37, "completion_tokens": 14, "total_tokens": 51},
+            "cost": {"microcents": 679},
+        },
+        separators=(",", ":"),
+    )
+    ERROR_ID = "bdl_000000000000400080000000000000a1_3_2"
+    ERROR_BODY = json.dumps(
+        {
+            "id": "bdl_000000000000400080000000000000a1_3_2",
+            "batch_id": BATCH_ID,
+            "custom_id": None,
+            "line": 3,
+            "attempt": 2,
+            "test": False,
+            "error": {"code": "link_changed"},
+            "usage": None,
+            "cost": None,
+        },
+        separators=(",", ":"),
+    )
+    # When the deliveries below were signed. A check that is not about the clock names this moment as `now`.
+    TIMESTAMP = 1_794_788_172
+    FAILURE = "Batch delivery signature verification failed."
+    OUTSIDE_TOLERANCE = "Batch delivery timestamp is outside the allowed tolerance."
+
+    def verify(self, body, headers, secret=BATCH_TEST_SECRET):
+        return verify_batch_delivery(payload=body, headers=headers, secret=secret, now=self.TIMESTAMP)
+
+    def test_verifies_and_types_the_three_deliveries_signed_by_the_gateway_rule(self):
+        test = self.verify(self.TEST_BODY, sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP))
+        self.assertEqual(test, {"id": self.TEST_ID, "test": True, "value": "unit-test-echo-value"})
+
+        answer = self.verify(self.ANSWER_BODY, sign_batch_delivery(self.ANSWER_BODY, self.ANSWER_ID, self.TIMESTAMP))
+        self.assertIs(answer["test"], False)
+        self.assertEqual(answer["custom_id"], "line-1")
+        self.assertEqual(answer["line"], 1)
+        self.assertEqual(answer["response"]["object"], "chat.completion")
+        self.assertEqual(answer["usage"], {"prompt_tokens": 37, "completion_tokens": 14, "total_tokens": 51})
+        self.assertEqual(answer["cost"], {"microcents": 679})
+        self.assertNotIn("error", answer)
+
+        failed = self.verify(self.ERROR_BODY, sign_batch_delivery(self.ERROR_BODY, self.ERROR_ID, self.TIMESTAMP))
+        self.assertIs(failed["test"], False)
+        self.assertEqual(failed["error"], {"code": "link_changed"})
+        self.assertIsNone(failed["custom_id"])
+        self.assertEqual(failed["line"], 3)
+        self.assertIsNone(failed["usage"])
+        self.assertIsNone(failed["cost"])
+        self.assertNotIn("response", failed)
+
+    def test_typed_delivery_shapes_name_the_members_a_delivery_carries(self):
+        self.assertEqual(set(json.loads(self.TEST_BODY)), set(get_type_hints(runinfra.BatchTestDelivery)))
+        self.assertEqual(set(json.loads(self.ANSWER_BODY)), set(get_type_hints(runinfra.BatchAnswerDelivery)))
+        self.assertEqual(set(json.loads(self.ERROR_BODY)), set(get_type_hints(runinfra.BatchErrorDelivery)))
+        self.assertEqual(
+            get_type_hints(verify_batch_delivery)["return"],
+            Union[runinfra.BatchTestDelivery, runinfra.BatchAnswerDelivery, runinfra.BatchErrorDelivery],
+        )
+        self.assertEqual(inspect.signature(verify_batch_delivery).parameters["tolerance_seconds"].default, 300)
+
+    def test_readme_handler_sends_the_test_value_back_and_acknowledges_a_line(self):
+        signing_secret = BATCH_TEST_SECRET
+        seen = []
+
+        def handle(raw_body, request_headers):
+            delivery = verify_batch_delivery(
+                payload=raw_body,
+                headers=request_headers,
+                secret=signing_secret,
+            )
+
+            if delivery["test"]:
+                # The create's test delivery: reply 2xx with a body that contains delivery["value"].
+                reply_status, reply_body = 200, delivery["value"]
+            elif "error" in delivery:
+                seen.append((delivery["custom_id"] or f"line {delivery['line']}", delivery["error"]["code"]))
+                reply_status, reply_body = 204, ""
+            else:
+                seen.append((delivery["custom_id"], delivery["response"]["object"], delivery["cost"]))
+                reply_status, reply_body = 204, ""
+            return reply_status, reply_body
+
+        # The handler names no clock, so the deliveries are signed now, as the gateway signs them when it sends them.
+        signed_now = int(time.time())
+
+        def post(body, delivery_id):
+            return handle(body.encode("utf-8"), sign_batch_delivery(body, delivery_id, signed_now))
+
+        status, body = post(self.TEST_BODY, self.TEST_ID)
+        self.assertEqual(status, 200)
+        self.assertIn("unit-test-echo-value", body)
+        self.assertEqual(post(self.ANSWER_BODY, self.ANSWER_ID), (204, ""))
+        self.assertEqual(post(self.ERROR_BODY, self.ERROR_ID), (204, ""))
+        self.assertEqual(seen, [("line-1", "chat.completion", {"microcents": 679}), ("line 3", "link_changed")])
+
+    def test_refuses_a_delivery_older_than_300_seconds_by_default(self):
+        headers = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP)
+
+        def verify(**options):
+            return verify_batch_delivery(payload=self.TEST_BODY, headers=headers, secret=BATCH_TEST_SECRET, **options)
+
+        # The suite's deliveries were signed long before today: with the real clock and no option they are too old,
+        # so a captured delivery cannot be replayed later.
+        with self.assertRaises(WebhookVerificationError) as caught:
+            verify()
+        self.assertEqual(str(caught.exception), self.OUTSIDE_TOLERANCE)
+
+        # The same rule against a named clock: 300 seconds pass, 301 do not, in either direction.
+        self.assertEqual(verify(now=self.TIMESTAMP + 300)["id"], self.TEST_ID)
+        self.assertEqual(verify(now=self.TIMESTAMP - 300)["id"], self.TEST_ID)
+        for now in (self.TIMESTAMP + 301, self.TIMESTAMP - 301):
+            with self.subTest(now=now):
+                with self.assertRaises(WebhookVerificationError) as caught:
+                    verify(now=now)
+                self.assertEqual(str(caught.exception), self.OUTSIDE_TOLERANCE)
+
+        # And against the real clock: signed just now passes, signed 301 seconds ago does not.
+        real_now = int(time.time())
+        fresh = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, real_now)
+        self.assertEqual(
+            verify_batch_delivery(payload=self.TEST_BODY, headers=fresh, secret=BATCH_TEST_SECRET)["id"],
+            self.TEST_ID,
+        )
+        stale = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, real_now - 301)
+        with self.assertRaises(WebhookVerificationError) as caught:
+            verify_batch_delivery(payload=self.TEST_BODY, headers=stale, secret=BATCH_TEST_SECRET)
+        self.assertEqual(str(caught.exception), self.OUTSIDE_TOLERANCE)
+
+    def test_the_same_old_delivery_passes_with_the_check_off_with_now_set_or_with_a_wider_tolerance(self):
+        headers = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP)
+
+        def verify(body=self.TEST_BODY, **options):
+            return verify_batch_delivery(payload=body, headers=headers, secret=BATCH_TEST_SECRET, **options)
+
+        with self.assertRaises(WebhookVerificationError):
+            verify()
+        self.assertEqual(verify(tolerance_seconds=None)["id"], self.TEST_ID)
+        self.assertEqual(verify(tolerance_seconds=None, now=self.TIMESTAMP + 86_400 * 365)["id"], self.TEST_ID)
+        self.assertEqual(verify(now=self.TIMESTAMP)["id"], self.TEST_ID)
+        self.assertEqual(verify(tolerance_seconds=3_600, now=self.TIMESTAMP + 3_600)["id"], self.TEST_ID)
+        self.assertEqual(verify(tolerance_seconds=0, now=self.TIMESTAMP)["id"], self.TEST_ID)
+        for tolerance, now in ((10, self.TIMESTAMP + 11), (0, self.TIMESTAMP + 1)):
+            with self.subTest(tolerance=tolerance):
+                with self.assertRaises(WebhookVerificationError) as caught:
+                    verify(tolerance_seconds=tolerance, now=now)
+                self.assertEqual(str(caught.exception), self.OUTSIDE_TOLERANCE)
+
+        # Turning the clock check off turns nothing else off.
+        with self.assertRaises(WebhookVerificationError) as caught:
+            verify(body=self.TEST_BODY.replace("echo", "echO"), tolerance_seconds=None)
+        self.assertEqual(str(caught.exception), self.FAILURE)
+
+        for tolerance in (-1, math.nan, math.inf, "300", True):
+            with self.subTest(tolerance=tolerance):
+                with self.assertRaises(WebhookVerificationError) as caught:
+                    verify(tolerance_seconds=tolerance, now=self.TIMESTAMP)
+                self.assertEqual(
+                    str(caught.exception),
+                    "Batch delivery tolerance must be a non-negative number, or None to turn the check off.",
+                )
+        with self.assertRaises(WebhookVerificationError) as caught:
+            verify(now=math.nan)
+        self.assertEqual(str(caught.exception), "Batch delivery verification clock must be a non-negative finite number.")
+
+    def test_rejects_a_changed_body_a_changed_timestamp_a_changed_id_and_a_wrong_secret(self):
+        headers = sign_batch_delivery(self.ANSWER_BODY, self.ANSWER_ID, self.TIMESTAMP)
+        other_secret = "whsec_" + base64.b64encode(b"another unit test secret, 32 b!!").decode("ascii")
+        cases = {
+            "body": (self.ANSWER_BODY.replace('"one"', '"two"'), headers, BATCH_TEST_SECRET),
+            "timestamp": (self.ANSWER_BODY, {**headers, "webhook-timestamp": str(self.TIMESTAMP + 1)}, BATCH_TEST_SECRET),
+            "id": (self.ANSWER_BODY, {**headers, "webhook-id": self.ANSWER_ID.replace("_1_1", "_1_2")}, BATCH_TEST_SECRET),
+            "secret": (self.ANSWER_BODY, headers, other_secret),
+        }
+
+        for name, (body, sent, secret) in cases.items():
+            with self.subTest(changed=name):
+                with self.assertRaises(WebhookVerificationError) as caught:
+                    self.verify(body, sent, secret)
+                self.assertEqual(str(caught.exception), self.FAILURE)
+
+    def test_takes_the_raw_body_only_and_the_same_json_serialized_again_does_not_verify(self):
+        spaced = '{ "id": "bdt_0123456789abcdef0123456789abcdef", "test": true, "value": "unit-test-echo-value" }'
+        headers = sign_batch_delivery(spaced, self.TEST_ID, self.TIMESTAMP)
+
+        self.assertEqual(self.verify(spaced, headers)["id"], self.TEST_ID)
+        self.assertIs(self.verify(spaced.encode("utf-8"), headers)["test"], True)
+        self.assertIs(self.verify(bytearray(spaced.encode("utf-8")), headers)["test"], True)
+        with self.assertRaises(WebhookVerificationError) as caught:
+            self.verify(json.dumps(json.loads(spaced), separators=(",", ":")), headers)
+        self.assertEqual(str(caught.exception), self.FAILURE)
+        with self.assertRaises(WebhookVerificationError):
+            self.verify(json.loads(spaced), headers)
+
+    def test_reads_the_headers_in_any_case_from_any_mapping(self):
+        signed = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP)
+        upper = {name.upper(): value for name, value in signed.items()}
+        mixed = {
+            "Webhook-Id": signed["webhook-id"],
+            "Webhook-Timestamp": signed["webhook-timestamp"],
+            "Webhook-Signature": [signed["webhook-signature"]],
+            "Host": "example.org",
+        }
+        message = Message()
+        for name, value in upper.items():
+            message[name.title()] = value
+
+        for headers in (signed, upper, mixed, UserDict(upper), message):
+            with self.subTest(headers=type(headers).__name__):
+                self.assertEqual(self.verify(self.TEST_BODY, headers)["id"], self.TEST_ID)
+
+    def test_uses_the_decoded_bytes_of_the_secret_as_the_key_with_or_without_the_prefix(self):
+        headers = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP)
+
+        without_prefix = base64.b64encode(BATCH_TEST_SECRET_BYTES).decode("ascii")
+        self.assertEqual(self.verify(self.TEST_BODY, headers, without_prefix)["id"], self.TEST_ID)
+        self.assertEqual(self.verify(self.TEST_BODY, headers, f"  {BATCH_TEST_SECRET}\n")["id"], self.TEST_ID)
+
+        # Signed with the secret's TEXT as the key: that is not the rule, and it does not verify.
+        text_keyed = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP, BATCH_TEST_SECRET.encode("utf-8"))
+        with self.assertRaises(WebhookVerificationError) as caught:
+            self.verify(self.TEST_BODY, text_keyed)
+        self.assertEqual(str(caught.exception), self.FAILURE)
+
+        for secret in ("", "   ", "whsec_", "whsec_not base64!", "whsec_abc", None, 42):
+            with self.subTest(secret=secret):
+                with self.assertRaises(WebhookVerificationError):
+                    self.verify(self.TEST_BODY, headers, secret)
+
+    def test_rejects_missing_repeated_and_malformed_headers_and_bodies_that_are_no_delivery(self):
+        headers = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP)
+
+        for name in ("webhook-id", "webhook-timestamp", "webhook-signature"):
+            with self.subTest(missing=name):
+                without = {key: value for key, value in headers.items() if key != name}
+                with self.assertRaises(WebhookVerificationError) as caught:
+                    self.verify(self.TEST_BODY, without)
+                self.assertEqual(str(caught.exception), f"Batch delivery header {name} is missing.")
+        cases = [
+            ({**headers, "Webhook-Id": self.TEST_ID}, "Batch delivery header webhook-id is present more than once."),
+            ({**headers, "webhook-timestamp": "soon"}, "Batch delivery timestamp must be a non-negative integer."),
+            ("webhook-id", "Batch delivery headers must be a mapping of header names to values."),
+            (
+                {**headers, "webhook-signature": "v1," + "A" * 8_200},
+                "Batch delivery header webhook-signature is too large.",
+            ),
+        ]
+        for sent, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaises(WebhookVerificationError) as caught:
+                    self.verify(self.TEST_BODY, sent)
+                self.assertEqual(str(caught.exception), message)
+
+        for body in ("not json", "[1,2]", '"text"', '{"test":true}', '{"id":"bdt_x","test":"yes"}', b"\xff\xfe"):
+            with self.subTest(body=body):
+                with self.assertRaises(WebhookVerificationError):
+                    self.verify(body, sign_batch_delivery(body, self.TEST_ID, self.TIMESTAMP))
+
+    def test_accepts_one_matching_signature_among_several(self):
+        headers = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP)
+        other = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP, b"a rotated-away unit test secret!")
+
+        several = {**headers, "webhook-signature": f"{other['webhook-signature']} {headers['webhook-signature']}"}
+        self.assertEqual(self.verify(self.TEST_BODY, several)["id"], self.TEST_ID)
+        with self.assertRaises(WebhookVerificationError) as caught:
+            self.verify(self.TEST_BODY, {**headers, "webhook-signature": "v2," + headers["webhook-signature"][3:]})
+        self.assertEqual(str(caught.exception), self.FAILURE)
+
+    def test_verifies_the_stored_deliveries_with_their_stored_headers_and_raw_bodies_and_reads_their_shapes(self):
+        fixture = batch_fixture("deliveries.json")
+        records = fixture["records"]
+        self.assertEqual(len(records), fixture["count"])
+        self.assertEqual(len(records), 4)
+        other_secret = "whsec_" + base64.b64encode(b"another unit test secret, 32 b!!").decode("ascii")
+
+        for record in records:
+            headers = record["headers"]
+            parsed = json.loads(record["body"])
+            signed_at = int(headers["webhook-timestamp"])
+            self.assertEqual(headers["webhook-id"], parsed["id"])
+            self.assertRegex(headers["webhook-timestamp"], r"^[0-9]{10}$")
+            self.assertRegex(headers["webhook-signature"], r"^v1,[A-Za-z0-9+/]{43}=$")
+            self.assertEqual(headers["x-rightnow-signature-version"], "1")
+            self.assertEqual(headers["content-type"], "application/json")
+            self.assertEqual(len(record["body"].encode("utf-8")), int(headers["content-length"]))
+
+            def verify(body=record["body"], secret=BATCH_TEST_SECRET, **options):
+                return verify_batch_delivery(payload=body, headers=headers, secret=secret, **options)
+
+            # The stored signature is the made-up secret's over the stored raw body: it verifies as it is.
+            self.assertEqual(verify(now=signed_at), parsed)
+            self.assertEqual(verify(tolerance_seconds=None), parsed)
+            # It was signed long ago, so with the real clock and no option it is refused as too old.
+            with self.assertRaises(WebhookVerificationError) as caught:
+                verify()
+            self.assertEqual(str(caught.exception), self.OUTSIDE_TOLERANCE)
+            # One changed byte of the body, or another secret, and it no longer verifies.
+            for changed in (
+                {"body": record["body"].replace('"test":', '"test" :')},
+                {"secret": other_secret},
+            ):
+                with self.assertRaises(WebhookVerificationError) as caught:
+                    verify(now=signed_at, **changed)
+                self.assertEqual(str(caught.exception), self.FAILURE)
+
+        test, *lines = [json.loads(record["body"]) for record in records]
+        self.assertIs(test["test"], True)
+        self.assertRegex(test["id"], r"^bdt_[0-9a-f]{32}$")
+        self.assertEqual(set(test), set(get_type_hints(runinfra.BatchTestDelivery)))
+        self.assertRegex(test["value"], r"^[A-Za-z0-9_-]{32}$")
+
+        self.assertEqual([line["line"] for line in lines], [1, 3, 4])
+        for line in lines:
+            self.assertIs(line["test"], False)
+            self.assertEqual(line["id"], f"bdl_{BATCH_ID.replace('-', '')}_{line['line']}_{line['attempt']}")
+            self.assertEqual(line["batch_id"], BATCH_ID)
+            self.assertEqual(line["custom_id"], f"line-{line['line']}")
+            self.assertEqual(line["attempt"], 1)
+            self.assertEqual(set(line), set(get_type_hints(runinfra.BatchAnswerDelivery)))
+            self.assertEqual(line["response"]["object"], "chat.completion")
+            self.assertEqual(set(line["usage"]), set(get_type_hints(runinfra.BatchDeliveryUsage)))
+            self.assertEqual(
+                line["usage"]["total_tokens"],
+                line["usage"]["prompt_tokens"] + line["usage"]["completion_tokens"],
+            )
+            self.assertEqual(set(line["cost"]), {"microcents"})
+            self.assertIsInstance(line["cost"]["microcents"], int)
+
+        # What the three lines cost is what the stored job says it cost.
+        job = batch_fixture("get-completed.json")["body"]["batch"]
+        self.assertEqual(sum(line["cost"]["microcents"] for line in lines), job["cost_microcents"])
 
 
 if __name__ == "__main__":

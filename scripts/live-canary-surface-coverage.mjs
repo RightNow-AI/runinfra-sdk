@@ -129,6 +129,12 @@ export const publicSurfaceCoverage = [
   { surface: "verify_webhook_signature", rows: ["webhooks.verify_signature.export"] },
   { surface: "construct_webhook_event", rows: ["webhooks.construct_event.export"] },
   { surface: "webhook delivery create/list absence", rows: ["webhooks.delivery_surface.absent"] },
+  { surface: "client.batches.create", rows: ["batches.create.local", "batches.refusal.local"] },
+  { surface: "client.batches.list", rows: ["batches.list.local"] },
+  { surface: "client.batches.retrieve", rows: ["batches.retrieve.local"] },
+  { surface: "client.batches.cancel", rows: ["batches.cancel.local"] },
+  { surface: "verifyBatchDelivery", rows: ["batches.verify_delivery.export"] },
+  { surface: "verify_batch_delivery", rows: ["batches.verify_delivery.export"] },
   {
     surface: "request option validation",
     rows: [

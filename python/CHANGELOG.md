@@ -3,6 +3,30 @@
 All notable changes to the `runinfra` Python SDK are documented here. This
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `client.batches.create`, `client.batches.list`, `client.batches.retrieve`,
+  and `client.batches.cancel` for batch jobs, with the typed `BatchJob`,
+  `BatchJobDetail`, `BatchQuote`, and response envelopes. `create` sends
+  `idempotency_key` as `Idempotency-Key`, is retried only when a key is given,
+  and never uses a default timeout below 30 seconds because the gateway tests
+  the destination before it answers.
+- `verify_batch_delivery` verifies a batch delivery posted to your own address
+  (Standard Webhooks signature over the raw body, compared in constant time)
+  and returns it as `BatchTestDelivery`, `BatchAnswerDelivery`, or
+  `BatchErrorDelivery`. The delivery's timestamp must be within 300 seconds of
+  the clock by default, so a captured delivery cannot be replayed later;
+  `tolerance_seconds` sets another tolerance and `tolerance_seconds=None` turns
+  the check off.
+- Refusals of the batch routes are typed errors that keep the gateway's
+  `code`, `param`, and request id, plus `RunInfraError.reason` (the cause word
+  of `flex_not_available`) and `retry_after_seconds` on every status that
+  sends `Retry-After`. A `409` from a batch route is a final refusal that is
+  never retried, and a `503` that asks for a wait above 5 seconds is raised at
+  once with that wait instead of being waited for. Errors and retries of every
+  other route are unchanged.
+
 ## [0.2.0] - 2026-06-15
 
 ### Added

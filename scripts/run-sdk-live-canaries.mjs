@@ -978,6 +978,12 @@ const rowReadinessRequirements = [
   ["webhooks.construct_event.local", () => []],
   ["webhooks.verify_signature.export", () => []],
   ["webhooks.construct_event.export", () => []],
+  ["batches.create.local", () => []],
+  ["batches.list.local", () => []],
+  ["batches.retrieve.local", () => []],
+  ["batches.cancel.local", () => []],
+  ["batches.refusal.local", () => []],
+  ["batches.verify_delivery.export", () => []],
   ["idempotency.replay.responses", () => [
     ...missingEnv(["RUNINFRA_API_KEY", "RUNINFRA_LLM_MODEL"]),
     ...(env("RUNINFRA_CANARY_ENABLE_IDEMPOTENCY") === "1" ? [] : ["RUNINFRA_CANARY_ENABLE_IDEMPOTENCY=1"]),
@@ -1080,6 +1086,7 @@ function extractTypeScriptMethodSurfaces(source) {
   }
   if (/^export function verifyWebhookSignature\(/mu.test(source)) surfaces.push("verifyWebhookSignature");
   if (/^export function constructWebhookEvent</mu.test(source)) surfaces.push("constructWebhookEvent");
+  if (/^export function verifyBatchDelivery\(/mu.test(source)) surfaces.push("verifyBatchDelivery");
   return surfaces;
 }
 
@@ -1091,6 +1098,7 @@ const pythonClassSurfacePrefixes = new Map([
   ["_Transcriptions", "client.audio.transcriptions"],
   ["_Models", "client.models"],
   ["_Images", "client.images"],
+  ["_Batches", "client.batches"],
   ["_Webhooks", "client.webhooks"],
   ["_VoicePipeline", "client.voice.pipeline"],
 ]);
@@ -1120,6 +1128,7 @@ function extractPythonPublicSurfaces(source) {
   }
   if (/^def verify_webhook_signature\(/mu.test(source)) surfaces.push("verify_webhook_signature");
   if (/^def construct_webhook_event\(/mu.test(source)) surfaces.push("construct_webhook_event");
+  if (/^def verify_batch_delivery\(/mu.test(source)) surfaces.push("verify_batch_delivery");
   return surfaces;
 }
 

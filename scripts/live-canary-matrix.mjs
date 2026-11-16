@@ -59,5 +59,11 @@ export const expectedRows = [
   "webhooks.construct_event.local",
   "webhooks.verify_signature.export",
   "webhooks.construct_event.export",
+  "batches.create.local",
+  "batches.list.local",
+  "batches.retrieve.local",
+  "batches.cancel.local",
+  "batches.refusal.local",
+  "batches.verify_delivery.export",
   "idempotency.replay.responses",
 ];

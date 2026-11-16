@@ -23,6 +23,7 @@ This SDK is in **beta**. The surfaces below have different verification levels:
 | Audio (ASR) | `client.audio.transcriptions.create` | Preview. Available when the deployment exposes transcription. |
 | Webhooks | `client.webhooks.verifySignature`, `client.webhooks.constructEvent`, `verifyWebhookSignature`, `constructWebhookEvent` | Local verification helpers only; delivery management is outside the public SDK surface |
 | Voice pipeline | `client.voice.pipeline.create` | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |
+| Batch | `client.batches.create`, `client.batches.list`, `client.batches.retrieve`, `client.batches.cancel`, `verifyBatchDelivery` | Preview, from the release after 0.2.0. Batch jobs for models that offer batch, with signed webhook deliveries. |
 
 The dashboard only shows snippets for operations the selected deployment
 supports. If a route is unsupported for a deployment, the SDK returns a typed
@@ -124,6 +125,10 @@ RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gatewa
 - `audio.transcriptions.create()`
 - `images.generate()`
 - `voice.pipeline.create()`
+- `batches.create()`
+- `batches.list()`
+- `batches.retrieve(batchId)`
+- `batches.cancel(batchId)`
 
 ## OpenAI-compatible parameter scope
 
@@ -200,6 +205,89 @@ owns `getReader()`, cancellation, and slow-consumer backpressure. The SDK does
 not auto-retry or replay binary TTS streams; use `arrayBuffer()` or `blob()` when
 you want SDK read-timeout wrapping for a finite body.
 
+## Batch jobs
+
+Preview, from the release after 0.2.0. A batch job runs every line of a JSONL file as a chat completion within 24 hours and posts each answer to your webhook address. Batch needs a workspace-scoped key and a model that offers batch.
+
+```ts
+const { batch } = await client.batches.create(
+  {
+    model: "deepseek-v4-1-flash-1017",
+    input_url: "https://example.org/batch/input.jsonl",
+    destination: { type: "webhook", url: "https://example.org/batch/answers" },
+    max_cost_cents: 100,
+    window_hours: 24,
+    name: "nightly-evals",
+  },
+  { idempotencyKey: "nightly-evals-2026-11-16" },
+);
+
+const job = await client.batches.retrieve(batch.id);
+console.log(job.batch.batch_state, job.batch.errors, job.batch.cost_microcents);
+```
+
+- `model`, `input_url`, `destination`, and `max_cost_cents` are required. `max_cost_cents` is the most the job may cost, a whole number from 1 to 100,000,000. `window_hours` is 24, the only value and the default. `name` is a label of at most 64 characters.
+- `input_url` is a public HTTPS link on port 443, at most 8,192 bytes, to a JSONL file of at most 50 MiB whose host serves byte ranges (signed links from the common storage services do). A signed link must stay valid until the job's window ends. `destination.url` is a public HTTPS address on port 443.
+- Each line of the file is `{"custom_id": "...", "method": "POST", "url": "/v1/chat/completions", "body": {...}}`, at most 4 MiB. `custom_id` is unique in the file (1 to 512 characters) and `body` is a text-only, non-streaming chat completion body whose `model` is the job's model.
+- The job starts by itself. It is answered in `batch_state` `validating` and moves through `checked` and `queued` to `running`; `completed`, `expired`, `cancelled`, and `failed` are final, and `end_reason` says why. `batches.retrieve()` adds `errors` (the lines the file check refused, by code, with their first line numbers) and `quote`.
+- `batches.list({ limit, cursor, state, model })` answers `{ batches, next_cursor }`, newest first; pass `next_cursor` as `cursor` for the next page. `batches.cancel(batchId)` answers `{ batch_id, batch_state }` with `cancelled` or `cancelling`.
+
+Before it answers, `batches.create()` posts a signed test delivery `{ "id": "bdt_...", "test": true, "value": "..." }` to `destination.url`. The address passes only when it replies 2xx with a body that contains the posted `value`, within 20 seconds; otherwise the create is refused with `destination_unreachable`. Because of that test the call's default timeout is never below 30 seconds, whatever the client's `timeoutMs`; a per-request `timeoutMs` is used as given.
+
+`batches.create()` is sent once unless you pass `idempotencyKey`. With a key, transient failures are retried with the same key and body, and a repeat with the same key answers the first job and starts nothing new. `batches.cancel()` is always sent once. A `409` from a batch route is a final refusal and is never retried. A `503` that asks for a wait above 5 seconds in `Retry-After` is raised at once with `retryAfterMs` set, so a call never blocks on a long wait; a `503` that asks for 5 seconds or less is asked again by the retry rule.
+
+Every refusal of a batch route is a typed error that keeps the gateway's `code`, the `param` it names, `reason`, `retryAfterMs` when the gateway sent `Retry-After`, and `requestId`:
+
+```ts
+import { RunInfraError } from "@runinfra/sdk";
+
+try {
+  await client.batches.cancel(batch.id);
+} catch (error) {
+  if (error instanceof RunInfraError && error.code === "batch_ended") {
+    // The job had already ended.
+  } else if (error instanceof RunInfraError && error.code === "flex_not_available") {
+    console.error(error.reason); // "model", "partner", or "price"
+  } else {
+    throw error;
+  }
+}
+```
+
+The refusal codes are `batch_not_open` (`503`: ask again after the wait the error carries), `invalid_request`, `not_found`, `model_not_sold`, `flex_not_available`, `url_not_public`, `link_expires_too_soon`, `destination_unreachable`, `needs_funds`, `key_spend_limit_reached`, `batch_ended`, and `batches_scope_violation`. `model_not_sold` is a `ModelNotFoundError`; an unknown batch id is a plain `RunInfraError` with status `404` and code `not_found`. A file that is refused when it is read, after the create answered, ends the job `failed` with `check_error` `url_not_public`, `link_expires_too_soon`, `file_too_large`, `link_changed`, or `link_not_supported`.
+
+### Verify batch deliveries
+
+Each answered line arrives at your address as one signed `POST`. Copy the workspace's batch signing secret from the dashboard and verify the exact raw body before you use it.
+
+```ts
+import { verifyBatchDelivery } from "@runinfra/sdk";
+
+const signingSecret = process.env.RUNINFRA_BATCH_SIGNING_SECRET;
+if (!signingSecret?.trim()) throw new Error("Set RUNINFRA_BATCH_SIGNING_SECRET before verifying batch deliveries.");
+
+const delivery = verifyBatchDelivery({
+  payload: rawBody,
+  headers: request.headers,
+  secret: signingSecret,
+});
+
+if (delivery.test) {
+  // The create's test delivery: reply 2xx with a body that contains delivery.value.
+  return new Response(delivery.value, { status: 200 });
+}
+if (delivery.error) {
+  console.error(delivery.custom_id ?? `line ${delivery.line}`, delivery.error.code);
+} else {
+  console.log(delivery.custom_id, delivery.response, delivery.cost?.microcents);
+}
+return new Response(null, { status: 204 });
+```
+
+`verifyBatchDelivery` takes the raw request body (a string or bytes, never an object you parsed and serialized again) and the request's headers in any case. It checks `webhook-signature`, which is `v1,` followed by the base64 HMAC-SHA-256 of `<webhook-id>.<webhook-timestamp>.<raw body>`, in constant time. The secret is `whsec_` followed by base64, and the HMAC key is the decoded bytes, so any Standard Webhooks library verifies the same deliveries. By default the delivery's `webhook-timestamp` must be within 300 seconds of your clock, so a captured delivery cannot be replayed later. Pass a number as `toleranceSeconds` for another tolerance, or `toleranceSeconds: null` to turn the check off; `now` sets the clock in Unix seconds. A failed check throws `WebhookVerificationError`.
+
+The helper returns one of three typed shapes: `BatchTestDelivery` (`test: true`), `BatchAnswerDelivery` with `custom_id`, `line`, `attempt`, the chat completion in `response`, `usage`, and `cost.microcents`, or `BatchErrorDelivery` with `error.code` for a line that failed after the job started. `id` is the same for the same line and attempt, so drop repeats on it. Any 2xx acknowledges a line.
+
 ## Timeouts and retries
 
 ```ts
@@ -257,6 +345,7 @@ JSON helpers return typed response objects for the public gateway contract:
 `ModelListResponse`, `ModelObject`, `EmbeddingResponse`, `ResponsesCreateResponse`,
 `ChatCompletionResponse`, `TranscriptionResponse`, and `ImageGenerationResponse`.
 Binary TTS returns `RunInfraAudioResponse`, and streaming calls return `RunInfraStream`.
+Batch helpers return `BatchCreateResponse`, `BatchRetrieveResponse`, `BatchListResponse`, and `BatchCancelResponse` around the typed `BatchJob`.
 
 ## Traceability
 
