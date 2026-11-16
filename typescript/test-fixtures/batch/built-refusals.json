@@ -1,0 +1,785 @@
+{
+  "source": "Typed from the service's documented wire.",
+  "refusals": [
+    {
+      "name": "closed",
+      "status": 404,
+      "headers": {},
+      "body": {
+        "error": {
+          "base_url": "https://api.runinfra.ai/v1",
+          "message": "Unknown endpoint /v1/batches. The base URL is https://api.runinfra.ai/v1.",
+          "type": "not_found_error",
+          "param": null,
+          "code": "unknown_endpoint"
+        },
+        "request_id": "req_built-fixture-closed"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "not_found_error",
+        "status": 404,
+        "code": "unknown_endpoint",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-closed"
+      }
+    },
+    {
+      "name": "key-cannot-use-batch",
+      "status": 403,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "This API key cannot use Batch. Use a current workspace-scoped key.",
+          "type": "permission_error",
+          "param": null,
+          "code": "batches_scope_violation"
+        },
+        "request_id": "req_built-fixture-key-cannot-use-batch"
+      },
+      "expect": {
+        "error_class": "PermissionDeniedError",
+        "type": "permission_error",
+        "status": 403,
+        "code": "batches_scope_violation",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-key-cannot-use-batch"
+      }
+    },
+    {
+      "name": "key-is-scoped",
+      "status": 403,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "This API key is scoped to a single deployment or endpoint. Batch needs a workspace-scoped key.",
+          "type": "permission_error",
+          "param": null,
+          "code": "batches_scope_violation"
+        },
+        "request_id": "req_built-fixture-key-is-scoped"
+      },
+      "expect": {
+        "error_class": "PermissionDeniedError",
+        "type": "permission_error",
+        "status": 403,
+        "code": "batches_scope_violation",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-key-is-scoped"
+      }
+    },
+    {
+      "name": "cancel-of-a-dashboard-job",
+      "status": 403,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "This job was started in the dashboard. Cancel it there.",
+          "type": "permission_error",
+          "param": "made_by",
+          "code": "batches_scope_violation"
+        },
+        "request_id": "req_built-fixture-cancel-of-a-dashboard-job"
+      },
+      "expect": {
+        "error_class": "PermissionDeniedError",
+        "type": "permission_error",
+        "status": 403,
+        "code": "batches_scope_violation",
+        "param": "made_by",
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-cancel-of-a-dashboard-job"
+      }
+    },
+    {
+      "name": "flex-not-available-partner",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "error": {
+          "reason": "partner",
+          "message": "This account has agreed prices. Batch is not offered on it.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "flex_not_available"
+        },
+        "request_id": "req_built-fixture-flex-not-available-partner"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 409,
+        "code": "flex_not_available",
+        "param": null,
+        "reason": "partner",
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-flex-not-available-partner"
+      }
+    },
+    {
+      "name": "flex-not-available-model",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "error": {
+          "reason": "model",
+          "message": "This model does not offer batch right now.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "flex_not_available"
+        },
+        "request_id": "req_built-fixture-flex-not-available-model"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 409,
+        "code": "flex_not_available",
+        "param": null,
+        "reason": "model",
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-flex-not-available-model"
+      }
+    },
+    {
+      "name": "flex-not-available-price",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "error": {
+          "reason": "price",
+          "message": "Your own price for this model is already lower than the batch price. Batch is not offered on it.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "flex_not_available"
+        },
+        "request_id": "req_built-fixture-flex-not-available-price"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 409,
+        "code": "flex_not_available",
+        "param": null,
+        "reason": "price",
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-flex-not-available-price"
+      }
+    },
+    {
+      "name": "rate-limit-exceeded",
+      "status": 429,
+      "headers": {
+        "Retry-After": "37"
+      },
+      "body": {
+        "error": {
+          "message": "Too many requests. Try again in a minute.",
+          "type": "rate_limit_error",
+          "param": null,
+          "code": "rate_limit_exceeded"
+        },
+        "request_id": "req_built-fixture-rate-limit-exceeded"
+      },
+      "expect": {
+        "error_class": "RateLimitError",
+        "type": "rate_limit_error",
+        "status": 429,
+        "code": "rate_limit_exceeded",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": 37,
+        "request_id": "req_built-fixture-rate-limit-exceeded"
+      }
+    },
+    {
+      "name": "limiter-unavailable",
+      "status": 503,
+      "headers": {
+        "Retry-After": "3"
+      },
+      "body": {
+        "error": {
+          "message": "API rate limiting is temporarily unavailable. Please retry shortly.",
+          "type": "api_error",
+          "param": null,
+          "code": "limiter_unavailable"
+        },
+        "request_id": "req_built-fixture-limiter-unavailable"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "api_error",
+        "status": 503,
+        "code": "limiter_unavailable",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": 3,
+        "request_id": "req_built-fixture-limiter-unavailable"
+      }
+    },
+    {
+      "name": "batch-not-open",
+      "status": 503,
+      "headers": {
+        "Retry-After": "60"
+      },
+      "body": {
+        "error": {
+          "message": "Batch is not available right now.",
+          "type": "api_error",
+          "param": null,
+          "code": "batch_not_open"
+        },
+        "request_id": "req_built-fixture-batch-not-open"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "api_error",
+        "status": 503,
+        "code": "batch_not_open",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": 60,
+        "request_id": "req_built-fixture-batch-not-open"
+      }
+    },
+    {
+      "name": "ask-again",
+      "status": 503,
+      "headers": {
+        "Retry-After": "5"
+      },
+      "body": {
+        "error": {
+          "message": "RunInfra could not reach its data store in time and shed this request before completing it. This is a temporary capacity condition on our side, not a problem with your request. Retry after the interval in the Retry-After header.",
+          "type": "api_error",
+          "param": null,
+          "code": "datastore_unavailable"
+        },
+        "request_id": "req_built-fixture-ask-again"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "api_error",
+        "status": 503,
+        "code": "datastore_unavailable",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": 5,
+        "request_id": "req_built-fixture-ask-again"
+      }
+    },
+    {
+      "name": "invalid-idempotency-key",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Idempotency-Key must be ASCII and 255 characters or less.",
+          "type": "invalid_request_error",
+          "param": "Idempotency-Key",
+          "code": "invalid_idempotency_key"
+        },
+        "request_id": "req_built-fixture-invalid-idempotency-key"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 400,
+        "code": "invalid_idempotency_key",
+        "param": "Idempotency-Key",
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-invalid-idempotency-key"
+      }
+    },
+    {
+      "name": "payload-too-large",
+      "status": 413,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Request body is too large.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "payload_too_large"
+        },
+        "request_id": "req_built-fixture-payload-too-large"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 413,
+        "code": "payload_too_large",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-payload-too-large"
+      }
+    },
+    {
+      "name": "invalid-json",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Invalid JSON in request body",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "invalid_json"
+        },
+        "request_id": "req_built-fixture-invalid-json"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 400,
+        "code": "invalid_json",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-invalid-json"
+      }
+    },
+    {
+      "name": "invalid-request-member",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Check max_cost_cents.",
+          "type": "invalid_request_error",
+          "param": "max_cost_cents",
+          "code": "invalid_request"
+        },
+        "request_id": "req_built-fixture-invalid-request-member"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 400,
+        "code": "invalid_request",
+        "param": "max_cost_cents",
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-invalid-request-member"
+      }
+    },
+    {
+      "name": "invalid-request-member-missing",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "destination.url is required.",
+          "type": "invalid_request_error",
+          "param": "destination.url",
+          "code": "invalid_request"
+        },
+        "request_id": "req_built-fixture-invalid-request-member-missing"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 400,
+        "code": "invalid_request",
+        "param": "destination.url",
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-invalid-request-member-missing"
+      }
+    },
+    {
+      "name": "invalid-request-no-member",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Invalid request.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "invalid_request"
+        },
+        "request_id": "req_built-fixture-invalid-request-no-member"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 400,
+        "code": "invalid_request",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-invalid-request-no-member"
+      }
+    },
+    {
+      "name": "idempotency-key-reused",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "This Idempotency-Key was already used with a different request.",
+          "type": "invalid_request_error",
+          "param": "Idempotency-Key",
+          "code": "invalid_request"
+        },
+        "request_id": "req_built-fixture-idempotency-key-reused"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 409,
+        "code": "invalid_request",
+        "param": "Idempotency-Key",
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-idempotency-key-reused"
+      }
+    },
+    {
+      "name": "needs-funds",
+      "status": 402,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Add funds once to start a batch.",
+          "type": "permission_error",
+          "param": null,
+          "code": "needs_funds"
+        },
+        "request_id": "req_built-fixture-needs-funds"
+      },
+      "expect": {
+        "error_class": "InsufficientCreditsError",
+        "type": "insufficient_credits",
+        "status": 402,
+        "code": "needs_funds",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-needs-funds"
+      }
+    },
+    {
+      "name": "key-spend-limit-reached",
+      "status": 402,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "This key's monthly limit is reached. Raise it or choose another key.",
+          "type": "permission_error",
+          "param": null,
+          "code": "key_spend_limit_reached"
+        },
+        "request_id": "req_built-fixture-key-spend-limit-reached"
+      },
+      "expect": {
+        "error_class": "InsufficientCreditsError",
+        "type": "insufficient_credits",
+        "status": 402,
+        "code": "key_spend_limit_reached",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-key-spend-limit-reached"
+      }
+    },
+    {
+      "name": "destination-unreachable",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Your address did not accept a test answer.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "destination_unreachable"
+        },
+        "request_id": "req_built-fixture-destination-unreachable"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 400,
+        "code": "destination_unreachable",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-destination-unreachable"
+      }
+    },
+    {
+      "name": "url-not-public",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Use a public HTTPS link.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "url_not_public"
+        },
+        "request_id": "req_built-fixture-url-not-public"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 400,
+        "code": "url_not_public",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-url-not-public"
+      }
+    },
+    {
+      "name": "link-expires-too-soon",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Your link stops working before the batch ends.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "link_expires_too_soon"
+        },
+        "request_id": "req_built-fixture-link-expires-too-soon"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 400,
+        "code": "link_expires_too_soon",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-link-expires-too-soon"
+      }
+    },
+    {
+      "name": "link-not-supported",
+      "status": 400,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Your file host must allow partial downloads. Signed links from the common storage services do.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "link_not_supported"
+        },
+        "request_id": "req_built-fixture-link-not-supported"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 400,
+        "code": "link_not_supported",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-link-not-supported"
+      }
+    },
+    {
+      "name": "link-changed",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Your file changed after the check. Check it again.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "link_changed"
+        },
+        "request_id": "req_built-fixture-link-changed"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 409,
+        "code": "link_changed",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-link-changed"
+      }
+    },
+    {
+      "name": "file-too-large",
+      "status": 413,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Your file is over 50 MiB.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "file_too_large"
+        },
+        "request_id": "req_built-fixture-file-too-large"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 413,
+        "code": "file_too_large",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-file-too-large"
+      }
+    },
+    {
+      "name": "not-found",
+      "status": 404,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "This batch is not in this workspace.",
+          "type": "not_found_error",
+          "param": null,
+          "code": "not_found"
+        },
+        "request_id": "req_built-fixture-not-found"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "not_found_error",
+        "status": 404,
+        "code": "not_found",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-not-found"
+      }
+    },
+    {
+      "name": "model-not-sold",
+      "status": 404,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "This model does not offer batch.",
+          "type": "not_found_error",
+          "param": null,
+          "code": "model_not_sold"
+        },
+        "request_id": "req_built-fixture-model-not-sold"
+      },
+      "expect": {
+        "error_class": "ModelNotFoundError",
+        "type": "model_not_found",
+        "status": 404,
+        "code": "model_not_sold",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-model-not-sold"
+      }
+    },
+    {
+      "name": "batch-ended",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "This batch has ended.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "batch_ended"
+        },
+        "request_id": "req_built-fixture-batch-ended"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 409,
+        "code": "batch_ended",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-batch-ended"
+      }
+    },
+    {
+      "name": "batch-not-ready",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "Check the file and the address first.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "batch_not_ready"
+        },
+        "request_id": "req_built-fixture-batch-not-ready"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 409,
+        "code": "batch_not_ready",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-batch-not-ready"
+      }
+    },
+    {
+      "name": "quote-changed",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "The cost changed. Review it again.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "quote_changed"
+        },
+        "request_id": "req_built-fixture-quote-changed"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 409,
+        "code": "quote_changed",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-quote-changed"
+      }
+    },
+    {
+      "name": "batch-already-started",
+      "status": 409,
+      "headers": {},
+      "body": {
+        "error": {
+          "message": "This batch has already started.",
+          "type": "invalid_request_error",
+          "param": null,
+          "code": "batch_already_started"
+        },
+        "request_id": "req_built-fixture-batch-already-started"
+      },
+      "expect": {
+        "error_class": "RunInfraError",
+        "type": "invalid_request_error",
+        "status": 409,
+        "code": "batch_already_started",
+        "param": null,
+        "reason": null,
+        "retry_after_seconds": null,
+        "request_id": "req_built-fixture-batch-already-started"
+      }
+    }
+  ]
+}

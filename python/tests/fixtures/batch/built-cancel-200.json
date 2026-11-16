@@ -1,0 +1,17 @@
+{
+  "source": "Typed from the service's documented wire.",
+  "request": {
+    "method": "POST",
+    "url": "https://api.runinfra.ai/v1/batches/00000000-0000-4000-8000-0000000000a1/cancel",
+    "header_names": [
+      "authorization"
+    ],
+    "body": null
+  },
+  "status": 200,
+  "request_id": "req_built-fixture-cancel",
+  "body": {
+    "batch_id": "00000000-0000-4000-8000-0000000000a1",
+    "batch_state": "cancelled"
+  }
+}
