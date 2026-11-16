@@ -333,6 +333,295 @@ export interface ModelListResponse extends RunInfraRequestMetadata {
   data: ModelObject[];
 }
 
+/**
+ * The state of a batch job. A job starts in `validating` while its input file
+ * is read, then moves by itself through `checked` and `queued` to `running`.
+ * `completed`, `expired`, `cancelled`, and `failed` are final.
+ */
+export type BatchState =
+  | "validating"
+  | "checked"
+  | "queued"
+  | "running"
+  | "paused"
+  | "cancelling"
+  | "completed"
+  | "expired"
+  | "cancelled"
+  | "failed";
+
+/** Why a paused job waits. Set exactly when `batch_state` is `paused`. */
+export type BatchPauseReason = "funds" | "destination" | "source" | "key_limit" | "daily_room";
+
+/** Why a job ended. `null` while the job is open. */
+export type BatchEndReason =
+  | "all_done"
+  | "max_cost_reached"
+  | "cancel_asked"
+  | "key_revoked"
+  | "account_deleted"
+  | "window_ended"
+  | "model_withdrawn"
+  | "not_flex"
+  | "not_started"
+  | "check_failed";
+
+/** Why a job's input file was refused. Set only when `end_reason` is `check_failed`. */
+export type BatchCheckError =
+  | "url_not_public"
+  | "link_expires_too_soon"
+  | "file_too_large"
+  | "link_changed"
+  | "link_not_supported";
+
+/** A notice about a job: data only. */
+export type BatchNotice = "batch_ended" | "batch_paused" | "batch_expires_soon";
+
+/** Why a line of the input file was refused when the file was read. */
+export type BatchLineCheckCode =
+  | "invalid_json"
+  | "line_too_large"
+  | "invalid_request"
+  | "media_not_supported"
+  | "prompt_too_large";
+
+/** The code of a line that failed after its job started, as an error delivery carries it. */
+export type BatchDeliveryErrorCode = "invalid_request" | "prompt_too_large" | "model_error" | "link_changed";
+
+/** Why batch is not available, on a `flex_not_available` refusal (`error.reason`). */
+export type BatchUnavailableReason = "model" | "partner" | "price";
+
+/**
+ * The refusal codes a caller of the batch routes can receive, as
+ * `RunInfraError.code` carries them. Codes every route can answer
+ * (`invalid_api_key` on 401, `rate_limit_exceeded` on 429) are not repeated
+ * here.
+ */
+export type BatchRefusalCode =
+  | "batch_not_open"
+  | "invalid_request"
+  | "not_found"
+  | "model_not_sold"
+  | "flex_not_available"
+  | "url_not_public"
+  | "link_expires_too_soon"
+  | "destination_unreachable"
+  | "needs_funds"
+  | "key_spend_limit_reached"
+  | "batch_ended"
+  | "batches_scope_violation";
+
+/** Where a job's answers go. A webhook address is the only destination. */
+export interface BatchDestination {
+  type: "webhook";
+  /** A public HTTPS address on port 443, at most 8,192 bytes. */
+  url: string;
+}
+
+export interface BatchCreateRequest {
+  /** A model that offers batch. */
+  model: string;
+  /**
+   * A public HTTPS link (port 443, at most 8,192 bytes) to a JSONL file of at
+   * most 50 MiB whose host serves byte ranges. A signed link must stay valid
+   * until the job's window ends.
+   */
+  input_url: string;
+  destination: BatchDestination;
+  /** The most the job may cost, in cents: a whole number from 1 to 100,000,000. */
+  max_cost_cents: number;
+  /** The job's window in hours. 24 is the only value, and the default. */
+  window_hours?: 24;
+  /** A label of at most 64 characters. */
+  name?: string;
+}
+
+const BATCH_CREATE_REQUEST_KEYS = new Set([
+  "model",
+  "input_url",
+  "destination",
+  "max_cost_cents",
+  "window_hours",
+  "name",
+]);
+
+export interface BatchListParams {
+  /** Page size, from 1 to 50. The gateway's default is 20. */
+  limit?: number;
+  /** The `next_cursor` of the page before. */
+  cursor?: string;
+  state?: BatchState;
+  /** A model slug. */
+  model?: string;
+}
+
+const BATCH_LIST_PARAM_KEYS = ["limit", "cursor", "state", "model"] as const;
+
+/**
+ * A batch job, as every batch route answers it. `failed` never includes an
+ * undelivered line, and once a job has ended the counts `succeeded`,
+ * `failed`, `expired`, `cancelled`, `undelivered`, and `lines_invalid` add up
+ * to `lines_total`.
+ */
+export interface BatchJob {
+  id: string;
+  /** `null` when the model is no longer listed. */
+  model_slug: string | null;
+  batch_state: BatchState;
+  pause_reason: BatchPauseReason | null;
+  /** Who started the job: an API key, or a person in the dashboard. Never a name. */
+  made_by: { kind: "person" | "key" };
+  /** Every line read from the file, the invalid ones included. */
+  lines_total: number;
+  lines_invalid: number;
+  succeeded: number;
+  failed: number;
+  /** Lines the job had not run when its window ended. They are not charged. */
+  expired: number;
+  cancelled: number;
+  /**
+   * Answered lines the address did not acknowledge with a 2xx in time. They
+   * are not charged and are not sent again.
+   */
+  undelivered: number;
+  /** What the job's lines were charged so far, in microcents (millionths of a cent). */
+  cost_microcents: number;
+  max_cost_cents: number | null;
+  /** ISO 8601 UTC with milliseconds. */
+  created_at: string;
+  started_at: string | null;
+  /** The end of the job's window. */
+  expires_at: string;
+  finished_at: string | null;
+  destination_type: "webhook" | null;
+  notice: BatchNotice | null;
+  /** The API key the job runs as. */
+  key_id: string | null;
+  end_reason: BatchEndReason | null;
+  check_error: BatchCheckError | null;
+  name: string | null;
+}
+
+/** The lines one check code refused: how many, and the first line numbers (1-based, at most five). */
+export interface BatchLineCheckErrors {
+  code: BatchLineCheckCode;
+  count: number;
+  first_lines: number[];
+}
+
+/** The gateway's estimate of the most a job's lines can cost. */
+export interface BatchQuote {
+  input_cost_cents: number;
+  output_cost_ceiling_cents: number;
+  /** `input_cost_cents` plus `output_cost_ceiling_cents`. */
+  most_cents: number;
+  flex_input_cents_per_million: number;
+  flex_output_cents_per_million: number;
+  est_input_tokens: number;
+  /** An estimate, never a promise. */
+  can_finish_in_window: boolean;
+  covered_until_after: string | null;
+}
+
+/** A job as `batches.retrieve()` answers it: the job, the lines its check refused, and its quote. */
+export interface BatchJobDetail extends BatchJob {
+  errors: BatchLineCheckErrors[];
+  /** `null` while the file is still read, once the job has ended, and when no quote can be made now. */
+  quote: BatchQuote | null;
+}
+
+export interface BatchCreateResponse extends RunInfraRequestMetadata {
+  batch: BatchJob;
+}
+
+export interface BatchRetrieveResponse extends RunInfraRequestMetadata {
+  batch: BatchJobDetail;
+}
+
+export interface BatchListResponse extends RunInfraRequestMetadata {
+  /** Newest first. */
+  batches: BatchJob[];
+  /** Pass it as `cursor` for the next page. `null` on the last page. */
+  next_cursor: string | null;
+}
+
+export interface BatchCancelResponse extends RunInfraRequestMetadata {
+  batch_id: string;
+  /** `cancelled` when no line had run; `cancelling` while lines in flight settle. */
+  batch_state: "cancelling" | "cancelled";
+}
+
+export interface BatchDeliveryUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface BatchDeliveryCost {
+  /** What the line cost, in microcents (millionths of a cent). */
+  microcents: number;
+}
+
+/**
+ * The test delivery a `batches.create()` call sends to the destination before
+ * it answers. The address must reply 2xx with a body that CONTAINS `value`.
+ */
+export interface BatchTestDelivery {
+  id: string;
+  test: true;
+  value: string;
+}
+
+/** One answered line. `id` is the same for the same line and attempt. Key your own writes on it. */
+export interface BatchAnswerDelivery {
+  id: string;
+  batch_id: string;
+  custom_id: string;
+  /** The line's 1-based number in the input file. */
+  line: number;
+  attempt: number;
+  test: false;
+  /** The chat completion object. */
+  response: Record<string, unknown>;
+  error?: undefined;
+  usage: BatchDeliveryUsage | null;
+  cost: BatchDeliveryCost | null;
+}
+
+/** One line that failed after its job started. It carries no usage and no cost. */
+export interface BatchErrorDelivery {
+  id: string;
+  batch_id: string;
+  /** `null` when the file changed after it was checked (`link_changed`); `line` names the line then. */
+  custom_id: string | null;
+  line: number;
+  attempt: number;
+  test: false;
+  error: { code: BatchDeliveryErrorCode };
+  response?: undefined;
+  usage: null;
+  cost: null;
+}
+
+export type BatchDelivery = BatchTestDelivery | BatchAnswerDelivery | BatchErrorDelivery;
+
+export interface VerifyBatchDeliveryOptions {
+  /** The RAW request body exactly as it arrived: a string or bytes, never a re-serialized object. */
+  payload: string | Uint8Array | ArrayBuffer;
+  /** The request's headers, in any case: a `Headers` object or a plain object such as Node's `req.headers`. */
+  headers: Headers | Record<string, string | string[] | undefined>;
+  /** The workspace's batch signing secret as the dashboard shows it: `whsec_` followed by base64. */
+  secret: string;
+  /**
+   * The most the delivery's timestamp may differ from the clock, in seconds.
+   * 300 by default, so a captured delivery cannot be replayed later. A number
+   * sets another tolerance; `null` turns the check off.
+   */
+  toleranceSeconds?: number | null;
+  /** The clock the timestamp is compared with, in Unix seconds. Defaults to now. */
+  now?: number;
+}
+
 export interface ConstructWebhookEventOptions {
   payload: string | Uint8Array | ArrayBuffer;
   signatureHeader: string;
@@ -348,6 +637,12 @@ export class RunInfraError extends Error {
   readonly retryAfterMs?: number;
   readonly code?: string;
   readonly param?: string;
+  /**
+   * The closed cause word of a batch route's refusal, when its error body
+   * names one (`error.reason`): `model`, `partner`, or `price` on
+   * `flex_not_available`. Other routes do not set it.
+   */
+  readonly reason?: string;
 
   constructor(message: string, input: {
     status: number;
@@ -356,6 +651,7 @@ export class RunInfraError extends Error {
     retryAfterMs?: number;
     code?: string;
     param?: string;
+    reason?: string;
   }) {
     super(message);
     this.name = "RunInfraError";
@@ -365,6 +661,7 @@ export class RunInfraError extends Error {
     this.retryAfterMs = input.retryAfterMs;
     this.code = input.code;
     this.param = input.param;
+    this.reason = input.reason;
   }
 }
 
@@ -394,6 +691,12 @@ export class RateLimitError extends RunInfraError {
   }
 }
 
+/**
+ * A `402` from the gateway. On a batch route, read `code` to tell
+ * `needs_funds` (the account has never added funds) from
+ * `key_spend_limit_reached` (this API key reached its own monthly limit;
+ * raise the key's limit or use another key).
+ */
 export class InsufficientCreditsError extends RunInfraError {
   /** Remaining workspace balance in cents, when the gateway reports it. */
   readonly currentBalanceCents?: number;
@@ -566,6 +869,155 @@ export function constructWebhookEvent<T = Record<string, unknown>>(
   } catch {
     throw new WebhookVerificationError("Webhook payload must be valid JSON.");
   }
+}
+
+const BATCH_DELIVERY_SECRET_PREFIX = "whsec_";
+/** How far a delivery's timestamp may be from the clock unless the caller says otherwise, as for webhook events. */
+const BATCH_DELIVERY_DEFAULT_TOLERANCE_SECONDS = 300;
+
+function batchDeliveryHeader(headers: VerifyBatchDeliveryOptions["headers"], name: string): string {
+  let value: unknown;
+  if (headers !== null && typeof headers === "object" && typeof (headers as Headers).get === "function") {
+    value = (headers as Headers).get(name);
+  } else if (isPlainRecord(headers)) {
+    const matches = Object.entries(headers).filter(([key]) => key.toLowerCase() === name);
+    if (matches.length > 1) {
+      throw new WebhookVerificationError(`Batch delivery header ${name} is present more than once.`);
+    }
+    const found = matches[0]?.[1];
+    if (Array.isArray(found) && found.length > 1) {
+      throw new WebhookVerificationError(`Batch delivery header ${name} is present more than once.`);
+    }
+    value = Array.isArray(found) ? found[0] : found;
+  } else {
+    throw new WebhookVerificationError("Batch delivery headers must be a Headers object or a plain object.");
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    throw new WebhookVerificationError(`Batch delivery header ${name} is missing.`);
+  }
+  if (value.length > WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH) {
+    throw new WebhookVerificationError(`Batch delivery header ${name} is too large.`);
+  }
+  return value.trim();
+}
+
+function batchDeliverySecretKey(secret: unknown): Buffer {
+  if (typeof secret !== "string" || !secret.trim()) {
+    throw new WebhookVerificationError("Batch signing secret is required.");
+  }
+  const trimmed = secret.trim();
+  const encoded = trimmed.startsWith(BATCH_DELIVERY_SECRET_PREFIX)
+    ? trimmed.slice(BATCH_DELIVERY_SECRET_PREFIX.length)
+    : trimmed;
+  if (encoded.length === 0 || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(encoded)) {
+    throw new WebhookVerificationError("Batch signing secret must be whsec_ followed by base64.");
+  }
+  return Buffer.from(encoded, "base64");
+}
+
+function timingSafeTextEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/**
+ * Verifies one batch delivery posted to your own address and returns it parsed
+ * and typed: the test delivery of `batches.create()`, one line's answer, or
+ * one line's error.
+ *
+ * Pass the RAW request body, exactly the bytes that arrived, and the request's
+ * headers in any case. The signature is the Standard Webhooks one: header
+ * `webhook-signature` holds `v1,` followed by the base64 HMAC-SHA-256 of
+ * `<webhook-id>.<webhook-timestamp>.<raw body>`, compared in constant time.
+ * Parsing the body and serializing it again changes the bytes and fails the
+ * check.
+ *
+ * `secret` is the workspace's batch signing secret as the dashboard shows it:
+ * `whsec_` followed by base64. The HMAC key is the base64-DECODED bytes after
+ * the prefix, not the text. Header `x-rightnow-signature-version` names the
+ * version of the secret that signed; a rotated secret stops verifying.
+ *
+ * The delivery's `webhook-timestamp` must be within 300 seconds of the clock
+ * by default, so a captured delivery cannot be replayed later. A number in
+ * `toleranceSeconds` sets another tolerance, `toleranceSeconds: null` turns
+ * the check off, and `now` sets the clock it is compared with.
+ *
+ * ANSWERING THE TEST DELIVERY: `batches.create()` posts
+ * `{ id, test: true, value }` to the destination before it answers, and the
+ * address passes only when it replies 2xx with a body that CONTAINS the posted
+ * `value`. A fixed `200 OK` fails the create with `destination_unreachable`.
+ * Line deliveries (`test: false`) are acknowledged by any 2xx. Each answered
+ * line is sent to the address once: if the address does not answer 2xx in
+ * time, the line is counted `undelivered`, it is not charged, and it is not
+ * sent again.
+ *
+ * Throws `WebhookVerificationError` when a header is missing, the signature
+ * does not match, the timestamp is outside the tolerance, or the body is not a
+ * delivery. Every failure of this helper is a `WebhookVerificationError`.
+ */
+export function verifyBatchDelivery(options: VerifyBatchDeliveryOptions): BatchDelivery {
+  try {
+    return verifiedBatchDelivery(options);
+  } catch (error) {
+    if (error instanceof WebhookVerificationError) throw error;
+    throw new WebhookVerificationError("Batch delivery could not be verified.");
+  }
+}
+
+function verifiedBatchDelivery(options: VerifyBatchDeliveryOptions): BatchDelivery {
+  if (!isPlainRecord(options)) {
+    throw new WebhookVerificationError("Batch delivery verification options are required.");
+  }
+  const key = batchDeliverySecretKey(options.secret);
+  const toleranceSeconds = options.toleranceSeconds === undefined
+    ? BATCH_DELIVERY_DEFAULT_TOLERANCE_SECONDS
+    : options.toleranceSeconds;
+  if (
+    toleranceSeconds !== null &&
+    (typeof toleranceSeconds !== "number" || !Number.isFinite(toleranceSeconds) || toleranceSeconds < 0)
+  ) {
+    throw new WebhookVerificationError("Batch delivery tolerance must be a non-negative number, or null to turn the check off.");
+  }
+  const id = batchDeliveryHeader(options.headers, "webhook-id");
+  const timestamp = batchDeliveryHeader(options.headers, "webhook-timestamp");
+  const signatureHeader = batchDeliveryHeader(options.headers, "webhook-signature");
+  if (!/^[0-9]+$/u.test(timestamp) || !Number.isSafeInteger(Number(timestamp))) {
+    throw new WebhookVerificationError("Batch delivery timestamp must be a non-negative integer.");
+  }
+  if (toleranceSeconds !== null) {
+    const now = options.now ?? Math.floor(Date.now() / 1000);
+    if (!Number.isFinite(now) || now < 0) {
+      throw new WebhookVerificationError("Batch delivery verification clock must be a non-negative finite number.");
+    }
+    if (Math.abs(now - Number(timestamp)) > toleranceSeconds) {
+      throw new WebhookVerificationError("Batch delivery timestamp is outside the allowed tolerance.");
+    }
+  }
+  const payload = webhookPayloadBytes(options.payload);
+  const hmac = createHmac("sha256", key);
+  hmac.update(`${id}.${timestamp}.`);
+  hmac.update(payload);
+  const expected = `v1,${hmac.digest("base64")}`;
+  // Standard Webhooks allows several space-separated signatures; one match is enough.
+  const candidates = signatureHeader.split(" ").filter(Boolean);
+  let verified = false;
+  for (const candidate of candidates) {
+    if (timingSafeTextEqual(candidate, expected)) verified = true;
+  }
+  if (!verified) {
+    throw new WebhookVerificationError("Batch delivery signature verification failed.");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payload));
+  } catch {
+    throw new WebhookVerificationError("Batch delivery payload must be valid JSON.");
+  }
+  if (!isPlainRecord(parsed) || typeof parsed.id !== "string" || typeof parsed.test !== "boolean") {
+    throw new WebhookVerificationError("Batch delivery payload is not a batch delivery.");
+  }
+  return parsed as unknown as BatchDelivery;
 }
 
 export class RunInfraAudioResponse {
@@ -754,6 +1206,14 @@ interface RequestOptions {
   binary?: boolean;
   stream?: boolean;
   idempotentReplaySafe?: boolean;
+  /**
+   * A batch route. Its refusals keep the gateway's `reason` and `Retry-After`
+   * on the typed error. A 409 is a final answer that is never retried, and a
+   * 503 that asks for a wait above five seconds is raised at once.
+   */
+  batch?: boolean;
+  /** The smallest timeout this call uses when the caller names none for it. */
+  minDefaultTimeoutMs?: number;
 }
 
 function baseUrlAlreadyHasPipelineId(baseURL: string, pipelineId: string): boolean {
@@ -1086,6 +1546,62 @@ function validateTranscriptionRequestKeys(request: TranscriptionRequest): void {
   }
 }
 
+/** `batches.create()` tests the destination before it answers, which can take 20 seconds. */
+const BATCH_CREATE_MIN_DEFAULT_TIMEOUT_MS = 30_000;
+
+function validateBatchCreateRequest(body: Record<string, unknown>): void {
+  validateNonEmptyStringField(body.input_url, "input_url");
+  const destination = body.destination;
+  if (!isPlainRecord(destination)) {
+    throw invalidRequestOption("destination must be an object");
+  }
+  validateNonEmptyStringField(destination.type, "destination.type");
+  validateNonEmptyStringField(destination.url, "destination.url");
+  if (typeof body.max_cost_cents !== "number" || !Number.isSafeInteger(body.max_cost_cents)) {
+    throw invalidRequestOption("max_cost_cents must be an integer");
+  }
+  if (
+    body.window_hours !== undefined &&
+    (typeof body.window_hours !== "number" || !Number.isSafeInteger(body.window_hours))
+  ) {
+    throw invalidRequestOption("window_hours must be an integer");
+  }
+  if (body.name !== undefined && typeof body.name !== "string") {
+    throw invalidRequestOption("name must be a string");
+  }
+}
+
+function batchListQuery(params: unknown): string {
+  if (params === undefined) return "";
+  if (!isPlainRecord(params)) {
+    throw invalidRequestOption("batch list params must be an object");
+  }
+  for (const key of Object.keys(params)) {
+    if (!(BATCH_LIST_PARAM_KEYS as readonly string[]).includes(key)) {
+      throw invalidRequestOption(`Unknown batch list param: ${key}`);
+    }
+  }
+  const query = new URLSearchParams();
+  for (const key of BATCH_LIST_PARAM_KEYS) {
+    const value = params[key];
+    if (value === undefined) continue;
+    if (key === "limit") {
+      if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+        throw invalidRequestOption("limit must be an integer");
+      }
+      query.set(key, String(value));
+      continue;
+    }
+    query.set(key, validateNonEmptyStringField(value, key));
+  }
+  const text = query.toString();
+  return text ? `?${text}` : "";
+}
+
+function batchPath(batchId: unknown, suffix = ""): string {
+  return `/batches/${encodeURIComponent(validateSdkIdentifierHeader(batchId, "batchId"))}${suffix}`;
+}
+
 const JSON_BODY_ERROR = "JSON request body must be JSON-serializable and contain only finite numbers";
 
 function sanitizeJsonValue(value: unknown, seen = new WeakSet<object>()): unknown {
@@ -1359,11 +1875,27 @@ function retryDelayMs(attempt: number, baseMs: number, response?: Response): num
   return Math.min(30_000, exponential + jitter);
 }
 
+/** The longest `Retry-After` a batch route's 503 is waited for. A longer wait is the caller's to plan. */
+const BATCH_MAX_AUTOMATIC_RETRY_AFTER_MS = 5_000;
+
+/**
+ * Whether a batch route's refusal is raised at once instead of being asked
+ * again: a 409, which is final, and a 503 whose `Retry-After` is above five
+ * seconds, which the caller gets with that wait instead of a call that blocks.
+ */
+function batchRefusalIsRaisedAtOnce(response: Response): boolean {
+  if (response.status === 409) return true;
+  if (response.status !== 503) return false;
+  const wait = retryAfterMs(response);
+  return wait !== null && wait > BATCH_MAX_AUTOMATIC_RETRY_AFTER_MS;
+}
+
 async function parseError(response: Response): Promise<{
   message: string;
   type: string;
   code?: string;
   param?: string;
+  reason?: string;
   currentBalanceCents?: number;
   requiredCents?: number;
   topupUrl?: string;
@@ -1375,6 +1907,7 @@ async function parseError(response: Response): Promise<{
         type?: unknown;
         code?: unknown;
         param?: unknown;
+        reason?: unknown;
         current_balance_cents?: unknown;
         required_cents?: unknown;
         topup_url?: unknown;
@@ -1389,6 +1922,7 @@ async function parseError(response: Response): Promise<{
       type: typeof error.type === "string" ? error.type : "api_error",
       ...(typeof error.code === "string" ? { code: error.code } : {}),
       ...(typeof error.param === "string" ? { param: error.param } : {}),
+      ...(typeof error.reason === "string" ? { reason: error.reason } : {}),
       // Structured remediation fields the gateway ships on 402 insufficient_credits.
       ...(typeof error.current_balance_cents === "number" && Number.isFinite(error.current_balance_cents)
         ? { currentBalanceCents: error.current_balance_cents }
@@ -1414,11 +1948,80 @@ async function discardResponseBody(response: Response): Promise<void> {
   }
 }
 
-async function raiseForStatus(response: Response): Promise<void> {
+/**
+ * Sets what a batch refusal carries beyond its class: the gateway's cause word
+ * and its `Retry-After`. Assigned after construction so no error class changes
+ * its constructor.
+ */
+function withRefusalFacts<TError extends RunInfraError>(
+  error: TError,
+  facts: { reason?: string; retryAfterMs?: number },
+): TError {
+  const target = error as { reason?: string; retryAfterMs?: number };
+  if (facts.reason !== undefined) target.reason = facts.reason;
+  if (facts.retryAfterMs !== undefined) target.retryAfterMs = facts.retryAfterMs;
+  return error;
+}
+
+/**
+ * A batch route's refusal as the SDK's typed error. The class follows the HTTP
+ * status as on every route, with two differences: only `model_not_sold` is a
+ * `ModelNotFoundError` (an unknown batch id is a plain 404 `RunInfraError`
+ * that keeps the gateway's own type), and every refusal keeps `reason` and
+ * `Retry-After` when the gateway sent them.
+ */
+function batchRefusalError(
+  response: Response,
+  parsed: Awaited<ReturnType<typeof parseError>>,
+  requestId?: string,
+): RunInfraError {
+  const { message, type, code, param, reason, currentBalanceCents, requiredCents, topupUrl } = parsed;
+  const status = response.status;
+  const facts = { reason, retryAfterMs: retryAfterMs(response) ?? undefined };
+  if (status === 401) {
+    return withRefusalFacts(new AuthenticationError(message, status, requestId, code, param), facts);
+  }
+  if (status === 403) {
+    return withRefusalFacts(
+      new PermissionDeniedError(
+        message,
+        status,
+        requestId,
+        code,
+        param,
+        type !== "api_error" ? type : "permission_denied",
+      ),
+      facts,
+    );
+  }
+  if (status === 402) {
+    return withRefusalFacts(
+      new InsufficientCreditsError(message, status, requestId, code, param, {
+        currentBalanceCents,
+        requiredCents,
+        topupUrl,
+      }),
+      facts,
+    );
+  }
+  if (status === 404 && code === "model_not_sold") {
+    return withRefusalFacts(new ModelNotFoundError(message, status, requestId, code, param), facts);
+  }
+  if (status === 429) {
+    return withRefusalFacts(
+      new RateLimitError(message, status, requestId, facts.retryAfterMs, code, param),
+      facts,
+    );
+  }
+  return withRefusalFacts(new RunInfraError(message, { status, type, requestId, code, param }), facts);
+}
+
+async function raiseForStatus(response: Response, batch = false): Promise<void> {
   if (response.ok) return;
-  const { message, type, code, param, currentBalanceCents, requiredCents, topupUrl } =
-    await parseError(response);
+  const parsed = await parseError(response);
+  const { message, type, code, param, currentBalanceCents, requiredCents, topupUrl } = parsed;
   const requestId = response.headers.get("x-request-id") ?? undefined;
+  if (batch) throw batchRefusalError(response, parsed, requestId);
   if (response.status === 401) throw new AuthenticationError(message, response.status, requestId, code, param);
   if (response.status === 403) {
     // Keep a more specific gateway discriminator (e.g. "byoc_plan_required")
@@ -1511,6 +2114,16 @@ function redactSensitiveValues(message: string, sensitiveValues: readonly string
 }
 
 function redactRunInfraError(error: RunInfraError, sensitiveValues: readonly string[]): RunInfraError {
+  const redacted = redactedRunInfraErrorCopy(error, sensitiveValues);
+  // A batch refusal's cause and wait ride every error class; the copy rebuilds each class from its own
+  // constructor, which names neither for most of them.
+  return withRefusalFacts(redacted, {
+    reason: error.reason === undefined ? undefined : redactSensitiveValues(error.reason, sensitiveValues),
+    retryAfterMs: redacted.retryAfterMs === undefined ? error.retryAfterMs : undefined,
+  });
+}
+
+function redactedRunInfraErrorCopy(error: RunInfraError, sensitiveValues: readonly string[]): RunInfraError {
   const message = redactSensitiveValues(error.message, sensitiveValues);
   const code = error.code === undefined ? undefined : redactSensitiveValues(error.code, sensitiveValues);
   const param = error.param === undefined ? undefined : redactSensitiveValues(error.param, sensitiveValues);
@@ -1618,6 +2231,34 @@ export class RunInfra {
    */
   readonly images: {
     generate: (request: ImageGenerateRequest, options?: RunInfraRequestOptions) => Promise<ImageGenerationResponse>;
+  };
+
+  /**
+   * Batch jobs.
+   *
+   * Preview. A job takes a JSONL file of chat completion requests and posts
+   * each answer, signed, to your webhook address. A job has a window of 24
+   * hours. Lines run when the model has spare capacity. A line the job has
+   * not run when its window ends is counted `expired` and is not charged. Use
+   * a workspace-scoped key; verify deliveries with `verifyBatchDelivery`.
+   */
+  readonly batches: {
+    /**
+     * Creates a job, which then starts by itself. The gateway first posts a
+     * signed test delivery to `destination.url`, so this call can take 20
+     * seconds: its default timeout is never below 30 seconds. Pass
+     * `idempotencyKey` to make the call safe to retry; without one it is sent
+     * once. Sending the same create again with the same key and the same body
+     * answers the earlier job as a normal success: no error and no second
+     * job. The same key with a different body is refused with 409.
+     */
+    create: (request: BatchCreateRequest, options?: RunInfraRequestOptions) => Promise<BatchCreateResponse>;
+    /** Lists the workspace's jobs, newest first. Page with `next_cursor`. */
+    list: (params?: BatchListParams, options?: RunInfraRequestOptions) => Promise<BatchListResponse>;
+    /** Reads one job with the lines its check refused and its quote. */
+    retrieve: (batchId: string, options?: RunInfraRequestOptions) => Promise<BatchRetrieveResponse>;
+    /** Cancels a job: `cancelled` when no line had run, else `cancelling` while lines in flight settle. Sent once, never retried. */
+    cancel: (batchId: string, options?: RunInfraRequestOptions) => Promise<BatchCancelResponse>;
   };
 
   readonly webhooks: {
@@ -1789,6 +2430,27 @@ export class RunInfra {
         }, requestOptions);
       },
     };
+    this.batches = {
+      create: async (request, requestOptions) => {
+        validateRequestFields(request, BATCH_CREATE_REQUEST_KEYS, "batch");
+        const body = withValidatedModel(request);
+        validateBatchCreateRequest(body);
+        return this.request("/batches", {
+          method: "POST",
+          body,
+          typedBodyKeys: BATCH_CREATE_REQUEST_KEYS,
+          idempotentReplaySafe: true,
+          batch: true,
+          minDefaultTimeoutMs: BATCH_CREATE_MIN_DEFAULT_TIMEOUT_MS,
+        }, requestOptions);
+      },
+      list: async (params, requestOptions) =>
+        this.request(`/batches${batchListQuery(params)}`, { method: "GET", batch: true }, requestOptions),
+      retrieve: async (batchId, requestOptions) =>
+        this.request(batchPath(batchId), { method: "GET", batch: true }, requestOptions),
+      cancel: async (batchId, requestOptions) =>
+        this.request(batchPath(batchId, "/cancel"), { method: "POST", batch: true }, requestOptions),
+    };
     this.webhooks = {
       verifySignature: verifyWebhookSignature,
       constructEvent: constructWebhookEvent,
@@ -1929,7 +2591,7 @@ export class RunInfra {
       "retryBaseMs",
     );
     const timeoutMs = validatePositiveNumber(
-      validatedRequestOptions.timeoutMs ?? this.timeoutMs,
+      validatedRequestOptions.timeoutMs ?? Math.max(this.timeoutMs, options.minDefaultTimeoutMs ?? 0),
       "timeoutMs",
     );
     while (true) {
@@ -1946,6 +2608,7 @@ export class RunInfra {
           canRetry &&
           !response.ok &&
           isRetryableStatus(response.status) &&
+          !(options.batch === true && batchRefusalIsRaisedAtOnce(response)) &&
           attempt < maxRetries
         ) {
           attempt += 1;
@@ -1953,7 +2616,7 @@ export class RunInfra {
           await sleep(retryDelayMs(attempt, retryBaseMs, response));
           continue;
         }
-        await raiseForStatus(response);
+        await raiseForStatus(response, options.batch === true);
         return await consumeResponse(response, [this.apiKey]);
       } catch (error) {
         if (error instanceof ResponseBodyReadError) {

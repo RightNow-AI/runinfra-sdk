@@ -1,0 +1,54 @@
+{
+  "source": "Recorded shape with made-up identifiers.",
+  "captured_at": "2026-11-16T00:49:46.364Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.runinfra.ai/v1/batches/00000000-0000-4000-8000-0000000000a1",
+    "header_names": [
+      "authorization"
+    ],
+    "body": null
+  },
+  "status": 200,
+  "request_id": "req_00000000-0000-4000-8000-0000000000c6",
+  "body": {
+    "batch": {
+      "id": "00000000-0000-4000-8000-0000000000a1",
+      "model_slug": "deepseek-v4-1-flash-1017",
+      "batch_state": "completed",
+      "pause_reason": null,
+      "made_by": {
+        "kind": "key"
+      },
+      "lines_total": 4,
+      "lines_invalid": 1,
+      "succeeded": 3,
+      "failed": 0,
+      "expired": 0,
+      "cancelled": 0,
+      "undelivered": 0,
+      "cost_microcents": 2127,
+      "max_cost_cents": 100,
+      "created_at": "2026-11-16T00:16:12.769Z",
+      "started_at": "2026-11-16T00:16:13.070Z",
+      "expires_at": "2026-11-17T00:16:12.769Z",
+      "finished_at": "2026-11-16T00:24:19.615Z",
+      "destination_type": "webhook",
+      "notice": "batch_ended",
+      "key_id": "00000000-0000-4000-8000-0000000000b1",
+      "end_reason": "all_done",
+      "check_error": null,
+      "name": "nightly-evals",
+      "errors": [
+        {
+          "code": "invalid_request",
+          "count": 1,
+          "first_lines": [
+            2
+          ]
+        }
+      ],
+      "quote": null
+    }
+  }
+}

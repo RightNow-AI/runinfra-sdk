@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import hmac
 import inspect
@@ -34,7 +35,9 @@ from runinfra import (  # noqa: E402
     RunInfraResponse,
     RunInfraStreamParseError,
     RunInfraTimeoutError,
+    WebhookVerificationError,
     construct_webhook_event,
+    verify_batch_delivery,
     verify_webhook_signature,
 )
 
@@ -1074,6 +1077,12 @@ def main() -> int:
     record("webhooks.construct_event.local", [], _webhooks_construct_event_local)
     record("webhooks.verify_signature.export", [], _webhooks_verify_signature_export)
     record("webhooks.construct_event.export", [], _webhooks_construct_event_export)
+    record("batches.create.local", [], _batches_create_local)
+    record("batches.list.local", [], _batches_list_local)
+    record("batches.retrieve.local", [], _batches_retrieve_local)
+    record("batches.cancel.local", [], _batches_cancel_local)
+    record("batches.refusal.local", [], _batches_refusal_local)
+    record("batches.verify_delivery.export", [], _batches_verify_delivery_export)
     record("idempotency.replay.responses", lambda: _idempotency_requirements(), lambda: _idempotency_replay(client(), llm_model))
 
     summary = {
@@ -2592,6 +2601,240 @@ def _webhooks_construct_event_export() -> Dict[str, Any]:
     assert_object(event, "exported webhook event")
     assert_string(event.get("type"), "exported webhook event.type")
     return {"eventType": event.get("type")}
+
+
+BATCH_CANARY_ID = "00000000-0000-4000-8000-0000000000f1"
+BATCH_CANARY_REQUEST: Dict[str, Any] = {
+    "model": "runinfra-local-batch-model",
+    "input_url": "https://example.org/sdk-canary/input.jsonl",
+    "destination": {"type": "webhook", "url": "https://example.org/sdk-canary/hook"},
+    "max_cost_cents": 100,
+}
+
+
+def _batch_canary_job(state: str = "validating") -> Dict[str, Any]:
+    return {
+        "id": BATCH_CANARY_ID,
+        "model_slug": BATCH_CANARY_REQUEST["model"],
+        "batch_state": state,
+        "pause_reason": None,
+        "made_by": {"kind": "key"},
+        "lines_total": 0,
+        "lines_invalid": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "expired": 0,
+        "cancelled": 0,
+        "undelivered": 0,
+        "cost_microcents": 0,
+        "max_cost_cents": BATCH_CANARY_REQUEST["max_cost_cents"],
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "started_at": None,
+        "expires_at": "2026-01-02T00:00:00.000Z",
+        "finished_at": None,
+        "destination_type": "webhook",
+        "notice": None,
+        "key_id": None,
+        "end_reason": None,
+        "check_error": None,
+        "name": None,
+    }
+
+
+def _assert_batch_canary_job(job: Any, label: str) -> None:
+    assert_object(job, label)
+    if job.get("id") != BATCH_CANARY_ID:
+        raise AssertionError(f"{label} must be a JSON object with the local batch id")
+    assert_string(job.get("batch_state"), f"{label}.batch_state")
+
+
+def _assert_batch_canary_call(call: Any, method: str, path_suffix: str, label: str) -> None:
+    if call.method != method:
+        raise AssertionError(f"{label} expected {method}, got {call.method}")
+    if not call.url.endswith(path_suffix):
+        raise AssertionError(f"{label} called an unexpected path")
+
+
+def _batches_create_local() -> Dict[str, Any]:
+    row = "batches.create.local"
+    local = local_retry_client([
+        local_retry_failure("req-local-batch-create-first"),
+        local_retry_response({"batch": _batch_canary_job()}, 200, "req-local-batch-create-second"),
+    ])
+    response = local["client"].batches.create(
+        model=BATCH_CANARY_REQUEST["model"],
+        input_url=BATCH_CANARY_REQUEST["input_url"],
+        destination=BATCH_CANARY_REQUEST["destination"],
+        max_cost_cents=BATCH_CANARY_REQUEST["max_cost_cents"],
+        request_options={"idempotency_key": "idem-local-batch-create", "max_retries": 1, "retry_base_seconds": 0},
+    )
+    calls = local["calls"]
+    for call in calls:
+        _assert_batch_canary_call(call, "POST", "/batches", row)
+    assert_idempotency_header(calls, "idem-local-batch-create", row)
+    if len(calls) == 2 and (
+        calls[0].body != calls[1].body
+        or json.loads(calls[0].body).get("input_url") != BATCH_CANARY_REQUEST["input_url"]
+    ):
+        raise AssertionError(f"{row} retried with a different body")
+    _assert_batch_canary_job(response.get("batch"), f"{row} batch")
+    assert_request_id(response.get("_request_id"), row)
+    return {
+        **assert_retry_call_count(calls, 2, row),
+        "requestId": response.get("_request_id"),
+        "idempotencyHeader": "present",
+        "batchState": response["batch"]["batch_state"],
+    }
+
+
+def _batches_list_local() -> Dict[str, Any]:
+    row = "batches.list.local"
+    local = local_retry_client([
+        local_retry_response({"batches": [_batch_canary_job("running")], "next_cursor": None}, 200, "req-local-batch-list"),
+    ])
+    response = local["client"].batches.list(limit=1, state="running")
+    _assert_batch_canary_call(local["calls"][0], "GET", "/batches?limit=1&state=running", row)
+    assert_non_empty_list(response.get("batches"), f"{row} batches")
+    _assert_batch_canary_job(response["batches"][0], f"{row} batches[0]")
+    if response.get("next_cursor") is not None:
+        raise AssertionError(f"{row} expected a null next_cursor")
+    assert_request_id(response.get("_request_id"), row)
+    return {
+        **assert_retry_call_count(local["calls"], 1, row),
+        "requestId": response.get("_request_id"),
+        "itemCount": len(response["batches"]),
+    }
+
+
+def _batches_retrieve_local() -> Dict[str, Any]:
+    row = "batches.retrieve.local"
+    local = local_retry_client([
+        local_retry_response(
+            {
+                "batch": {
+                    **_batch_canary_job("checked"),
+                    "errors": [{"code": "invalid_request", "count": 1, "first_lines": [2]}],
+                    "quote": None,
+                },
+            },
+            200,
+            "req-local-batch-retrieve",
+        ),
+    ])
+    response = local["client"].batches.retrieve(BATCH_CANARY_ID)
+    _assert_batch_canary_call(local["calls"][0], "GET", f"/batches/{BATCH_CANARY_ID}", row)
+    _assert_batch_canary_job(response.get("batch"), f"{row} batch")
+    assert_non_empty_list(response["batch"].get("errors"), f"{row} batch.errors")
+    assert_request_id(response.get("_request_id"), row)
+    return {
+        **assert_retry_call_count(local["calls"], 1, row),
+        "requestId": response.get("_request_id"),
+        "batchState": response["batch"]["batch_state"],
+        "checkErrorCodes": len(response["batch"]["errors"]),
+    }
+
+
+def _batches_cancel_local() -> Dict[str, Any]:
+    row = "batches.cancel.local"
+    local = local_retry_client([
+        local_retry_response({"batch_id": BATCH_CANARY_ID, "batch_state": "cancelled"}, 200, "req-local-batch-cancel"),
+    ])
+    response = local["client"].batches.cancel(BATCH_CANARY_ID)
+    _assert_batch_canary_call(local["calls"][0], "POST", f"/batches/{BATCH_CANARY_ID}/cancel", row)
+    if local["calls"][0].body is not None:
+        raise AssertionError(f"{row} must send no body")
+    if response.get("batch_id") != BATCH_CANARY_ID or response.get("batch_state") != "cancelled":
+        raise AssertionError(f"{row} must be a JSON object with the cancelled batch")
+    assert_request_id(response.get("_request_id"), row)
+
+    # A cancel is sent once, also when an idempotency key and retries are asked for.
+    busy = local_retry_client([local_retry_failure("req-local-batch-cancel-busy")])
+    try:
+        busy["client"].batches.cancel(
+            BATCH_CANARY_ID,
+            request_options={"idempotency_key": "idem-local-batch-cancel", "max_retries": 1, "retry_base_seconds": 0},
+        )
+    except BaseException as error:  # noqa: BLE001
+        return {
+            **assert_retryable_error(error, row),
+            **assert_retry_call_count(local["calls"], 1, row),
+            "requestId": response.get("_request_id"),
+            "batchState": response["batch_state"],
+            "noRetryAttempts": assert_retry_call_count(busy["calls"], 1, row)["attempts"],
+        }
+    raise AssertionError("batch cancel unexpectedly retried into success")
+
+
+def _batches_refusal_local() -> Dict[str, Any]:
+    row = "batches.refusal.local"
+    local = local_retry_client([
+        local_retry_response(
+            {
+                "error": {
+                    "reason": "partner",
+                    "message": "local batch refusal probe",
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "flex_not_available",
+                },
+            },
+            409,
+            "req-local-batch-refusal",
+            {"Retry-After": "2"},
+        ),
+    ])
+    try:
+        local["client"].batches.create(
+            model=BATCH_CANARY_REQUEST["model"],
+            input_url=BATCH_CANARY_REQUEST["input_url"],
+            destination=BATCH_CANARY_REQUEST["destination"],
+            max_cost_cents=BATCH_CANARY_REQUEST["max_cost_cents"],
+            request_options={"idempotency_key": "idem-local-batch-refusal", "max_retries": 1, "retry_base_seconds": 0},
+        )
+    except BaseException as error:  # noqa: BLE001
+        if not isinstance(error, RunInfraError) or error.status != 409 or error.type != "invalid_request_error":
+            raise AssertionError(f"{row} refusal mapped unexpectedly: {type(error).__name__}") from error
+        if error.code != "flex_not_available" or error.reason != "partner" or error.retry_after_seconds != 2.0:
+            raise AssertionError(f"{row} refusal lost its code, reason, or Retry-After") from error
+        assert_request_id(error.request_id, row)
+        # A 409 on a batch route is a final refusal: one call, whatever the retry options say.
+        return {
+            **assert_retry_call_count(local["calls"], 1, row),
+            "errorStatus": error.status,
+            "errorType": error.type,
+            "errorCode": error.code,
+            "errorReason": error.reason,
+            "retryAfterSeconds": error.retry_after_seconds,
+            "requestId": error.request_id,
+        }
+    raise AssertionError("local batch refusal unexpectedly succeeded")
+
+
+def _batches_verify_delivery_export() -> Dict[str, Any]:
+    row = "batches.verify_delivery.export"
+    # A throwaway key made for this run. The secret a receiver configures is the prefix plus the key's base64.
+    key = os.urandom(32)
+    secret = "whsec_" + base64.b64encode(key).decode("ascii")
+    delivery_id = "bdt_0123456789abcdef0123456789abcdef"
+    timestamp = int(time.time())
+    payload = json.dumps({"id": delivery_id, "test": True, "value": "sdk-canary-echo"}, separators=(",", ":"))
+    signature = base64.b64encode(
+        hmac.new(key, f"{delivery_id}.{timestamp}.{payload}".encode("utf-8"), hashlib.sha256).digest()
+    ).decode("ascii")
+    headers = {
+        "Webhook-Id": delivery_id,
+        "Webhook-Timestamp": str(timestamp),
+        "Webhook-Signature": f"v1,{signature}",
+    }
+    # Signed a moment ago, so it is inside the helper's default timestamp tolerance.
+    delivery = verify_batch_delivery(payload=payload, headers=headers, secret=secret)
+    if delivery.get("test") is not True or delivery.get("value") != "sdk-canary-echo":
+        raise AssertionError(f"{row} must be a JSON object with the test delivery's value")
+    try:
+        verify_batch_delivery(payload=payload.replace("echo", "echO"), headers=headers, secret=secret)
+    except WebhookVerificationError:
+        return {"verified": True, "deliveryKind": "test", "changedBody": "rejected"}
+    raise AssertionError("changed batch delivery body unexpectedly verified")
 
 
 def _idempotency_requirements() -> List[str]:

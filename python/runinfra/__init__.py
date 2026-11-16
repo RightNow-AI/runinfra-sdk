@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import codecs
 import json
 import hashlib
@@ -111,6 +112,251 @@ class VoicePipelineResponse(RunInfraRequestMetadata, total=False):
     latency_ms: float
 
 
+# The state of a batch job. A job starts in "validating" while its input file is
+# read, then moves by itself through "checked" and "queued" to "running".
+# "completed", "expired", "cancelled", and "failed" are final.
+BatchState = Literal[
+    "validating",
+    "checked",
+    "queued",
+    "running",
+    "paused",
+    "cancelling",
+    "completed",
+    "expired",
+    "cancelled",
+    "failed",
+]
+# Why a paused job waits. Set exactly when batch_state is "paused".
+BatchPauseReason = Literal["funds", "destination", "source", "key_limit", "daily_room"]
+# Why a job ended. None while the job is open.
+BatchEndReason = Literal[
+    "all_done",
+    "max_cost_reached",
+    "cancel_asked",
+    "key_revoked",
+    "account_deleted",
+    "window_ended",
+    "model_withdrawn",
+    "not_flex",
+    "not_started",
+    "check_failed",
+]
+# Why a job's input file was refused. Set only when end_reason is "check_failed".
+BatchCheckError = Literal[
+    "url_not_public",
+    "link_expires_too_soon",
+    "file_too_large",
+    "link_changed",
+    "link_not_supported",
+]
+# A notice about a job: data only.
+BatchNotice = Literal["batch_ended", "batch_paused", "batch_expires_soon"]
+# Why a line of the input file was refused when the file was read.
+BatchLineCheckCode = Literal[
+    "invalid_json",
+    "line_too_large",
+    "invalid_request",
+    "media_not_supported",
+    "prompt_too_large",
+]
+# The code of a line that failed after its job started, as an error delivery carries it.
+BatchDeliveryErrorCode = Literal["invalid_request", "prompt_too_large", "model_error", "link_changed"]
+# Why batch is not available, on a flex_not_available refusal (error.reason).
+BatchUnavailableReason = Literal["model", "partner", "price"]
+# The refusal codes a caller of the batch routes can receive, as
+# RunInfraError.code carries them. Codes every route can answer (invalid_api_key
+# on 401, rate_limit_exceeded on 429) are not repeated here.
+BatchRefusalCode = Literal[
+    "batch_not_open",
+    "invalid_request",
+    "not_found",
+    "model_not_sold",
+    "flex_not_available",
+    "url_not_public",
+    "link_expires_too_soon",
+    "destination_unreachable",
+    "needs_funds",
+    "key_spend_limit_reached",
+    "batch_ended",
+    "batches_scope_violation",
+]
+
+
+class BatchDestination(TypedDict):
+    """Where a job's answers go. A webhook address is the only destination."""
+
+    type: Literal["webhook"]
+    url: str
+
+
+class BatchMadeBy(TypedDict):
+    """Who started a job: an API key, or a person in the dashboard. Never a name."""
+
+    kind: Literal["person", "key"]
+
+
+class BatchJob(TypedDict):
+    """A batch job, as every batch route answers it.
+
+    Counts are whole numbers. `lines_total` counts every line read from the
+    file, the invalid ones included. `expired` counts the lines the job had not
+    run when its window ended; they are not charged. `undelivered` counts the
+    answered lines the address did not acknowledge with a 2xx in time; they are
+    not charged and are not sent again. `failed` never includes an undelivered
+    line, and once a job has ended the counts `succeeded`, `failed`, `expired`,
+    `cancelled`, `undelivered`, and `lines_invalid` add up to `lines_total`.
+    `cost_microcents` is what the job's lines were charged so far, in
+    millionths of a cent. Times are ISO 8601 UTC with milliseconds;
+    `expires_at` is the end of the job's window.
+    """
+
+    id: str
+    model_slug: Optional[str]
+    batch_state: BatchState
+    pause_reason: Optional[BatchPauseReason]
+    made_by: BatchMadeBy
+    lines_total: int
+    lines_invalid: int
+    succeeded: int
+    failed: int
+    expired: int
+    cancelled: int
+    undelivered: int
+    cost_microcents: int
+    max_cost_cents: Optional[int]
+    created_at: str
+    started_at: Optional[str]
+    expires_at: str
+    finished_at: Optional[str]
+    destination_type: Optional[Literal["webhook"]]
+    notice: Optional[BatchNotice]
+    key_id: Optional[str]
+    end_reason: Optional[BatchEndReason]
+    check_error: Optional[BatchCheckError]
+    name: Optional[str]
+
+
+class BatchLineCheckErrors(TypedDict):
+    """The lines one check code refused: how many, and the first line numbers (1-based, at most five)."""
+
+    code: BatchLineCheckCode
+    count: int
+    first_lines: List[int]
+
+
+class BatchQuote(TypedDict):
+    """The gateway's estimate of the most a job's lines can cost."""
+
+    input_cost_cents: int
+    output_cost_ceiling_cents: int
+    most_cents: int
+    flex_input_cents_per_million: int
+    flex_output_cents_per_million: int
+    est_input_tokens: int
+    can_finish_in_window: bool
+    covered_until_after: Optional[str]
+
+
+class BatchJobDetail(BatchJob):
+    """A job as `batches.retrieve()` answers it: the job, the lines its check refused, and its quote.
+
+    `quote` is None while the file is still read, once the job has ended, and
+    when no quote can be made now.
+    """
+
+    errors: List[BatchLineCheckErrors]
+    quote: Optional[BatchQuote]
+
+
+class BatchCreateResponse(RunInfraRequestMetadata, total=False):
+    batch: BatchJob
+
+
+class BatchRetrieveResponse(RunInfraRequestMetadata, total=False):
+    batch: BatchJobDetail
+
+
+class BatchListResponse(RunInfraRequestMetadata, total=False):
+    """One page of jobs, newest first. Pass `next_cursor` as `cursor` for the next page; None on the last."""
+
+    batches: List[BatchJob]
+    next_cursor: Optional[str]
+
+
+class BatchCancelResponse(RunInfraRequestMetadata, total=False):
+    """`batch_state` is "cancelled" when no line had run, and "cancelling" while lines in flight settle."""
+
+    batch_id: str
+    batch_state: Literal["cancelling", "cancelled"]
+
+
+class BatchDeliveryUsage(TypedDict):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+class BatchDeliveryCost(TypedDict):
+    """What a line cost, in microcents (millionths of a cent)."""
+
+    microcents: int
+
+
+class BatchTestDelivery(TypedDict):
+    """The test delivery a `batches.create()` call sends to the destination before it answers.
+
+    The address must reply 2xx with a body that CONTAINS `value`.
+    """
+
+    id: str
+    test: Literal[True]
+    value: str
+
+
+class BatchAnswerDelivery(TypedDict):
+    """One answered line. `id` is the same for the same line and attempt. Key your own writes on it.
+
+    `line` is the line's 1-based number in the input file, and `response` is
+    the chat completion object.
+    """
+
+    id: str
+    batch_id: str
+    custom_id: str
+    line: int
+    attempt: int
+    test: Literal[False]
+    response: JsonDict
+    usage: Optional[BatchDeliveryUsage]
+    cost: Optional[BatchDeliveryCost]
+
+
+class BatchDeliveryError(TypedDict):
+    code: BatchDeliveryErrorCode
+
+
+class BatchErrorDelivery(TypedDict):
+    """One line that failed after its job started. It carries no usage and no cost.
+
+    `custom_id` is None when the file changed after it was checked
+    (`link_changed`); `line` names the line then.
+    """
+
+    id: str
+    batch_id: str
+    custom_id: Optional[str]
+    line: int
+    attempt: int
+    test: Literal[False]
+    error: BatchDeliveryError
+    usage: None
+    cost: None
+
+
+BatchDelivery = Union[BatchTestDelivery, BatchAnswerDelivery, BatchErrorDelivery]
+
+
 @dataclass
 class RunInfraRequest:
     method: str
@@ -153,6 +399,10 @@ class RunInfraError(Exception):
         self.retry_after_seconds = retry_after_seconds
         self.code = code
         self.param = param
+        # The closed cause word of a batch route's refusal, when its error body
+        # names one (error.reason): "model", "partner", or "price" on
+        # flex_not_available. Other routes do not set it.
+        self.reason: Optional[str] = None
 
 
 class AuthenticationError(RunInfraError):
@@ -168,6 +418,13 @@ class RateLimitError(RunInfraError):
 
 
 class InsufficientCreditsError(RunInfraError):
+    """A 402 from the gateway.
+
+    On a batch route, read `code` to tell `needs_funds` (the account has never
+    added funds) from `key_spend_limit_reached` (this API key reached its own
+    monthly limit; raise the key's limit or use another key).
+    """
+
     def __init__(
         self,
         message: str,
@@ -816,6 +1073,161 @@ def construct_webhook_event(
         raise WebhookVerificationError("Webhook payload must be valid JSON.") from exc
 
 
+_BATCH_DELIVERY_SECRET_PREFIX = "whsec_"
+# The longest Retry-After a batch route's 503 is waited for. A longer wait is the caller's to plan.
+_BATCH_MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 5.0
+# The largest whole number a delivery's timestamp may be: the largest one every runtime holds exactly.
+_BATCH_DELIVERY_MAX_TIMESTAMP = 9007199254740991
+
+
+def _batch_delivery_header(headers: Any, name: str) -> str:
+    items = getattr(headers, "items", None)
+    if not callable(items):
+        raise WebhookVerificationError("Batch delivery headers must be a mapping of header names to values.")
+    matches = [value for key, value in items() if isinstance(key, str) and key.lower() == name]
+    if len(matches) > 1:
+        raise WebhookVerificationError(f"Batch delivery header {name} is present more than once.")
+    value = matches[0] if matches else None
+    if isinstance(value, (list, tuple)):
+        if len(value) > 1:
+            raise WebhookVerificationError(f"Batch delivery header {name} is present more than once.")
+        value = value[0] if value else None
+    if not isinstance(value, str) or not value.strip():
+        raise WebhookVerificationError(f"Batch delivery header {name} is missing.")
+    if len(value) > _WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH:
+        raise WebhookVerificationError(f"Batch delivery header {name} is too large.")
+    return value.strip()
+
+
+def _batch_delivery_secret_key(secret: Any) -> bytes:
+    if not isinstance(secret, str) or not secret.strip():
+        raise WebhookVerificationError("Batch signing secret is required.")
+    encoded = secret.strip()
+    if encoded.startswith(_BATCH_DELIVERY_SECRET_PREFIX):
+        encoded = encoded[len(_BATCH_DELIVERY_SECRET_PREFIX):]
+    if not encoded or len(encoded) % 4 != 0 or re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", encoded) is None:
+        raise WebhookVerificationError("Batch signing secret must be whsec_ followed by base64.")
+    try:
+        return base64.b64decode(encoded, validate=True)
+    except ValueError as exc:
+        raise WebhookVerificationError("Batch signing secret must be whsec_ followed by base64.") from exc
+
+
+def verify_batch_delivery(
+    *,
+    payload: Union[str, bytes, bytearray],
+    headers: Mapping[str, Any],
+    secret: str,
+    tolerance_seconds: Optional[float] = 300,
+    now: Optional[float] = None,
+) -> BatchDelivery:
+    """Verify one batch delivery posted to your own address and return it parsed.
+
+    The result is the test delivery of `batches.create()`, one line's answer,
+    or one line's error (`BatchTestDelivery`, `BatchAnswerDelivery`,
+    `BatchErrorDelivery`).
+
+    Pass the RAW request body, exactly the bytes that arrived, and the
+    request's headers in any case. The signature is the Standard Webhooks one:
+    header `webhook-signature` holds `v1,` followed by the base64 HMAC-SHA-256
+    of `<webhook-id>.<webhook-timestamp>.<raw body>`, compared in constant
+    time. Parsing the body and serializing it again changes the bytes and fails
+    the check.
+
+    `secret` is the workspace's batch signing secret as the dashboard shows it:
+    `whsec_` followed by base64. The HMAC key is the base64-DECODED bytes after
+    the prefix, not the text. Header `x-rightnow-signature-version` names the
+    version of the secret that signed; a rotated secret stops verifying.
+
+    The delivery's `webhook-timestamp` must be within 300 seconds of the clock
+    by default, so a captured delivery cannot be replayed later. A number in
+    `tolerance_seconds` sets another tolerance, `tolerance_seconds=None` turns
+    the check off, and `now` sets the clock it is compared with.
+
+    ANSWERING THE TEST DELIVERY: `batches.create()` posts
+    `{"id": ..., "test": true, "value": ...}` to the destination before it
+    answers, and the address passes only when it replies 2xx with a body that
+    CONTAINS the posted `value`. A fixed `200 OK` fails the create with
+    `destination_unreachable`. Line deliveries (`test` false) are acknowledged
+    by any 2xx. Each answered line is sent to the address once: if the address
+    does not answer 2xx in time, the line is counted `undelivered`, it is not
+    charged, and it is not sent again.
+
+    Raises `WebhookVerificationError` when a header is missing, the signature
+    does not match, the timestamp is outside the tolerance, or the body is not
+    a delivery. Every failure of this helper is a `WebhookVerificationError`.
+    """
+    try:
+        return _verified_batch_delivery(payload, headers, secret, tolerance_seconds, now)
+    except WebhookVerificationError:
+        raise
+    except (ArithmeticError, LookupError, TypeError, ValueError) as exc:
+        raise WebhookVerificationError("Batch delivery could not be verified.") from exc
+
+
+def _is_finite_non_negative_number(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        # A whole number too large for a float: no clock and no tolerance is that large.
+        return False
+
+
+def _verified_batch_delivery(
+    payload: Union[str, bytes, bytearray],
+    headers: Mapping[str, Any],
+    secret: str,
+    tolerance_seconds: Optional[float],
+    now: Optional[float],
+) -> BatchDelivery:
+    key = _batch_delivery_secret_key(secret)
+    if tolerance_seconds is not None and not _is_finite_non_negative_number(tolerance_seconds):
+        raise WebhookVerificationError(
+            "Batch delivery tolerance must be a non-negative number, or None to turn the check off."
+        )
+    delivery_id = _batch_delivery_header(headers, "webhook-id")
+    timestamp = _batch_delivery_header(headers, "webhook-timestamp")
+    signature_header = _batch_delivery_header(headers, "webhook-signature")
+    # Digits only, and no larger than a time can be: a header of hundreds of digits is refused here, before
+    # anything is converted or compared.
+    timestamp_digits = timestamp.lstrip("0") or "0"
+    if (
+        re.fullmatch(r"[0-9]+", timestamp) is None
+        or len(timestamp_digits) > len(str(_BATCH_DELIVERY_MAX_TIMESTAMP))
+        or int(timestamp_digits) > _BATCH_DELIVERY_MAX_TIMESTAMP
+    ):
+        raise WebhookVerificationError("Batch delivery timestamp must be a non-negative integer.")
+    if tolerance_seconds is not None:
+        current_time = time.time() if now is None else now
+        if not _is_finite_non_negative_number(current_time):
+            raise WebhookVerificationError("Batch delivery verification clock must be a non-negative finite number.")
+        if abs(current_time - int(timestamp_digits)) > tolerance_seconds:
+            raise WebhookVerificationError("Batch delivery timestamp is outside the allowed tolerance.")
+    raw_payload = _webhook_payload_bytes(payload)
+    signed = delivery_id.encode("utf-8") + b"." + timestamp.encode("utf-8") + b"." + raw_payload
+    expected = b"v1," + base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest())
+    # Standard Webhooks allows several space-separated signatures; one match is enough.
+    verified = False
+    for candidate in signature_header.split(" "):
+        if candidate and hmac.compare_digest(candidate.encode("utf-8"), expected):
+            verified = True
+    if not verified:
+        raise WebhookVerificationError("Batch delivery signature verification failed.")
+    try:
+        parsed = json.loads(raw_payload.decode("utf-8"))
+    except Exception as exc:
+        raise WebhookVerificationError("Batch delivery payload must be valid JSON.") from exc
+    if (
+        not isinstance(parsed, dict)
+        or not isinstance(parsed.get("id"), str)
+        or not isinstance(parsed.get("test"), bool)
+    ):
+        raise WebhookVerificationError("Batch delivery payload is not a batch delivery.")
+    return parsed  # type: ignore[return-value]
+
+
 def _request_option(options: Optional[Mapping[str, Any]], *names: str) -> Any:
     if not options:
         return None
@@ -897,6 +1309,18 @@ def _redacted_error_metadata(value: Optional[str], sensitive_values: Iterable[st
 
 
 def _redacted_runinfra_error(
+    error: RunInfraError,
+    sensitive_values: Iterable[str] = (),
+) -> RunInfraError:
+    sensitive = tuple(sensitive_values)
+    redacted = _redacted_runinfra_error_copy(error, sensitive)
+    # A batch refusal's cause rides every error class; the copy rebuilds each
+    # class from its own constructor, which does not name it.
+    redacted.reason = _redacted_error_metadata(getattr(error, "reason", None), sensitive)
+    return redacted
+
+
+def _redacted_runinfra_error_copy(
     error: RunInfraError,
     sensitive_values: Iterable[str] = (),
 ) -> RunInfraError:
@@ -989,11 +1413,116 @@ def _idempotent_replay_from_headers(headers: Mapping[str, str]) -> bool:
     return False
 
 
-def _error_from_response(response: RunInfraResponse) -> RunInfraError:
+def _batch_refusal_is_raised_at_once(response: RunInfraResponse) -> bool:
+    """Whether a batch route's refusal is raised at once instead of being asked again.
+
+    A 409 is final. A 503 whose `Retry-After` is above five seconds reaches the
+    caller with that wait instead of a call that blocks.
+    """
+    if response.status == 409:
+        return True
+    if response.status != 503:
+        return False
+    wait = _retry_after_seconds(response)
+    return wait is not None and wait > _BATCH_MAX_AUTOMATIC_RETRY_AFTER_SECONDS
+
+
+def _batch_refusal_error(
+    response: RunInfraResponse,
+    *,
+    message: str,
+    error_type: str,
+    code: Optional[str],
+    param: Optional[str],
+    reason: Optional[str],
+    request_id: Optional[str],
+    current_balance_cents: Optional[int],
+    required_cents: Optional[int],
+    topup_url: Optional[str],
+) -> RunInfraError:
+    """A batch route's refusal as the SDK's typed error.
+
+    The class follows the HTTP status as on every route, with two differences:
+    only `model_not_sold` is a `ModelNotFoundError` (an unknown batch id is a
+    plain 404 `RunInfraError` that keeps the gateway's own type), and every
+    refusal keeps `reason` and `Retry-After` when the gateway sent them.
+    """
+    status = response.status
+    retry_after_seconds = _retry_after_seconds(response)
+    error: RunInfraError
+    if status == 401:
+        error = AuthenticationError(
+            message,
+            status=status,
+            error_type="auth_error",
+            request_id=request_id,
+            retry_after_seconds=retry_after_seconds,
+            code=code,
+            param=param,
+        )
+    elif status == 403:
+        error = PermissionDeniedError(
+            message,
+            status=status,
+            error_type=error_type if error_type != "api_error" else "permission_denied",
+            request_id=request_id,
+            retry_after_seconds=retry_after_seconds,
+            code=code,
+            param=param,
+        )
+    elif status == 402:
+        error = InsufficientCreditsError(
+            message,
+            status=status,
+            error_type="insufficient_credits",
+            request_id=request_id,
+            retry_after_seconds=retry_after_seconds,
+            code=code,
+            param=param,
+            current_balance_cents=current_balance_cents,
+            required_cents=required_cents,
+            topup_url=topup_url,
+        )
+    elif status == 404 and code == "model_not_sold":
+        error = ModelNotFoundError(
+            message,
+            status=status,
+            error_type="model_not_found",
+            request_id=request_id,
+            retry_after_seconds=retry_after_seconds,
+            code=code,
+            param=param,
+        )
+    elif status == 429:
+        error = RateLimitError(
+            message,
+            status=status,
+            error_type="rate_limit_error",
+            request_id=request_id,
+            retry_after_seconds=retry_after_seconds,
+            code=code,
+            param=param,
+        )
+    else:
+        error = RunInfraError(
+            message,
+            status=status,
+            error_type=error_type,
+            request_id=request_id,
+            retry_after_seconds=retry_after_seconds,
+            code=code,
+            param=param,
+        )
+    error.reason = reason
+    return error
+
+
+def _error_from_response(response: RunInfraResponse, batch: bool = False) -> RunInfraError:
     message = f"RunInfra request failed with status {response.status}"
     error_type = "api_error"
     code: Optional[str] = None
     param: Optional[str] = None
+    reason: Optional[str] = None
     current_balance_cents: Optional[int] = None
     required_cents: Optional[int] = None
     topup_url: Optional[str] = None
@@ -1009,6 +1538,8 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
                 code = error["code"]
             if isinstance(error.get("param"), str):
                 param = error["param"]
+            if isinstance(error.get("reason"), str):
+                reason = error["reason"]
             # Structured remediation fields the gateway ships on 402.
             # `bool` is a subclass of `int`, so exclude it explicitly.
             if isinstance(error.get("current_balance_cents"), int) and not isinstance(
@@ -1025,6 +1556,19 @@ def _error_from_response(response: RunInfraResponse) -> RunInfraError:
         pass
 
     request_id = _request_id_from_headers(response.headers)
+    if batch:
+        return _batch_refusal_error(
+            response,
+            message=message,
+            error_type=error_type,
+            code=code,
+            param=param,
+            reason=reason,
+            request_id=request_id,
+            current_balance_cents=current_balance_cents,
+            required_cents=required_cents,
+            topup_url=topup_url,
+        )
     if response.status == 401:
         return AuthenticationError(
             message,
@@ -1229,6 +1773,7 @@ class _Requester:
         transport: Transport,
         max_retries: int,
         retry_base_seconds: float,
+        default_timeout_seconds: Optional[float] = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
@@ -1236,6 +1781,7 @@ class _Requester:
         self.transport = transport
         self.max_retries = max_retries
         self.retry_base_seconds = retry_base_seconds
+        self.default_timeout_seconds = default_timeout_seconds
 
     def request(
         self,
@@ -1248,7 +1794,14 @@ class _Requester:
         stream: bool = False,
         idempotent_replay_safe: bool = False,
         request_options: Optional[Mapping[str, Any]] = None,
+        batch: bool = False,
+        minimum_default_timeout_seconds: Optional[float] = None,
     ) -> RunInfraResponse:
+        # `batch` marks a batch route: its refusals keep the gateway's reason and
+        # Retry-After on the typed error. A 409 is a final answer that is never
+        # retried, and a 503 that asks for a wait above five seconds is raised at
+        # once. `minimum_default_timeout_seconds` is the smallest timeout the
+        # call uses when the caller names none for it.
         request_options = _validated_request_options(request_options)
         client_request_id = _request_option(
             request_options,
@@ -1305,6 +1858,13 @@ class _Requester:
             if timeout_seconds is None
             else _validate_positive_number(timeout_seconds, "timeout_seconds")
         )
+        if (
+            validated_timeout_seconds is None
+            and minimum_default_timeout_seconds is not None
+            and self.default_timeout_seconds is not None
+            and self.default_timeout_seconds < minimum_default_timeout_seconds
+        ):
+            validated_timeout_seconds = minimum_default_timeout_seconds
         method_name = method.upper()
         has_replayable_json_body = json_payload is not None and not stream and idempotent_replay_safe
         can_retry = method_name in {"GET", "HEAD"} or (
@@ -1342,12 +1902,17 @@ class _Requester:
 
             if 200 <= response.status < 300:
                 return response
-            if can_retry and _is_retryable(response.status) and attempt < max_retries:
+            if (
+                can_retry
+                and _is_retryable(response.status)
+                and not (batch and _batch_refusal_is_raised_at_once(response))
+                and attempt < max_retries
+            ):
                 attempt += 1
                 _discard_response_body(response)
                 time.sleep(_retry_delay_seconds(attempt, retry_base_seconds, response))
                 continue
-            raise _redacted_runinfra_error(_error_from_response(response), [self.api_key])
+            raise _redacted_runinfra_error(_error_from_response(response, batch), [self.api_key])
 
 
 class _ChatCompletions:
@@ -1826,6 +2391,142 @@ class _Images:
         ), [self._requester.api_key])
 
 
+# `batches.create()` tests the destination before it answers, which can take 20 seconds.
+_BATCH_CREATE_MIN_DEFAULT_TIMEOUT_SECONDS = 30.0
+
+
+def _validated_integer(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _invalid_request_option(f"{name} must be an integer")
+    return value
+
+
+def _batch_path(batch_id: Any, suffix: str = "") -> str:
+    encoded = urllib.parse.quote(_validated_identifier(batch_id, "batch_id"), safe="")
+    return f"/batches/{encoded}{suffix}"
+
+
+class _Batches:
+    """Batch jobs.
+
+    Preview. A job takes a JSONL file of chat completion requests and posts
+    each answer, signed, to your webhook address. A job has a window of 24
+    hours. Lines run when the model has spare capacity. A line the job has not
+    run when its window ends is counted `expired` and is not charged. Use a
+    workspace-scoped key; verify deliveries with `verify_batch_delivery`.
+    """
+
+    def __init__(self, requester: _Requester) -> None:
+        self._requester = requester
+
+    def create(
+        self,
+        *,
+        model: str,
+        input_url: str,
+        destination: BatchDestination,
+        max_cost_cents: int,
+        window_hours: Optional[int] = None,
+        name: Optional[str] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+        extra_body: Optional[Mapping[str, object]] = None,
+    ) -> BatchCreateResponse:
+        """Create a job, which then starts by itself.
+
+        `model` is a model that offers batch. `input_url` is a public HTTPS
+        link (port 443, at most 8,192 bytes) to a JSONL file of at most 50 MiB
+        whose host serves byte ranges; a signed link must stay valid until the
+        job's window ends. `destination` is `{"type": "webhook", "url": ...}`
+        with a public HTTPS address on port 443. `max_cost_cents` is the most
+        the job may cost: a whole number from 1 to 100,000,000. `window_hours`
+        is 24, the only value and the default. `name` is a label of at most 64
+        characters.
+
+        The gateway first posts a signed test delivery to the destination, so
+        this call can take 20 seconds: its default timeout is never below 30
+        seconds. Pass `idempotency_key` in `request_options` to make the call
+        safe to retry; without one it is sent once. Sending the same create
+        again with the same key and the same body answers the earlier job as a
+        normal success: no error and no second job. The same key with a
+        different body is refused with 409.
+        """
+        if not isinstance(destination, MappingABC):
+            raise _invalid_request_option("destination must be a mapping")
+        _validated_non_empty_string(destination.get("type"), "destination.type")
+        _validated_non_empty_string(destination.get("url"), "destination.url")
+        if name is not None and not isinstance(name, str):
+            raise _invalid_request_option("name must be a string")
+        payload = _json_payload_with_extra(
+            {
+                "model": _validated_model(model),
+                "input_url": _validated_non_empty_string(input_url, "input_url"),
+                "destination": dict(destination),
+                "max_cost_cents": _validated_integer(max_cost_cents, "max_cost_cents"),
+                "window_hours": None if window_hours is None else _validated_integer(window_hours, "window_hours"),
+                "name": name,
+            },
+            extra_body,
+        )
+        return _json_response(self._requester.request(
+            "/batches",
+            json_payload=payload,
+            idempotent_replay_safe=True,
+            request_options=request_options,
+            batch=True,
+            minimum_default_timeout_seconds=_BATCH_CREATE_MIN_DEFAULT_TIMEOUT_SECONDS,
+        ), [self._requester.api_key])
+
+    def list(
+        self,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        state: Optional[BatchState] = None,
+        model: Optional[str] = None,
+        request_options: Optional[Mapping[str, Any]] = None,
+    ) -> BatchListResponse:
+        """List the workspace's jobs, newest first.
+
+        `limit` is the page size, from 1 to 50 (the gateway's default is 20).
+        `cursor` is the `next_cursor` of the page before. `state` and `model`
+        narrow the list.
+        """
+        query: Dict[str, str] = {}
+        if limit is not None:
+            query["limit"] = str(_validated_integer(limit, "limit"))
+        for key, value in (("cursor", cursor), ("state", state), ("model", model)):
+            if value is not None:
+                query[key] = _validated_non_empty_string(value, key)
+        path = "/batches" + (f"?{urllib.parse.urlencode(query)}" if query else "")
+        return _json_response(self._requester.request(
+            path,
+            method="GET",
+            request_options=request_options,
+            batch=True,
+        ), [self._requester.api_key])
+
+    def retrieve(self, batch_id: str, *, request_options: Optional[Mapping[str, Any]] = None) -> BatchRetrieveResponse:
+        """Read one job with the lines its check refused and its quote."""
+        return _json_response(self._requester.request(
+            _batch_path(batch_id),
+            method="GET",
+            request_options=request_options,
+            batch=True,
+        ), [self._requester.api_key])
+
+    def cancel(self, batch_id: str, *, request_options: Optional[Mapping[str, Any]] = None) -> BatchCancelResponse:
+        """Cancel a job: "cancelled" when no line had run, else "cancelling" while lines in flight settle.
+
+        Sent once, never retried.
+        """
+        return _json_response(self._requester.request(
+            _batch_path(batch_id, "/cancel"),
+            method="POST",
+            request_options=request_options,
+            batch=True,
+        ), [self._requester.api_key])
+
+
 class _Webhooks:
     def verify_signature(
         self,
@@ -1935,6 +2636,7 @@ class RunInfra:
             transport=transport if transport is not None else _default_transport(timeout_seconds),
             max_retries=max_retries,
             retry_base_seconds=retry_base_seconds,
+            default_timeout_seconds=timeout_seconds,
         )
         self.chat = _Chat(requester)
         self.responses = _Responses(requester)
@@ -1942,6 +2644,7 @@ class RunInfra:
         self.audio = _Audio(requester)
         self.models = _Models(requester)
         self.images = _Images(requester)
+        self.batches = _Batches(requester)
         self.webhooks = _Webhooks()
         self.voice = _Voice(requester)
 
@@ -1950,6 +2653,32 @@ __all__ = [
     "AudioResponse",
     "__version__",
     "AuthenticationError",
+    "BatchAnswerDelivery",
+    "BatchCancelResponse",
+    "BatchCheckError",
+    "BatchCreateResponse",
+    "BatchDelivery",
+    "BatchDeliveryCost",
+    "BatchDeliveryError",
+    "BatchDeliveryErrorCode",
+    "BatchDeliveryUsage",
+    "BatchDestination",
+    "BatchEndReason",
+    "BatchErrorDelivery",
+    "BatchJob",
+    "BatchJobDetail",
+    "BatchLineCheckCode",
+    "BatchLineCheckErrors",
+    "BatchListResponse",
+    "BatchMadeBy",
+    "BatchNotice",
+    "BatchPauseReason",
+    "BatchQuote",
+    "BatchRefusalCode",
+    "BatchRetrieveResponse",
+    "BatchState",
+    "BatchTestDelivery",
+    "BatchUnavailableReason",
     "ChatCompletionResponse",
     "DeploymentError",
     "EmbeddingObject",
@@ -1976,5 +2705,6 @@ __all__ = [
     "UnsupportedOperationError",
     "WebhookVerificationError",
     "construct_webhook_event",
+    "verify_batch_delivery",
     "verify_webhook_signature",
 ]

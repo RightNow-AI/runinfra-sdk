@@ -84,6 +84,8 @@ Important PyPI details:
 | `client.audio.speech.create` | Experimental, strict live canary coverage is still required |
 | `client.audio.transcriptions.create` | Experimental, strict live canary coverage is still required |
 | `client.voice.pipeline.create` | Experimental, pipeline-scoped route, not live-canary verified |
+| `client.batches.create`, `client.batches.list`, `client.batches.retrieve`, `client.batches.cancel` | Preview, not in 0.2.0. Contract-tested against recorded answer shapes; covered by local canary rows only, no live canary row |
+| `verifyBatchDelivery`, `verify_batch_delivery` | Local helper for batch deliveries, not in 0.2.0, covered by unit tests and a local canary row |
 | `client.webhooks.verifySignature`, `client.webhooks.constructEvent` | Local helpers, covered by unit tests |
 | Webhook delivery create/list | Not shipped and not exposed on the public SDK surface |
 

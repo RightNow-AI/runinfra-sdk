@@ -269,6 +269,12 @@ The runner exercises SDK methods, not raw HTTP helpers:
 - `webhooks.construct_event.local`
 - `webhooks.verify_signature.export`
 - `webhooks.construct_event.export`
+- `batches.create.local`
+- `batches.list.local`
+- `batches.retrieve.local`
+- `batches.cancel.local`
+- `batches.refusal.local`
+- `batches.verify_delivery.export`
 - `idempotency.replay.responses`
 
 When any `RUNINFRA_*_MODEL` canary variable is configured, `models.list` must
@@ -373,6 +379,17 @@ sent only as an `Authorization: Bearer` header. Python rows also assert
 traceback output and explicit exception chains do not retain unredacted causes.
 Webhook signature rows use installed package artifacts and deterministic local
 payloads because they are verification helpers, not live delivery endpoints.
+Local batch rows do not call the production gateway; they run against deterministic local HTTP responses from the
+installed SDK package. `batches.create.local` proves the create's method, path, and JSON body, that a retry after a
+transient failure reuses the same idempotency key and body, and the parsed job. `batches.list.local`,
+`batches.retrieve.local`, and `batches.cancel.local` prove the query names, the path, and the typed answer of
+each route, and that a cancel is sent once even when retries and an idempotency key are asked for.
+`batches.refusal.local` proves a `409` refusal maps to a typed error that keeps its code, reason, `Retry-After`,
+and request ID, and is never retried. `batches.verify_delivery.export` signs a test delivery with a throwaway key
+by the Standard Webhooks rule and proves the exported helper verifies it within its default 300 second timestamp
+tolerance and rejects a changed body. No batch row
+creates a real job: a live batch row needs a public file link and a receiving address, and is not part of the
+strict matrix yet.
 
 The idempotency row is intentionally strict. It does not pass merely because
 two calls returned successfully. The second response must expose replay
