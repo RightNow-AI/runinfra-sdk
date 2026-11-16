@@ -8904,6 +8904,14 @@ function batchAnswer(fixture: BatchApiFixture, headers: Record<string, string> =
   });
 }
 
+/** A plain 503 that names a wait, as any route can answer one. */
+function busyAnswer(retryAfter: string): Response {
+  return jsonResponse(
+    { error: { message: "busy", type: "api_error", param: null, code: null }, request_id: "req_built-fixture-busy" },
+    { status: 503, headers: { "x-request-id": "req_built-fixture-busy", "Retry-After": retryAfter } },
+  );
+}
+
 function batchRefusalResponse(refusal: BatchRefusalFixture): Response {
   return jsonResponse(refusal.body, {
     status: refusal.status,
@@ -9087,24 +9095,71 @@ describe("RunInfra TypeScript SDK batch jobs", () => {
   });
 
   it("never retries a create without an idempotency key", async () => {
-    const refusal = allBatchRefusals().find((entry) => entry.name === "ask-again")!;
-    const fetcher = vi.fn().mockResolvedValue(batchRefusalResponse(refusal));
+    const fetcher = vi.fn().mockResolvedValue(busyAnswer("5"));
     const client = batchClient(fetcher, { maxRetries: 2, retryBaseMs: 0 });
 
     await expect(client.batches.create(batchCreateRequest)).rejects.toMatchObject({
       status: 503,
-      code: "datastore_unavailable",
       retryAfterMs: 5_000,
+      requestId: "req_built-fixture-busy",
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it("retries an asked-again create with the same idempotency key and the same body", async () => {
+  it("answers the earlier job as a plain success when the same create is sent again, and refuses another body with 409", async () => {
     const fixture = batchFixture<BatchApiFixture>("built-create-200.json");
-    const askAgain = allBatchRefusals().find((entry) => entry.name === "ask-again")!;
+    const earlier = (fixture.body as { batch: BatchJob }).batch;
+    const reused = allBatchRefusals().find((entry) => entry.name === "idempotency-key-reused")!;
+    // The gateway answers a repeat of the same create with the earlier job: the same id, a 200, no error.
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce(batchRefusalResponse({ ...askAgain, headers: { "Retry-After": "0" } }))
+      .mockResolvedValueOnce(batchAnswer(fixture))
+      .mockResolvedValueOnce(batchAnswer(fixture))
+      .mockResolvedValueOnce(batchRefusalResponse(reused));
+    const client = batchClient(fetcher, { maxRetries: 0 });
+    const options = { idempotencyKey: "batch-unit-same-create" };
+
+    const first = await client.batches.create(batchCreateRequest, options);
+    const again = await client.batches.create(batchCreateRequest, options);
+
+    expect(first.batch.id).toBe(earlier.id);
+    expect(again.batch).toEqual(first.batch);
+    expect(again.batch.id).toBe(earlier.id);
+    const [firstInit, againInit] = fetcher.mock.calls.map((call) => call[1] as RequestInit);
+    expect(sentHeader(againInit!, "Idempotency-Key")).toBe(sentHeader(firstInit!, "Idempotency-Key"));
+    expect(againInit!.body).toBe(firstInit!.body);
+
+    // The same key with another body is the gateway's 409, raised as it is and not retried.
+    await expect(
+      client.batches.create({ ...batchCreateRequest, max_cost_cents: 250 }, options),
+    ).rejects.toMatchObject({ status: 409, code: "invalid_request", param: "Idempotency-Key" });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("raises both 402 refusals as InsufficientCreditsError, each with its own code", async () => {
+    const refusals = allBatchRefusals();
+    const codes: string[] = [];
+    for (const name of ["needs-funds", "key-spend-limit-reached"]) {
+      const refusal = refusals.find((entry) => entry.name === name)!;
+      const fetcher = vi.fn().mockResolvedValue(batchRefusalResponse(refusal));
+      const error = await batchClient(fetcher)
+        .batches.create(batchCreateRequest, { idempotencyKey: "batch-unit-402" })
+        .then(() => null, (thrown: unknown) => thrown);
+
+      expect(error, name).toBeInstanceOf(InsufficientCreditsError);
+      expect((error as InsufficientCreditsError).status, name).toBe(402);
+      expect((error as InsufficientCreditsError).type, name).toBe("insufficient_credits");
+      expect(fetcher, name).toHaveBeenCalledTimes(1);
+      codes.push((error as InsufficientCreditsError).code!);
+    }
+    expect(codes).toEqual(["needs_funds", "key_spend_limit_reached"]);
+  });
+
+  it("retries an asked-again create with the same idempotency key and the same body", async () => {
+    const fixture = batchFixture<BatchApiFixture>("built-create-200.json");
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(busyAnswer("0"))
       .mockRejectedValueOnce(new TypeError("socket closed"))
       .mockResolvedValueOnce(batchAnswer(fixture));
     const client = batchClient(fetcher, { maxRetries: 2, retryBaseMs: 0 });
@@ -9263,8 +9318,7 @@ describe("RunInfra TypeScript SDK batch jobs", () => {
     expect(sentHeader(init, "Content-Type")).toBeUndefined();
     expect(answer).toEqual({ batch_id: batchId, batch_state: "cancelled", _request_id: fixture.request_id });
 
-    const askAgain = allBatchRefusals().find((entry) => entry.name === "ask-again")!;
-    const busy = vi.fn().mockResolvedValue(batchRefusalResponse(askAgain));
+    const busy = vi.fn().mockResolvedValue(busyAnswer("5"));
     await expect(
       batchClient(busy, { maxRetries: 2, retryBaseMs: 0 }).batches.cancel(batchId, { idempotencyKey: "batch-unit-cancel" }),
     ).rejects.toMatchObject({ status: 503, retryAfterMs: 5_000 });
@@ -9308,13 +9362,11 @@ describe("RunInfra TypeScript SDK batch jobs", () => {
 
   it("asks a read again on a 503 whose Retry-After is five seconds or less, after that wait", async () => {
     const fixture = batchFixture<BatchApiFixture>("get-completed.json");
-    const askAgain = allBatchRefusals().find((entry) => entry.name === "ask-again")!;
-    expect(askAgain.headers["Retry-After"]).toBe("5");
     vi.useFakeTimers();
     try {
       const fetcher = vi
         .fn()
-        .mockResolvedValueOnce(batchRefusalResponse(askAgain))
+        .mockResolvedValueOnce(busyAnswer("5"))
         .mockResolvedValueOnce(batchAnswer(fixture));
       const pending = batchClient(fetcher, { maxRetries: 1, retryBaseMs: 0 }).batches.retrieve(
         "00000000-0000-4000-8000-0000000000a1",
@@ -9356,7 +9408,7 @@ describe("RunInfra TypeScript SDK batch jobs", () => {
 
   it("maps every refusal of the batch routes to a typed error that keeps its code, member, reason, wait and request id", async () => {
     const refusals = allBatchRefusals();
-    expect(refusals.length).toBeGreaterThan(30);
+    expect(refusals.length).toBeGreaterThan(20);
     const batchId = "00000000-0000-4000-8000-0000000000a1";
     const calls: Array<[string, (client: RunInfra) => Promise<unknown>]> = [
       ["create", (client) => client.batches.create(batchCreateRequest, { idempotencyKey: "batch-unit-refusal" })],
@@ -9420,7 +9472,7 @@ describe("RunInfra TypeScript SDK batch jobs", () => {
   it("leaves the errors of every other route as they were", async () => {
     const busy = (): Response =>
       jsonResponse(
-        { error: { reason: "model", message: "busy", type: "api_error", code: "datastore_unavailable" } },
+        { error: { reason: "model", message: "busy", type: "api_error" } },
         { status: 503, headers: { "Retry-After": "5" } },
       );
     const missing = (): Response =>
@@ -9749,6 +9801,44 @@ describe("RunInfra TypeScript SDK batch delivery verification", () => {
         WebhookVerificationError,
       );
     }
+  });
+
+  it("refuses a timestamp too long or too large to be a time with WebhookVerificationError, never another error", () => {
+    const notATime = "Batch delivery timestamp must be a non-negative integer.";
+    // 400 digits, digits beyond the range of a float, thousands of digits, and one past the largest exact integer.
+    for (const stamp of ["9".repeat(400), `1${"0".repeat(309)}`, "9".repeat(5_000), "9007199254740992"]) {
+      const headers = signBatchDelivery(testBody, testId, stamp);
+      for (const options of [{}, { now: timestamp }, { now: timestamp + 0.5 }, { toleranceSeconds: null }]) {
+        let failure: unknown = null;
+        try {
+          verifyBatchDelivery({ payload: testBody, headers, secret: BATCH_TEST_SECRET, ...options });
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure, `${stamp.length} digits`).toBeInstanceOf(WebhookVerificationError);
+        expect((failure as Error).message, `${stamp.length} digits`).toBe(notATime);
+      }
+    }
+
+    // The largest timestamp that is still a whole number every runtime holds is read as a time.
+    const largest = "9007199254740991";
+    expect(
+      verifyBatchDelivery({
+        payload: testBody,
+        headers: signBatchDelivery(testBody, testId, largest),
+        secret: BATCH_TEST_SECRET,
+        toleranceSeconds: null,
+      }).id,
+    ).toBe(testId);
+
+    // An input that makes the verifier itself fail is a WebhookVerificationError too.
+    const throwing = {
+      get: (): string => {
+        throw new RangeError("not a header store");
+      },
+    } as unknown as Headers;
+    expect(() => verifyAt({ payload: testBody, headers: throwing })).toThrow(WebhookVerificationError);
+    expect(() => verifyAt({ payload: testBody, headers: throwing })).toThrow("Batch delivery could not be verified.");
   });
 
   it("accepts one matching signature among several", () => {

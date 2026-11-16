@@ -3750,6 +3750,15 @@ def batch_refusal_response(refusal, headers=None):
     )
 
 
+def busy_answer(retry_after):
+    """A plain 503 that names a wait, as any route can answer one."""
+    return json_response(
+        {"error": {"message": "busy", "type": "api_error", "param": None, "code": None}, "request_id": "req_built-fixture-busy"},
+        status=503,
+        headers={"x-request-id": "req_built-fixture-busy", "Retry-After": retry_after},
+    )
+
+
 def recorded_batch_refusal(name, error_class, error_type):
     """One of the two recorded refusals, in the shape of the built ones."""
     fixture = batch_fixture(name)
@@ -3910,22 +3919,71 @@ class RunInfraPythonSdkBatchTest(unittest.TestCase):
         self.assertIsNone(sent_header(request, "Idempotency-Key"))
 
     def test_create_is_never_retried_without_an_idempotency_key(self):
-        transport = RecordingTransport(batch_refusal_response(batch_refusal("ask-again")))
+        transport = RecordingTransport(busy_answer("5"))
         client = batch_client(transport, max_retries=2, retry_base_seconds=0)
 
         with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as caught:
             client.batches.create(**BATCH_CREATE_REQUEST)
 
         self.assertEqual(caught.exception.status, 503)
-        self.assertEqual(caught.exception.code, "datastore_unavailable")
         self.assertEqual(caught.exception.retry_after_seconds, 5.0)
+        self.assertEqual(caught.exception.request_id, "req_built-fixture-busy")
         self.assertEqual(len(transport.calls), 1)
         sleep.assert_not_called()
+
+    def test_the_same_create_sent_again_answers_the_earlier_job_as_a_plain_success_and_another_body_is_refused(self):
+        fixture = batch_fixture("built-create-200.json")
+        earlier = fixture["body"]["batch"]
+        # The gateway answers a repeat of the same create with the earlier job: the same id, a 200, no error.
+        transport = RecordingTransport(
+            batch_answer(fixture),
+            batch_answer(fixture),
+            batch_refusal_response(batch_refusal("idempotency-key-reused")),
+        )
+        client = batch_client(transport, max_retries=0)
+        options = {"idempotency_key": "batch-unit-same-create"}
+
+        first = client.batches.create(**BATCH_CREATE_REQUEST, request_options=options)
+        again = client.batches.create(**BATCH_CREATE_REQUEST, request_options=options)
+
+        self.assertEqual(first["batch"]["id"], earlier["id"])
+        self.assertEqual(again["batch"], first["batch"])
+        self.assertEqual(again["batch"]["id"], earlier["id"])
+        self.assertEqual(
+            sent_header(transport.calls[1], "Idempotency-Key"),
+            sent_header(transport.calls[0], "Idempotency-Key"),
+        )
+        self.assertEqual(transport.calls[1].body, transport.calls[0].body)
+
+        # The same key with another body is the gateway's 409, raised as it is and not retried.
+        with self.assertRaises(RunInfraError) as caught:
+            client.batches.create(**{**BATCH_CREATE_REQUEST, "max_cost_cents": 250}, request_options=options)
+        self.assertEqual(
+            (caught.exception.status, caught.exception.code, caught.exception.param),
+            (409, "invalid_request", "Idempotency-Key"),
+        )
+        self.assertEqual(len(transport.calls), 3)
+
+    def test_both_402_refusals_are_insufficient_credits_errors_each_with_its_own_code(self):
+        codes = []
+        for name in ("needs-funds", "key-spend-limit-reached"):
+            with self.subTest(refusal=name):
+                transport = RecordingTransport(batch_refusal_response(batch_refusal(name)))
+                with self.assertRaises(InsufficientCreditsError) as caught:
+                    batch_client(transport).batches.create(
+                        **BATCH_CREATE_REQUEST,
+                        request_options={"idempotency_key": "batch-unit-402"},
+                    )
+                self.assertIs(type(caught.exception), InsufficientCreditsError)
+                self.assertEqual((caught.exception.status, caught.exception.type), (402, "insufficient_credits"))
+                self.assertEqual(len(transport.calls), 1)
+                codes.append(caught.exception.code)
+        self.assertEqual(codes, ["needs_funds", "key_spend_limit_reached"])
 
     def test_create_asked_again_is_retried_with_the_same_idempotency_key_and_body(self):
         fixture = batch_fixture("built-create-200.json")
         transport = ScriptedTransport(
-            batch_refusal_response(batch_refusal("ask-again")),
+            busy_answer("5"),
             OSError("socket closed"),
             batch_answer(fixture),
         )
@@ -4117,7 +4175,7 @@ class RunInfraPythonSdkBatchTest(unittest.TestCase):
             {"batch_id": batch_id, "batch_state": "cancelled", "_request_id": fixture["request_id"]},
         )
 
-        busy = RecordingTransport(batch_refusal_response(batch_refusal("ask-again")))
+        busy = RecordingTransport(busy_answer("5"))
         with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as caught:
             batch_client(busy, max_retries=2, retry_base_seconds=0).batches.cancel(
                 batch_id,
@@ -4164,9 +4222,7 @@ class RunInfraPythonSdkBatchTest(unittest.TestCase):
 
     def test_a_read_is_asked_again_on_a_503_whose_retry_after_is_five_seconds_or_less(self):
         fixture = batch_fixture("get-completed.json")
-        ask_again = batch_refusal("ask-again")
-        self.assertEqual(ask_again["headers"]["Retry-After"], "5")
-        transport = RecordingTransport(batch_refusal_response(ask_again), batch_answer(fixture))
+        transport = RecordingTransport(busy_answer("5"), batch_answer(fixture))
 
         with patch("runinfra.time.sleep") as sleep:
             answer = batch_client(transport, max_retries=1, retry_base_seconds=0).batches.retrieve(BATCH_ID)
@@ -4190,7 +4246,7 @@ class RunInfraPythonSdkBatchTest(unittest.TestCase):
 
     def test_every_refusal_of_the_batch_routes_is_a_typed_error_with_its_code_member_reason_wait_and_request_id(self):
         refusals = all_batch_refusals()
-        self.assertGreater(len(refusals), 30)
+        self.assertGreater(len(refusals), 20)
         calls = {
             "create": lambda client: client.batches.create(
                 **BATCH_CREATE_REQUEST,
@@ -4253,7 +4309,7 @@ class RunInfraPythonSdkBatchTest(unittest.TestCase):
     def test_errors_of_every_other_route_are_as_they_were(self):
         transport = RecordingTransport(
             json_response(
-                {"error": {"reason": "model", "message": "busy", "type": "api_error", "code": "datastore_unavailable"}},
+                {"error": {"reason": "model", "message": "busy", "type": "api_error"}},
                 status=503,
                 headers={"Retry-After": "5"},
             ),
@@ -4617,6 +4673,59 @@ class RunInfraPythonSdkBatchDeliveryTest(unittest.TestCase):
             with self.subTest(body=body):
                 with self.assertRaises(WebhookVerificationError):
                     self.verify(body, sign_batch_delivery(body, self.TEST_ID, self.TIMESTAMP))
+
+    def test_a_timestamp_too_long_or_too_large_to_be_a_time_is_a_webhook_verification_error(self):
+        not_a_time = "Batch delivery timestamp must be a non-negative integer."
+        # 400 digits, digits beyond the range of a float, thousands of digits, and one past the largest exact integer.
+        for stamp in ("9" * 400, "1" + "0" * 309, "9" * 5_000, "9007199254740992"):
+            headers = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, stamp)
+            for options in ({}, {"now": self.TIMESTAMP}, {"now": float(self.TIMESTAMP)}, {"tolerance_seconds": None}):
+                with self.subTest(digits=len(stamp), options=sorted(options)):
+                    with self.assertRaises(WebhookVerificationError) as caught:
+                        verify_batch_delivery(
+                            payload=self.TEST_BODY,
+                            headers=headers,
+                            secret=BATCH_TEST_SECRET,
+                            **options,
+                        )
+                    self.assertEqual(str(caught.exception), not_a_time)
+
+        # The largest timestamp that is still a whole number every runtime holds is read as a time.
+        largest = "9007199254740991"
+        self.assertEqual(
+            verify_batch_delivery(
+                payload=self.TEST_BODY,
+                headers=sign_batch_delivery(self.TEST_BODY, self.TEST_ID, largest),
+                secret=BATCH_TEST_SECRET,
+                tolerance_seconds=None,
+            )["id"],
+            self.TEST_ID,
+        )
+
+    def test_every_failure_of_the_verifier_is_a_webhook_verification_error(self):
+        headers = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP)
+
+        class NotAHeaderStore:
+            def items(self):
+                return [1, 2]
+
+        cases = {
+            "a clock too large for a float": {"now": 10 ** 400},
+            "a tolerance too large for a float": {"tolerance_seconds": 10 ** 400, "now": self.TIMESTAMP},
+            "a header that is not text": {"headers": {**headers, "webhook-id": 7}, "now": self.TIMESTAMP},
+            "a signature that cannot be encoded": {
+                "headers": {**headers, "webhook-signature": "v1,\ud800"},
+                "now": self.TIMESTAMP,
+            },
+            "an id that cannot be encoded": {"headers": {**headers, "webhook-id": "bdt_\ud800"}, "now": self.TIMESTAMP},
+            "a body that cannot be encoded": {"payload": "{\"id\":\"\ud800\"}", "now": self.TIMESTAMP},
+            "a header store that is no mapping": {"headers": NotAHeaderStore(), "now": self.TIMESTAMP},
+        }
+        for name, changed in cases.items():
+            with self.subTest(case=name):
+                options = {"payload": self.TEST_BODY, "headers": headers, "secret": BATCH_TEST_SECRET, **changed}
+                with self.assertRaises(WebhookVerificationError):
+                    verify_batch_delivery(**options)
 
     def test_accepts_one_matching_signature_among_several(self):
         headers = sign_batch_delivery(self.TEST_BODY, self.TEST_ID, self.TIMESTAMP)

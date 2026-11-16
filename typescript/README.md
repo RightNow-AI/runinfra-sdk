@@ -207,7 +207,7 @@ you want SDK read-timeout wrapping for a finite body.
 
 ## Batch jobs
 
-Preview, from the release after 0.2.0. A batch job runs every line of a JSONL file as a chat completion within 24 hours and posts each answer to your webhook address. Batch needs a workspace-scoped key and a model that offers batch.
+Preview, from the release after 0.2.0. A batch job takes a JSONL file of chat completion requests and posts each answer to your webhook address. A job has a window of 24 hours. Lines run when the model has spare capacity. A line the job has not run when its window ends is counted `expired` and is not charged. Batch needs a workspace-scoped key and a model that offers batch.
 
 ```ts
 const { batch } = await client.batches.create(
@@ -226,15 +226,18 @@ const job = await client.batches.retrieve(batch.id);
 console.log(job.batch.batch_state, job.batch.errors, job.batch.cost_microcents);
 ```
 
+Sending the same create again with the same `idempotencyKey` and the same body answers the earlier job as a normal success: no error and no second job. The same key with a different body is refused with `409`.
+
 - `model`, `input_url`, `destination`, and `max_cost_cents` are required. `max_cost_cents` is the most the job may cost, a whole number from 1 to 100,000,000. `window_hours` is 24, the only value and the default. `name` is a label of at most 64 characters.
 - `input_url` is a public HTTPS link on port 443, at most 8,192 bytes, to a JSONL file of at most 50 MiB whose host serves byte ranges (signed links from the common storage services do). A signed link must stay valid until the job's window ends. `destination.url` is a public HTTPS address on port 443.
 - Each line of the file is `{"custom_id": "...", "method": "POST", "url": "/v1/chat/completions", "body": {...}}`, at most 4 MiB. `custom_id` is unique in the file (1 to 512 characters) and `body` is a text-only, non-streaming chat completion body whose `model` is the job's model.
 - The job starts by itself. It is answered in `batch_state` `validating` and moves through `checked` and `queued` to `running`; `completed`, `expired`, `cancelled`, and `failed` are final, and `end_reason` says why. `batches.retrieve()` adds `errors` (the lines the file check refused, by code, with their first line numbers) and `quote`.
+- `failed` never includes an undelivered line, and once a job has ended the counts `succeeded`, `failed`, `expired`, `cancelled`, `undelivered`, and `lines_invalid` add up to `lines_total`.
 - `batches.list({ limit, cursor, state, model })` answers `{ batches, next_cursor }`, newest first; pass `next_cursor` as `cursor` for the next page. `batches.cancel(batchId)` answers `{ batch_id, batch_state }` with `cancelled` or `cancelling`.
 
 Before it answers, `batches.create()` posts a signed test delivery `{ "id": "bdt_...", "test": true, "value": "..." }` to `destination.url`. The address passes only when it replies 2xx with a body that contains the posted `value`, within 20 seconds; otherwise the create is refused with `destination_unreachable`. Because of that test the call's default timeout is never below 30 seconds, whatever the client's `timeoutMs`; a per-request `timeoutMs` is used as given.
 
-`batches.create()` is sent once unless you pass `idempotencyKey`. With a key, transient failures are retried with the same key and body, and a repeat with the same key answers the first job and starts nothing new. `batches.cancel()` is always sent once. A `409` from a batch route is a final refusal and is never retried. A `503` that asks for a wait above 5 seconds in `Retry-After` is raised at once with `retryAfterMs` set, so a call never blocks on a long wait; a `503` that asks for 5 seconds or less is asked again by the retry rule.
+`batches.create()` is sent once unless you pass `idempotencyKey`. With a key, transient failures are retried with the same key and body. `batches.cancel()` is always sent once. A `409` from a batch route is a final refusal and is never retried. A `503` that asks for a wait above 5 seconds in `Retry-After` is raised at once with `retryAfterMs` set, so a call never blocks on a long wait; a `503` that asks for 5 seconds or less is asked again by the retry rule.
 
 Every refusal of a batch route is a typed error that keeps the gateway's `code`, the `param` it names, `reason`, `retryAfterMs` when the gateway sent `Retry-After`, and `requestId`:
 
@@ -254,7 +257,7 @@ try {
 }
 ```
 
-The refusal codes are `batch_not_open` (`503`: ask again after the wait the error carries), `invalid_request`, `not_found`, `model_not_sold`, `flex_not_available`, `url_not_public`, `link_expires_too_soon`, `destination_unreachable`, `needs_funds`, `key_spend_limit_reached`, `batch_ended`, and `batches_scope_violation`. `model_not_sold` is a `ModelNotFoundError`; an unknown batch id is a plain `RunInfraError` with status `404` and code `not_found`. A file that is refused when it is read, after the create answered, ends the job `failed` with `check_error` `url_not_public`, `link_expires_too_soon`, `file_too_large`, `link_changed`, or `link_not_supported`.
+The refusal codes are `batch_not_open` (`503`: ask again after the wait the error carries), `invalid_request`, `not_found`, `model_not_sold`, `flex_not_available`, `url_not_public`, `link_expires_too_soon`, `destination_unreachable`, `needs_funds`, `key_spend_limit_reached`, `batch_ended`, and `batches_scope_violation`. `model_not_sold` is a `ModelNotFoundError`; an unknown batch id is a plain `RunInfraError` with status `404` and code `not_found`. A `402` on a batch route is an `InsufficientCreditsError`; read `code` to tell `needs_funds` (the account has never added funds) from `key_spend_limit_reached` (this API key reached its own monthly limit; raise the key's limit or use another key). A file that is refused when it is read, after the create answered, ends the job `failed` with `check_error` `url_not_public`, `link_expires_too_soon`, `file_too_large`, `link_changed`, or `link_not_supported`.
 
 ### Verify batch deliveries
 
@@ -286,7 +289,7 @@ return new Response(null, { status: 204 });
 
 `verifyBatchDelivery` takes the raw request body (a string or bytes, never an object you parsed and serialized again) and the request's headers in any case. It checks `webhook-signature`, which is `v1,` followed by the base64 HMAC-SHA-256 of `<webhook-id>.<webhook-timestamp>.<raw body>`, in constant time. The secret is `whsec_` followed by base64, and the HMAC key is the decoded bytes, so any Standard Webhooks library verifies the same deliveries. By default the delivery's `webhook-timestamp` must be within 300 seconds of your clock, so a captured delivery cannot be replayed later. Pass a number as `toleranceSeconds` for another tolerance, or `toleranceSeconds: null` to turn the check off; `now` sets the clock in Unix seconds. A failed check throws `WebhookVerificationError`.
 
-The helper returns one of three typed shapes: `BatchTestDelivery` (`test: true`), `BatchAnswerDelivery` with `custom_id`, `line`, `attempt`, the chat completion in `response`, `usage`, and `cost.microcents`, or `BatchErrorDelivery` with `error.code` for a line that failed after the job started. `id` is the same for the same line and attempt, so drop repeats on it. Any 2xx acknowledges a line.
+The helper returns one of three typed shapes: `BatchTestDelivery` (`test: true`), `BatchAnswerDelivery` with `custom_id`, `line`, `attempt`, the chat completion in `response`, `usage`, and `cost.microcents`, or `BatchErrorDelivery` with `error.code` for a line that failed after the job started. `id` is the same for the same line and attempt. Any 2xx acknowledges a line. Each answered line is sent to the address once: if the address does not answer 2xx in time, the line is counted `undelivered`, it is not charged, and it is not sent again. So answer 2xx first and do slow work afterwards.
 
 ## Timeouts and retries
 

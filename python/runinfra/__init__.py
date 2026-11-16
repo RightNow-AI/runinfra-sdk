@@ -164,9 +164,9 @@ BatchLineCheckCode = Literal[
 BatchDeliveryErrorCode = Literal["invalid_request", "prompt_too_large", "model_error", "link_changed"]
 # Why batch is not available, on a flex_not_available refusal (error.reason).
 BatchUnavailableReason = Literal["model", "partner", "price"]
-# The refusal codes of the batch routes, as RunInfraError.code carries them. Codes
-# every route can answer (for example invalid_api_key, rate_limit_exceeded, or
-# unknown_endpoint) are not repeated here.
+# The refusal codes a caller of the batch routes can receive, as
+# RunInfraError.code carries them. Codes every route can answer (invalid_api_key
+# on 401, rate_limit_exceeded on 429) are not repeated here.
 BatchRefusalCode = Literal[
     "batch_not_open",
     "invalid_request",
@@ -174,17 +174,11 @@ BatchRefusalCode = Literal[
     "model_not_sold",
     "flex_not_available",
     "url_not_public",
-    "link_not_supported",
     "link_expires_too_soon",
-    "link_changed",
-    "file_too_large",
     "destination_unreachable",
-    "batch_not_ready",
-    "quote_changed",
     "needs_funds",
     "key_spend_limit_reached",
     "batch_ended",
-    "batch_already_started",
     "batches_scope_violation",
 ]
 
@@ -206,9 +200,15 @@ class BatchJob(TypedDict):
     """A batch job, as every batch route answers it.
 
     Counts are whole numbers. `lines_total` counts every line read from the
-    file, the invalid ones included. `cost_microcents` is what the job's lines
-    were charged so far, in millionths of a cent. Times are ISO 8601 UTC with
-    milliseconds; `expires_at` is the end of the job's window.
+    file, the invalid ones included. `expired` counts the lines the job had not
+    run when its window ended; they are not charged. `undelivered` counts the
+    answered lines the address did not acknowledge with a 2xx in time; they are
+    not charged and are not sent again. `failed` never includes an undelivered
+    line, and once a job has ended the counts `succeeded`, `failed`, `expired`,
+    `cancelled`, `undelivered`, and `lines_invalid` add up to `lines_total`.
+    `cost_microcents` is what the job's lines were charged so far, in
+    millionths of a cent. Times are ISO 8601 UTC with milliseconds;
+    `expires_at` is the end of the job's window.
     """
 
     id: str
@@ -315,7 +315,7 @@ class BatchTestDelivery(TypedDict):
 
 
 class BatchAnswerDelivery(TypedDict):
-    """One answered line. `id` is the same for the same line and attempt: drop repeats on it.
+    """One answered line. `id` is the same for the same line and attempt.
 
     `line` is the line's 1-based number in the input file, and `response` is
     the chat completion object.
@@ -418,6 +418,13 @@ class RateLimitError(RunInfraError):
 
 
 class InsufficientCreditsError(RunInfraError):
+    """A 402 from the gateway.
+
+    On a batch route, read `code` to tell `needs_funds` (the account has never
+    added funds) from `key_spend_limit_reached` (this API key reached its own
+    monthly limit; raise the key's limit or use another key).
+    """
+
     def __init__(
         self,
         message: str,
@@ -1069,6 +1076,8 @@ def construct_webhook_event(
 _BATCH_DELIVERY_SECRET_PREFIX = "whsec_"
 # The longest Retry-After a batch route's 503 is waited for. A longer wait is the caller's to plan.
 _BATCH_MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 5.0
+# The largest whole number a delivery's timestamp may be: the largest one every runtime holds exactly.
+_BATCH_DELIVERY_MAX_TIMESTAMP = 9007199254740991
 
 
 def _batch_delivery_header(headers: Any, name: str) -> str:
@@ -1140,37 +1149,61 @@ def verify_batch_delivery(
     answers, and the address passes only when it replies 2xx with a body that
     CONTAINS the posted `value`. A fixed `200 OK` fails the create with
     `destination_unreachable`. Line deliveries (`test` false) are acknowledged
-    by any 2xx.
+    by any 2xx. Each answered line is sent to the address once: if the address
+    does not answer 2xx in time, the line is counted `undelivered`, it is not
+    charged, and it is not sent again.
 
     Raises `WebhookVerificationError` when a header is missing, the signature
     does not match, the timestamp is outside the tolerance, or the body is not
-    a delivery.
+    a delivery. Every failure of this helper is a `WebhookVerificationError`.
     """
+    try:
+        return _verified_batch_delivery(payload, headers, secret, tolerance_seconds, now)
+    except WebhookVerificationError:
+        raise
+    except (ArithmeticError, LookupError, TypeError, ValueError) as exc:
+        raise WebhookVerificationError("Batch delivery could not be verified.") from exc
+
+
+def _is_finite_non_negative_number(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        # A whole number too large for a float: no clock and no tolerance is that large.
+        return False
+
+
+def _verified_batch_delivery(
+    payload: Union[str, bytes, bytearray],
+    headers: Mapping[str, Any],
+    secret: str,
+    tolerance_seconds: Optional[float],
+    now: Optional[float],
+) -> BatchDelivery:
     key = _batch_delivery_secret_key(secret)
-    if tolerance_seconds is not None and (
-        isinstance(tolerance_seconds, bool)
-        or not isinstance(tolerance_seconds, (int, float))
-        or not math.isfinite(tolerance_seconds)
-        or tolerance_seconds < 0
-    ):
+    if tolerance_seconds is not None and not _is_finite_non_negative_number(tolerance_seconds):
         raise WebhookVerificationError(
             "Batch delivery tolerance must be a non-negative number, or None to turn the check off."
         )
     delivery_id = _batch_delivery_header(headers, "webhook-id")
     timestamp = _batch_delivery_header(headers, "webhook-timestamp")
     signature_header = _batch_delivery_header(headers, "webhook-signature")
-    if re.fullmatch(r"[0-9]+", timestamp) is None:
+    # Digits only, and no larger than a time can be: a header of hundreds of digits is refused here, before
+    # anything is converted or compared.
+    timestamp_digits = timestamp.lstrip("0") or "0"
+    if (
+        re.fullmatch(r"[0-9]+", timestamp) is None
+        or len(timestamp_digits) > len(str(_BATCH_DELIVERY_MAX_TIMESTAMP))
+        or int(timestamp_digits) > _BATCH_DELIVERY_MAX_TIMESTAMP
+    ):
         raise WebhookVerificationError("Batch delivery timestamp must be a non-negative integer.")
     if tolerance_seconds is not None:
         current_time = time.time() if now is None else now
-        if (
-            isinstance(current_time, bool)
-            or not isinstance(current_time, (int, float))
-            or not math.isfinite(current_time)
-            or current_time < 0
-        ):
+        if not _is_finite_non_negative_number(current_time):
             raise WebhookVerificationError("Batch delivery verification clock must be a non-negative finite number.")
-        if abs(current_time - int(timestamp)) > tolerance_seconds:
+        if abs(current_time - int(timestamp_digits)) > tolerance_seconds:
             raise WebhookVerificationError("Batch delivery timestamp is outside the allowed tolerance.")
     raw_payload = _webhook_payload_bytes(payload)
     signed = delivery_id.encode("utf-8") + b"." + timestamp.encode("utf-8") + b"." + raw_payload
@@ -2376,8 +2409,10 @@ def _batch_path(batch_id: Any, suffix: str = "") -> str:
 class _Batches:
     """Batch jobs.
 
-    Preview. A job runs the lines of a JSONL file as chat completions within
-    24 hours and posts each answer, signed, to your webhook address. Use a
+    Preview. A job takes a JSONL file of chat completion requests and posts
+    each answer, signed, to your webhook address. A job has a window of 24
+    hours. Lines run when the model has spare capacity. A line the job has not
+    run when its window ends is counted `expired` and is not charged. Use a
     workspace-scoped key; verify deliveries with `verify_batch_delivery`.
     """
 
@@ -2410,8 +2445,10 @@ class _Batches:
         The gateway first posts a signed test delivery to the destination, so
         this call can take 20 seconds: its default timeout is never below 30
         seconds. Pass `idempotency_key` in `request_options` to make the call
-        safe to retry; without one it is sent once. A repeat with the same key
-        answers the first job.
+        safe to retry; without one it is sent once. Sending the same create
+        again with the same key and the same body answers the earlier job as a
+        normal success: no error and no second job. The same key with a
+        different body is refused with 409.
         """
         if not isinstance(destination, MappingABC):
             raise _invalid_request_option("destination must be a mapping")

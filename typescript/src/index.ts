@@ -392,9 +392,10 @@ export type BatchDeliveryErrorCode = "invalid_request" | "prompt_too_large" | "m
 export type BatchUnavailableReason = "model" | "partner" | "price";
 
 /**
- * The refusal codes of the batch routes, as `RunInfraError.code` carries them.
- * Codes every route can answer (for example `invalid_api_key`,
- * `rate_limit_exceeded`, or `unknown_endpoint`) are not repeated here.
+ * The refusal codes a caller of the batch routes can receive, as
+ * `RunInfraError.code` carries them. Codes every route can answer
+ * (`invalid_api_key` on 401, `rate_limit_exceeded` on 429) are not repeated
+ * here.
  */
 export type BatchRefusalCode =
   | "batch_not_open"
@@ -403,17 +404,11 @@ export type BatchRefusalCode =
   | "model_not_sold"
   | "flex_not_available"
   | "url_not_public"
-  | "link_not_supported"
   | "link_expires_too_soon"
-  | "link_changed"
-  | "file_too_large"
   | "destination_unreachable"
-  | "batch_not_ready"
-  | "quote_changed"
   | "needs_funds"
   | "key_spend_limit_reached"
   | "batch_ended"
-  | "batch_already_started"
   | "batches_scope_violation";
 
 /** Where a job's answers go. A webhook address is the only destination. */
@@ -462,7 +457,12 @@ export interface BatchListParams {
 
 const BATCH_LIST_PARAM_KEYS = ["limit", "cursor", "state", "model"] as const;
 
-/** A batch job, as every batch route answers it. */
+/**
+ * A batch job, as every batch route answers it. `failed` never includes an
+ * undelivered line, and once a job has ended the counts `succeeded`,
+ * `failed`, `expired`, `cancelled`, `undelivered`, and `lines_invalid` add up
+ * to `lines_total`.
+ */
 export interface BatchJob {
   id: string;
   /** `null` when the model is no longer listed. */
@@ -476,8 +476,13 @@ export interface BatchJob {
   lines_invalid: number;
   succeeded: number;
   failed: number;
+  /** Lines the job had not run when its window ended. They are not charged. */
   expired: number;
   cancelled: number;
+  /**
+   * Answered lines the address did not acknowledge with a 2xx in time. They
+   * are not charged and are not sent again.
+   */
   undelivered: number;
   /** What the job's lines were charged so far, in microcents (millionths of a cent). */
   cost_microcents: number;
@@ -567,7 +572,7 @@ export interface BatchTestDelivery {
   value: string;
 }
 
-/** One answered line. `id` is the same for the same line and attempt: drop repeats on it. */
+/** One answered line. `id` is the same for the same line and attempt. */
 export interface BatchAnswerDelivery {
   id: string;
   batch_id: string;
@@ -686,6 +691,12 @@ export class RateLimitError extends RunInfraError {
   }
 }
 
+/**
+ * A `402` from the gateway. On a batch route, read `code` to tell
+ * `needs_funds` (the account has never added funds) from
+ * `key_spend_limit_reached` (this API key reached its own monthly limit;
+ * raise the key's limit or use another key).
+ */
 export class InsufficientCreditsError extends RunInfraError {
   /** Remaining workspace balance in cents, when the gateway reports it. */
   readonly currentBalanceCents?: number;
@@ -936,13 +947,25 @@ function timingSafeTextEqual(a: string, b: string): boolean {
  * `{ id, test: true, value }` to the destination before it answers, and the
  * address passes only when it replies 2xx with a body that CONTAINS the posted
  * `value`. A fixed `200 OK` fails the create with `destination_unreachable`.
- * Line deliveries (`test: false`) are acknowledged by any 2xx.
+ * Line deliveries (`test: false`) are acknowledged by any 2xx. Each answered
+ * line is sent to the address once: if the address does not answer 2xx in
+ * time, the line is counted `undelivered`, it is not charged, and it is not
+ * sent again.
  *
  * Throws `WebhookVerificationError` when a header is missing, the signature
  * does not match, the timestamp is outside the tolerance, or the body is not a
- * delivery.
+ * delivery. Every failure of this helper is a `WebhookVerificationError`.
  */
 export function verifyBatchDelivery(options: VerifyBatchDeliveryOptions): BatchDelivery {
+  try {
+    return verifiedBatchDelivery(options);
+  } catch (error) {
+    if (error instanceof WebhookVerificationError) throw error;
+    throw new WebhookVerificationError("Batch delivery could not be verified.");
+  }
+}
+
+function verifiedBatchDelivery(options: VerifyBatchDeliveryOptions): BatchDelivery {
   if (!isPlainRecord(options)) {
     throw new WebhookVerificationError("Batch delivery verification options are required.");
   }
@@ -2213,9 +2236,11 @@ export class RunInfra {
   /**
    * Batch jobs.
    *
-   * Preview. A job runs the lines of a JSONL file as chat completions within
-   * 24 hours and posts each answer, signed, to your webhook address. Use a
-   * workspace-scoped key; verify deliveries with `verifyBatchDelivery`.
+   * Preview. A job takes a JSONL file of chat completion requests and posts
+   * each answer, signed, to your webhook address. A job has a window of 24
+   * hours. Lines run when the model has spare capacity. A line the job has
+   * not run when its window ends is counted `expired` and is not charged. Use
+   * a workspace-scoped key; verify deliveries with `verifyBatchDelivery`.
    */
   readonly batches: {
     /**
@@ -2223,7 +2248,9 @@ export class RunInfra {
      * signed test delivery to `destination.url`, so this call can take 20
      * seconds: its default timeout is never below 30 seconds. Pass
      * `idempotencyKey` to make the call safe to retry; without one it is sent
-     * once. A repeat with the same key answers the first job.
+     * once. Sending the same create again with the same key and the same body
+     * answers the earlier job as a normal success: no error and no second
+     * job. The same key with a different body is refused with 409.
      */
     create: (request: BatchCreateRequest, options?: RunInfraRequestOptions) => Promise<BatchCreateResponse>;
     /** Lists the workspace's jobs, newest first. Page with `next_cursor`. */

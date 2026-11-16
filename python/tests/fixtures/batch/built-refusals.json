@@ -2,31 +2,6 @@
   "source": "Typed from the service's documented wire.",
   "refusals": [
     {
-      "name": "closed",
-      "status": 404,
-      "headers": {},
-      "body": {
-        "error": {
-          "base_url": "https://api.runinfra.ai/v1",
-          "message": "Unknown endpoint /v1/batches. The base URL is https://api.runinfra.ai/v1.",
-          "type": "not_found_error",
-          "param": null,
-          "code": "unknown_endpoint"
-        },
-        "request_id": "req_built-fixture-closed"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "not_found_error",
-        "status": 404,
-        "code": "unknown_endpoint",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-closed"
-      }
-    },
-    {
       "name": "key-cannot-use-batch",
       "status": 403,
       "headers": {},
@@ -200,32 +175,6 @@
       }
     },
     {
-      "name": "limiter-unavailable",
-      "status": 503,
-      "headers": {
-        "Retry-After": "3"
-      },
-      "body": {
-        "error": {
-          "message": "API rate limiting is temporarily unavailable. Please retry shortly.",
-          "type": "api_error",
-          "param": null,
-          "code": "limiter_unavailable"
-        },
-        "request_id": "req_built-fixture-limiter-unavailable"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "api_error",
-        "status": 503,
-        "code": "limiter_unavailable",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": 3,
-        "request_id": "req_built-fixture-limiter-unavailable"
-      }
-    },
-    {
       "name": "batch-not-open",
       "status": 503,
       "headers": {
@@ -249,104 +198,6 @@
         "reason": null,
         "retry_after_seconds": 60,
         "request_id": "req_built-fixture-batch-not-open"
-      }
-    },
-    {
-      "name": "ask-again",
-      "status": 503,
-      "headers": {
-        "Retry-After": "5"
-      },
-      "body": {
-        "error": {
-          "message": "RunInfra could not reach its data store in time and shed this request before completing it. This is a temporary capacity condition on our side, not a problem with your request. Retry after the interval in the Retry-After header.",
-          "type": "api_error",
-          "param": null,
-          "code": "datastore_unavailable"
-        },
-        "request_id": "req_built-fixture-ask-again"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "api_error",
-        "status": 503,
-        "code": "datastore_unavailable",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": 5,
-        "request_id": "req_built-fixture-ask-again"
-      }
-    },
-    {
-      "name": "invalid-idempotency-key",
-      "status": 400,
-      "headers": {},
-      "body": {
-        "error": {
-          "message": "Idempotency-Key must be ASCII and 255 characters or less.",
-          "type": "invalid_request_error",
-          "param": "Idempotency-Key",
-          "code": "invalid_idempotency_key"
-        },
-        "request_id": "req_built-fixture-invalid-idempotency-key"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "invalid_request_error",
-        "status": 400,
-        "code": "invalid_idempotency_key",
-        "param": "Idempotency-Key",
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-invalid-idempotency-key"
-      }
-    },
-    {
-      "name": "payload-too-large",
-      "status": 413,
-      "headers": {},
-      "body": {
-        "error": {
-          "message": "Request body is too large.",
-          "type": "invalid_request_error",
-          "param": null,
-          "code": "payload_too_large"
-        },
-        "request_id": "req_built-fixture-payload-too-large"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "invalid_request_error",
-        "status": 413,
-        "code": "payload_too_large",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-payload-too-large"
-      }
-    },
-    {
-      "name": "invalid-json",
-      "status": 400,
-      "headers": {},
-      "body": {
-        "error": {
-          "message": "Invalid JSON in request body",
-          "type": "invalid_request_error",
-          "param": null,
-          "code": "invalid_json"
-        },
-        "request_id": "req_built-fixture-invalid-json"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "invalid_request_error",
-        "status": 400,
-        "code": "invalid_json",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-invalid-json"
       }
     },
     {
@@ -566,78 +417,6 @@
       }
     },
     {
-      "name": "link-not-supported",
-      "status": 400,
-      "headers": {},
-      "body": {
-        "error": {
-          "message": "Your file host must allow partial downloads. Signed links from the common storage services do.",
-          "type": "invalid_request_error",
-          "param": null,
-          "code": "link_not_supported"
-        },
-        "request_id": "req_built-fixture-link-not-supported"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "invalid_request_error",
-        "status": 400,
-        "code": "link_not_supported",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-link-not-supported"
-      }
-    },
-    {
-      "name": "link-changed",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "error": {
-          "message": "Your file changed after the check. Check it again.",
-          "type": "invalid_request_error",
-          "param": null,
-          "code": "link_changed"
-        },
-        "request_id": "req_built-fixture-link-changed"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "invalid_request_error",
-        "status": 409,
-        "code": "link_changed",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-link-changed"
-      }
-    },
-    {
-      "name": "file-too-large",
-      "status": 413,
-      "headers": {},
-      "body": {
-        "error": {
-          "message": "Your file is over 50 MiB.",
-          "type": "invalid_request_error",
-          "param": null,
-          "code": "file_too_large"
-        },
-        "request_id": "req_built-fixture-file-too-large"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "invalid_request_error",
-        "status": 413,
-        "code": "file_too_large",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-file-too-large"
-      }
-    },
-    {
       "name": "not-found",
       "status": 404,
       "headers": {},
@@ -707,78 +486,6 @@
         "reason": null,
         "retry_after_seconds": null,
         "request_id": "req_built-fixture-batch-ended"
-      }
-    },
-    {
-      "name": "batch-not-ready",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "error": {
-          "message": "Check the file and the address first.",
-          "type": "invalid_request_error",
-          "param": null,
-          "code": "batch_not_ready"
-        },
-        "request_id": "req_built-fixture-batch-not-ready"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "invalid_request_error",
-        "status": 409,
-        "code": "batch_not_ready",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-batch-not-ready"
-      }
-    },
-    {
-      "name": "quote-changed",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "error": {
-          "message": "The cost changed. Review it again.",
-          "type": "invalid_request_error",
-          "param": null,
-          "code": "quote_changed"
-        },
-        "request_id": "req_built-fixture-quote-changed"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "invalid_request_error",
-        "status": 409,
-        "code": "quote_changed",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-quote-changed"
-      }
-    },
-    {
-      "name": "batch-already-started",
-      "status": 409,
-      "headers": {},
-      "body": {
-        "error": {
-          "message": "This batch has already started.",
-          "type": "invalid_request_error",
-          "param": null,
-          "code": "batch_already_started"
-        },
-        "request_id": "req_built-fixture-batch-already-started"
-      },
-      "expect": {
-        "error_class": "RunInfraError",
-        "type": "invalid_request_error",
-        "status": 409,
-        "code": "batch_already_started",
-        "param": null,
-        "reason": null,
-        "retry_after_seconds": null,
-        "request_id": "req_built-fixture-batch-already-started"
       }
     }
   ]
