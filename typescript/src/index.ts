@@ -572,7 +572,7 @@ export interface BatchTestDelivery {
   value: string;
 }
 
-/** One answered line. `id` is the same for the same line and attempt. */
+/** One answered line. `id` is the same for the same line and attempt. Key your own writes on it. */
 export interface BatchAnswerDelivery {
   id: string;
   batch_id: string;

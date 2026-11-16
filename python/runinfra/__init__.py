@@ -315,7 +315,7 @@ class BatchTestDelivery(TypedDict):
 
 
 class BatchAnswerDelivery(TypedDict):
-    """One answered line. `id` is the same for the same line and attempt.
+    """One answered line. `id` is the same for the same line and attempt. Key your own writes on it.
 
     `line` is the line's 1-based number in the input file, and `response` is
     the chat completion object.
