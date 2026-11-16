@@ -73,6 +73,7 @@ See each package's own README + CHANGELOG for surface-level docs.
 | Embeddings | Beta. Typed helper for verified embedding deployments. |
 | Images, Audio TTS/ASR | Preview. Available when the selected deployment exposes the matching route. |
 | Voice pipeline | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |
+| Batch | Preview, from the release after 0.2.0. Create, list, read, and cancel batch jobs, and verify their signed webhook deliveries. |
 | Webhook verification | Local signature verification helpers are available in both SDKs. Delivery management is handled outside the public SDK surface. |
 
 See each package README and changelog for language-specific examples and exact helper names.
