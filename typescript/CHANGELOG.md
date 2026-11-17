@@ -3,6 +3,107 @@
 All notable changes to `@runinfra/sdk` are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-17
+
+Read "Changed" before you upgrade. A stream now throws where it used to end
+silently, the default timeouts are longer, and a call is no longer sent again
+after a timeout.
+
+### Changed
+- **A stream throws where it used to end silently.** Iterating a
+  `RunInfraStream` throws `RunInfraStreamError` when the API reports a failure
+  on the open stream (a frame that holds an `error` object, or a
+  `response.failed` event on a Responses stream), and
+  `RunInfraStreamIncompleteError` when the body ends without its end marker
+  (`[DONE]` on a chat stream, `response.completed` on a Responses stream; an
+  empty or missing body counts, and so does a body that ends in the middle of
+  an event). Every event that came first is still yielded before the throw,
+  and leaving the loop early throws nothing. Before, both cases ended the loop
+  as if the answer were complete. Wrap the loop in `try`/`catch`, and keep a
+  partial answer only if it is useful to you.
+- **A streamed call answered with JSON yields that answer once.** A streamed
+  call that repeats an `Idempotency-Key` the API has already answered gets one
+  JSON object back instead of an event stream (`Content-Type:
+  application/json`, `X-RunInfra-Idempotent-Replay: true`). The stream yields
+  that object once, marked `_idempotent_replay: true`, and ends quietly; it is
+  not reported as a cut stream. Any other successful answer that is JSON
+  instead of an event stream is yielded once in the same way, without the
+  mark. Before, such an answer ended the loop with no event. Check
+  `_idempotent_replay` on an event before you read deltas from it.
+- **New default timeouts.** With no `timeoutMs`, a non-streamed call is given
+  750 seconds (was 120), and a streamed call 190 seconds to its response
+  headers and to each later read (was 120). The API allows a whole response up
+  to 740 seconds and a stream up to 180 seconds to its first token, and the old
+  default cut such calls off. A `timeoutMs` you set, on the client or on a
+  call, is used as before. A call that hangs now takes longer to fail unless
+  you set your own timeout.
+- **On Node.js the built-in `fetch` still gives a non-streamed call at most
+  300 seconds to its response headers.** It gives up when no response headers
+  arrive within 300 seconds, whatever `timeoutMs` says, and a non-streamed
+  answer can keep its headers back until it is whole. Pass the client a
+  `fetch` that allows more, or stream an answer that may take longer.
+- **No re-send after a timeout.** A call that runs out of time throws
+  `RunInfraTimeoutError` and is never sent again, whatever `maxRetries` says
+  and whether or not it carries an `idempotencyKey`. Before, a `GET` and a
+  keyed non-streamed call were sent again after the SDK's own timeout, while
+  the API could still be working on the first send. The error carries
+  `clientRequestId`, the `X-Client-Request-Id` the SDK sent. The runtime's
+  `fetch` giving up on the response headers or the body by its own clock, as
+  Node's does after 300 seconds, counts as a timeout too: it throws
+  `RunInfraTimeoutError` where it used to throw `RunInfraConnectionError`, and
+  the call is not sent again. A failure to connect is still a
+  `RunInfraConnectionError`, and a call that is safe to send again is still
+  sent again after one. A timeout while an open stream is read carries
+  `clientRequestId` too, and so does a timeout while the body of an audio
+  speech answer is read.
+- **The retry rule follows what the API says.** Which calls may be sent again
+  has not changed: a `GET`, or a non-streamed chat, Responses or batch create
+  call that carries an `idempotencyKey`. For those calls:
+  - `x-should-retry` on the response and `error.retryable` in the error body
+    are obeyed. `false` stops the retry of a status that used to be retried.
+    `true` allows the retry of a status that used not to be.
+  - The wait is read from `Retry-After-Ms` first, then from `Retry-After`.
+    Before, `Retry-After-Ms` was not read.
+  - A `Retry-After` in whole seconds above 9007199254740991
+    (`Number.MAX_SAFE_INTEGER`) names no wait: the SDK's own backoff applies,
+    and `retryAfterMs` stays unset. So does a `Retry-After-Ms` with more
+    digits than a number can hold.
+  - A wait above 60 seconds is raised at once, with the wait on the error.
+    Before, the SDK slept a short backoff instead and sent the call again
+    sooner than the API asked. On a batch route the line stays 5 seconds for a
+    `503`, and a `409` stays final.
+  - The error body of a failed response is read before the SDK decides, where
+    it used to be dropped unread. Reading it counts against the call's timeout.
+- **`retryAfterMs` is on every typed error whose response named a wait**,
+  whatever its status. Before, only `RateLimitError` and the batch routes'
+  refusals carried it. Code that reads `retryAfterMs === undefined` to tell a
+  rate limit from another error must test the class or the status instead.
+- **`content` may be `null` in the types.** `ChatMessage.content` is now
+  `string | Array<...> | null` and may be left out, because an assistant
+  message that carries only tool calls has no content, and a stream delta's
+  `content` may be `null`. Code that passes `message.content` where a `string`
+  is required needs a check to compile. Nothing changes at run time.
+- The package's homepage link points at the public TypeScript guide.
+
+### Added
+- `RunInfraStreamError` and `RunInfraStreamIncompleteError`, described above.
+- `RunInfraError.retryable`: what the API said about asking again, when it
+  said it. `RunInfraError.clientRequestId`: set on a timeout.
+- Chat request fields the API documents and the request type did not name:
+  `top_k`, `min_p`, `repetition_penalty`, `n`, `best_of`, `logit_bias`,
+  `parallel_tool_calls`, `reasoning_effort`, `reasoning`, `include_reasoning`,
+  `prompt_cache_key`, `service_tier`, `store`, `safety_identifier`,
+  `modalities`, `audio`, `prediction`, `verbosity`, `web_search_options`,
+  `moderation`, `functions`, and `function_call`. A request that names one is
+  no longer refused before it is sent. Each of them is still accepted in
+  `extraBody`, where it had to go before; naming one in both places is refused.
+- Tool calls have a shape: `ChatMessage.tool_calls`
+  (`ChatCompletionMessageToolCall`), `ChatMessage.reasoning`, the `developer`
+  role, and `ChatToolMessage` for the message that answers a call by its
+  `tool_call_id`. On a stream, the delta types `tool_calls`
+  (`ChatCompletionStreamToolCallDelta`), `reasoning` and `role`, and each
+  choice types `index` and `finish_reason`.
+
 ## [0.3.0] - 2026-11-16
 
 ### Added

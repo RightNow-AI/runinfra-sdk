@@ -6,6 +6,7 @@ import json
 import hashlib
 import hmac
 import math
+import random
 import re
 import time
 import uuid
@@ -21,8 +22,22 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Mappi
 JsonDict = Dict[str, Any]
 Transport = Callable[["RunInfraRequest"], "RunInfraResponse"]
 ResponseBody = Union[bytes, Iterable[bytes]]
-__version__ = "0.3.0"
+__version__ = "0.3.1"
+# The longest wait the API may name (Retry-After-Ms, Retry-After) that the SDK
+# sleeps for before it asks again. A longer wait is raised at once, with the
+# wait on the error.
 _MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 60.0
+# The largest whole number of seconds a Retry-After may name: 2^53 - 1, the
+# largest safe integer, the same line in every runtime. A larger value names no
+# wait.
+_MAX_RETRY_AFTER_HEADER_SECONDS = 9007199254740991
+# The timeout of a non-streamed call when the caller names none. The API allows
+# a whole response up to 740 seconds, so the default sits just above.
+_DEFAULT_TIMEOUT_SECONDS = 750.0
+# The timeout of a streamed call when the caller names none: the wait for the
+# response headers, and for each later read. The API allows a stream up to 180
+# seconds to its first token, so the default sits just above.
+_DEFAULT_STREAM_TIMEOUT_SECONDS = 190.0
 _WEBHOOK_SIGNATURE_HEADER_MAX_LENGTH = 8192
 
 
@@ -43,13 +58,120 @@ class ModelListResponse(RunInfraRequestMetadata, total=False):
     data: List[ModelObject]
 
 
+class ChatCompletionToolCallFunction(TypedDict):
+    """The function one tool call names. `arguments` is a JSON string: parse and check it before you run the tool."""
+
+    name: str
+    arguments: str
+
+
+class ChatCompletionMessageToolCall(TypedDict):
+    """One call the model asks for, on an assistant message's `tool_calls`.
+
+    The `tool` message that answers the call repeats `id` as `tool_call_id`.
+    """
+
+    id: str
+    type: Literal["function"]
+    function: ChatCompletionToolCallFunction
+
+
+class _ChatMessageRole(TypedDict):
+    role: str
+
+
+class ChatMessage(_ChatMessageRole, total=False):
+    """One message of a chat.
+
+    `system`, `developer` and `user` messages carry `content`. An `assistant`
+    message carries `content`, a non-empty `tool_calls`, or both; its `content`
+    is None or left out when it carries only `tool_calls`, and `reasoning`
+    holds the model's thinking when the model reports it. A `tool` message
+    carries `content` and the `tool_call_id` of the call it answers;
+    `ChatToolMessage` types that one.
+    """
+
+    content: Union[str, List[JsonDict], None]
+    name: str
+    tool_call_id: str
+    tool_calls: List[ChatCompletionMessageToolCall]
+    reasoning: Optional[str]
+
+
+class ChatToolMessage(TypedDict):
+    """The message that answers one tool call: the result as `content`, and the call's id."""
+
+    role: Literal["tool"]
+    content: Union[str, List[JsonDict]]
+    tool_call_id: str
+
+
+class ChatCompletionChoice(TypedDict, total=False):
+    index: int
+    message: ChatMessage
+    finish_reason: Optional[str]
+    logprobs: Optional[JsonDict]
+
+
 class ChatCompletionResponse(RunInfraRequestMetadata, total=False):
     id: str
     object: str
     created: int
     model: str
-    choices: List[JsonDict]
+    choices: List[ChatCompletionChoice]
     usage: JsonDict
+
+
+class ChatCompletionStreamToolCallFunction(TypedDict, total=False):
+    """`name` comes on the first piece of a call; `arguments` is the next piece of the arguments' JSON string."""
+
+    name: str
+    arguments: str
+
+
+class _ChatCompletionStreamToolCallIndex(TypedDict):
+    index: int
+
+
+class ChatCompletionStreamToolCallDelta(_ChatCompletionStreamToolCallIndex, total=False):
+    """One piece of a tool call on a stream.
+
+    Pieces of the same call share `index`; join their `arguments`. `id` comes
+    on the first piece of a call.
+    """
+
+    id: str
+    type: Literal["function"]
+    function: ChatCompletionStreamToolCallFunction
+
+
+class ChatCompletionStreamDelta(TypedDict, total=False):
+    """The new part of a choice on one stream event. `reasoning` is the next piece of the model's thinking."""
+
+    role: str
+    content: Optional[str]
+    reasoning: Optional[str]
+    tool_calls: List[ChatCompletionStreamToolCallDelta]
+
+
+class ChatCompletionStreamChoice(TypedDict, total=False):
+    index: int
+    delta: ChatCompletionStreamDelta
+    finish_reason: Optional[str]
+
+
+class ChatCompletionStreamEvent(TypedDict, total=False):
+    """One event of a chat stream, as iterating a `RunInfraStream` yields it.
+
+    The usage event, when asked for, has an empty `choices` and the `usage`.
+    """
+
+    id: str
+    object: str
+    created: int
+    model: str
+    choices: List[ChatCompletionStreamChoice]
+    usage: Optional[JsonDict]
 
 
 class ResponsesCreateResponse(RunInfraRequestMetadata, total=False):
@@ -381,6 +503,13 @@ class RunInfraResponse:
 
 
 class RunInfraError(Exception):
+    """The base of every error the SDK raises.
+
+    `retry_after_seconds` is the wait the API named with the error
+    (`Retry-After-Ms` when the response carries it, else `Retry-After`). It is
+    set on every error whose response named a wait, whatever its status.
+    """
+
     def __init__(
         self,
         message: str,
@@ -403,6 +532,14 @@ class RunInfraError(Exception):
         # names one (error.reason): "model", "partner", or "price" on
         # flex_not_available. Other routes do not set it.
         self.reason: Optional[str] = None
+        # What the API said about asking again, when it said it: x-should-retry
+        # on the response, or "retryable" inside the error object. False means
+        # the same request will fail again. None when the API said nothing.
+        self.retryable: Optional[bool] = None
+        # The X-Client-Request-Id the SDK sent with the call, set on a timeout.
+        # A call that timed out before any response has no server request id,
+        # so this is the id to quote to support.
+        self.client_request_id: Optional[str] = None
 
 
 class AuthenticationError(RunInfraError):
@@ -463,7 +600,12 @@ class ModelNotFoundError(RunInfraError):
 
 
 class RunInfraTimeoutError(RunInfraError):
-    pass
+    """A call that ran out of time.
+
+    `client_request_id` holds the `X-Client-Request-Id` the SDK sent with the
+    call; `request_id` is set only when a response had begun. A call is never
+    sent again after a timeout: the API may still be working on it.
+    """
 
 
 class RunInfraConnectionError(RunInfraError):
@@ -480,6 +622,40 @@ class RunInfraStreamParseError(RunInfraError):
             message,
             status=0,
             error_type="stream_parse_error",
+            request_id=request_id,
+        )
+
+
+class RunInfraStreamError(RunInfraError):
+    """The API ended an open stream with a failure.
+
+    Raised for a frame that holds an `error` object, and for a
+    `response.failed` event on a Responses stream. `type`, `code` and `param`
+    are the API's own, `retryable` is set when the API marked the failure, and
+    `request_id` is the request id the frame names, else the stream's.
+    `status` is 0: the failure arrived after the HTTP status. The events before
+    the failure were already yielded. The answer is not whole.
+    """
+
+
+class RunInfraStreamIncompleteError(RunInfraError):
+    """A stream's body ended without its end marker.
+
+    The end marker is `[DONE]` on a chat stream and `response.completed` on a
+    Responses stream. Without it the connection was cut or the stream was
+    closed early, so the answer is not whole even though the HTTP status was
+    200. The events before the end were already yielded.
+    """
+
+    def __init__(
+        self,
+        message: str = "RunInfra stream ended before its end marker; the answer is incomplete",
+        request_id: Optional[str] = None,
+    ) -> None:
+        super().__init__(
+            message,
+            status=0,
+            error_type="stream_incomplete_error",
             request_id=request_id,
         )
 
@@ -501,7 +677,59 @@ class AudioResponse:
     request_id: Optional[str] = None
 
 
+def _stream_failure(event: Any, stream_request_id: Optional[str]) -> Optional[RunInfraStreamError]:
+    """The failure an open stream reported, read from one parsed event.
+
+    A frame with a top-level `error` object is one, and so is a Responses
+    `response.failed` event, whose error sits inside `response`. None for every
+    other event.
+    """
+    if not isinstance(event, dict):
+        return None
+    failure: Optional[Dict[str, Any]] = None
+    if isinstance(event.get("error"), dict):
+        failure = event["error"]
+    elif event.get("type") == "response.failed":
+        response = event.get("response")
+        nested = response.get("error") if isinstance(response, dict) else None
+        failure = nested if isinstance(nested, dict) else {}
+    if failure is None:
+        return None
+    message = failure.get("message")
+    error_type = failure.get("type")
+    code = failure.get("code")
+    param = failure.get("param")
+    request_id = event.get("request_id")
+    error = RunInfraStreamError(
+        message if isinstance(message, str) and message else "RunInfra stream ended with an error",
+        status=0,
+        error_type=error_type if isinstance(error_type, str) else "api_error",
+        request_id=request_id if isinstance(request_id, str) and request_id else stream_request_id,
+        code=code if isinstance(code, str) else None,
+        param=param if isinstance(param, str) else None,
+    )
+    if isinstance(failure.get("retryable"), bool):
+        error.retryable = failure["retryable"]
+    return error
+
+
 class RunInfraStream:
+    """The events of one streamed answer.
+
+    Iterating yields each event as it arrives. The iteration ends quietly only
+    when the stream carried its end marker: `[DONE]` on a chat stream,
+    `response.completed` on a Responses stream. It raises instead, after
+    yielding every event that came first, when the API reports a failure on the
+    open stream (`RunInfraStreamError`) or when the body ends without the end
+    marker (`RunInfraStreamIncompleteError`). Closing the iterator early raises
+    nothing.
+
+    When the API answers the call with one JSON object instead of an event
+    stream, the iteration yields that object once and ends quietly. That is the
+    answer to a streamed call that repeats an `Idempotency-Key`: the object
+    carries `_idempotent_replay` true, as a non-streamed answer does.
+    """
+
     def __init__(
         self,
         body: ResponseBody,
@@ -511,21 +739,38 @@ class RunInfraStream:
         self._body = body
         self.request_id = request_id
         self._sensitive_values = tuple(sensitive_values)
+        # The response, when its body is one JSON object instead of an event stream. Set by the client.
+        self._answered_with_json: Optional[RunInfraResponse] = None
+        # The X-Client-Request-Id the SDK sent with the call. A timeout while the stream is read names it. Set by
+        # the client.
+        self._client_request_id: Optional[str] = None
 
     def __iter__(self) -> Iterator[JsonDict]:
         buffer = ""
         data_lines: List[str] = []
         decoder = codecs.getincrementaldecoder("utf-8")()
+        # Whether the end marker arrived: [DONE], or a Responses response.completed event.
+        completed = False
 
         def dispatch_event() -> Optional[JsonDict]:
+            nonlocal completed
             payload = "\n".join(data_lines).strip()
             data_lines.clear()
-            if not payload or payload == "[DONE]":
+            if not payload:
+                return None
+            if payload == "[DONE]":
+                completed = True
                 return None
             try:
-                return json.loads(payload)
+                event = json.loads(payload)
             except json.JSONDecodeError as exc:
                 raise RunInfraStreamParseError(request_id=self.request_id) from exc
+            failure = _stream_failure(event, self.request_id)
+            if failure is not None:
+                raise failure
+            if isinstance(event, dict) and event.get("type") == "response.completed":
+                completed = True
+            return event
 
         def parse_line(line: str) -> Optional[JsonDict]:
             line = line[:-1] if line.endswith("\r") else line
@@ -553,6 +798,19 @@ class RunInfraStream:
 
         error_to_raise: Optional[RunInfraError] = None
         try:
+            if self._answered_with_json is not None:
+                # One JSON object, not an event stream: read it whole and yield it as the only event.
+                try:
+                    answer = json.loads(b"".join(chunks).decode("utf-8"))
+                except ValueError as exc:
+                    raise RunInfraStreamIncompleteError(
+                        "RunInfra answered a streamed call with a JSON body that could not be read; "
+                        "the answer is incomplete",
+                        request_id=self.request_id,
+                    ) from exc
+                yield _json_answer_with_metadata(answer, self._answered_with_json)
+                return
+
             for chunk in chunks:
                 buffer += decoder.decode(chunk, final=False)
                 lines = buffer.split("\n")
@@ -562,14 +820,30 @@ class RunInfraStream:
                     if parsed is not None:
                         yield parsed
 
-            buffer += decoder.decode(b"", final=True)
-            parsed = parse_line(buffer)
-            if parsed is not None:
-                yield parsed
-            if data_lines:
-                parsed = dispatch_event()
+            try:
+                buffer += decoder.decode(b"", final=True)
+            except UnicodeDecodeError:
+                # The body ended inside a character. What is left is an unfinished event, judged below.
+                buffer += "\ufffd"
+            # What is left was not ended by a blank line. If it cannot be read and no end marker came before
+            # it, the body ended inside an event: that is a cut stream, reported below, not a malformed event.
+            unfinished: List[JsonDict] = []
+            try:
+                parsed = parse_line(buffer)
                 if parsed is not None:
-                    yield parsed
+                    unfinished.append(parsed)
+                if data_lines:
+                    parsed = dispatch_event()
+                    if parsed is not None:
+                        unfinished.append(parsed)
+            except RunInfraStreamParseError:
+                if completed:
+                    raise
+            for event in unfinished:
+                yield event
+            # The body is over. Without the end marker the answer was cut short, whatever the HTTP status said.
+            if not completed:
+                raise RunInfraStreamIncompleteError(request_id=self.request_id)
         except RunInfraError as exc:
             error_to_raise = _redacted_runinfra_error(exc, self._sensitive_values)
         except Exception as exc:
@@ -582,6 +856,10 @@ class RunInfraStream:
             if callable(close_chunks):
                 close_chunks()
         if error_to_raise is not None:
+            if isinstance(error_to_raise, RunInfraTimeoutError) and self._client_request_id is not None:
+                # A timeout while the stream is read names the request id the SDK sent, as a timeout before the
+                # stream opened does.
+                error_to_raise.client_request_id = self._client_request_id
             raise error_to_raise
 
 
@@ -657,7 +935,15 @@ def _base_url_looks_pipeline_scoped(base_url: str) -> bool:
     return len(segments) > last_v1 + 1
 
 
-def _default_transport(timeout: float) -> Transport:
+def _default_transport(timeout: Optional[float] = None) -> Transport:
+    """The standard-library transport.
+
+    `timeout` is the client's own timeout. A request's own `timeout_seconds`
+    wins over it. With neither, a non-streamed request is given 750 seconds and
+    a streamed request 190 seconds; the timeout bounds the wait for the
+    response headers and each later read.
+    """
+
     def send(request: RunInfraRequest) -> RunInfraResponse:
         req = urllib.request.Request(
             request.url,
@@ -668,7 +954,9 @@ def _default_transport(timeout: float) -> Transport:
         try:
             response = urllib.request.urlopen(
                 req,
-                timeout=request.timeout_seconds or timeout,
+                timeout=request.timeout_seconds
+                or timeout
+                or (_DEFAULT_STREAM_TIMEOUT_SECONDS if request.stream else _DEFAULT_TIMEOUT_SECONDS),
             )
             response_headers = dict(response.headers.items())
             if request.stream:
@@ -722,13 +1010,39 @@ def _is_retryable(status: int) -> bool:
     return status in {408, 409, 429, 500, 502, 503, 504}
 
 
-def _retry_after_seconds(response: RunInfraResponse) -> Optional[float]:
-    value = response.headers.get("retry-after") or response.headers.get("Retry-After")
+def _header(headers: Mapping[str, str], name: str) -> Optional[str]:
+    """One response header by its lower-case name, whatever case the transport kept."""
+    for key, value in headers.items():
+        if isinstance(key, str) and key.lower() == name and isinstance(value, str):
+            return value
+    return None
+
+
+def _retry_after_ms_header_seconds(response: RunInfraResponse) -> Optional[float]:
+    """`Retry-After-Ms` in seconds: the wait in milliseconds, a plain non-negative number."""
+    value = _header(response.headers, "retry-after-ms")
+    if not value:
+        return None
+    value = value.strip()
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", value) is None:
+        return None
+    milliseconds = float(value)
+    if not math.isfinite(milliseconds):
+        return None
+    return math.ceil(milliseconds) / 1000.0
+
+
+def _retry_after_header_seconds(response: RunInfraResponse) -> Optional[float]:
+    """`Retry-After` in seconds: whole seconds, or an HTTP date."""
+    value = _header(response.headers, "retry-after")
     if not value:
         return None
     value = value.strip()
     if re.fullmatch(r"[0-9]+", value):
-        return float(value)
+        seconds = float(value)
+        # A value above the largest safe integer names no wait: the SDK's own backoff applies. More digits than a
+        # float holds reads as infinity, which is above that line too.
+        return seconds if seconds <= _MAX_RETRY_AFTER_HEADER_SECONDS else None
     if re.match(r"^(?:[+-]|\d)", value):
         return None
     try:
@@ -738,29 +1052,95 @@ def _retry_after_seconds(response: RunInfraResponse) -> Optional[float]:
         return None
 
 
-def _automatic_retry_after_seconds(response: RunInfraResponse) -> Optional[float]:
-    delay = _retry_after_seconds(response)
-    if delay is None or delay > _MAX_AUTOMATIC_RETRY_AFTER_SECONDS:
-        return None
-    return delay
+def _retry_after_seconds(response: RunInfraResponse) -> Optional[float]:
+    """The wait the API named with a response, in seconds.
+
+    `Retry-After-Ms` is read first, because it can name a wait shorter than a
+    second; `Retry-After` is read when the millisecond header is missing or
+    malformed.
+    """
+    wait = _retry_after_ms_header_seconds(response)
+    return wait if wait is not None else _retry_after_header_seconds(response)
 
 
-def _retry_delay_seconds(attempt: int, base_seconds: float, response: Optional[RunInfraResponse] = None) -> float:
-    if response is not None:
-        retry_after = _automatic_retry_after_seconds(response)
-        if retry_after is not None:
-            return retry_after
+def _retry_marker(response: RunInfraResponse, body_retryable: Optional[bool]) -> Optional[bool]:
+    """What the API said about asking again.
+
+    Read from the `x-should-retry` header and from `retryable` inside the error
+    object. An explicit False from either wins. None when the API said nothing.
+    """
+    header = (_header(response.headers, "x-should-retry") or "").strip().lower()
+    header_retryable = True if header == "true" else False if header == "false" else None
+    if header_retryable is False or body_retryable is False:
+        return False
+    if header_retryable is True or body_retryable is True:
+        return True
+    return None
+
+
+def _backoff_delay_seconds(attempt: int, base_seconds: float) -> float:
+    """The SDK's own wait before it asks again when the API named none: exponential, with jitter, at most 30 seconds."""
     if base_seconds <= 0:
         return 0
-    return min(30.0, base_seconds * (2 ** max(0, attempt - 1)))
+    exponential = base_seconds * (2 ** max(0, attempt - 1))
+    jitter = random.random() * base_seconds
+    return min(30.0, exponential + jitter)
 
 
-def _discard_response_body(response: RunInfraResponse) -> None:
+def _failed_response_may_be_asked_again(status: int, retryable: Optional[bool], batch: bool) -> bool:
+    """Whether a failed response may be asked again, for a call that is safe to send again.
+
+    The API's own word decides when it gave one: False never, True whatever the
+    status. Without it the status decides. A 409 from a batch route is always
+    final.
+    """
+    if batch and status == 409:
+        return False
+    if retryable is not None:
+        return retryable
+    return _is_retryable(status)
+
+
+def _max_automatic_retry_after_seconds(status: int, batch: bool) -> float:
+    """The longest wait named by the API that the SDK sleeps for before it asks again.
+
+    A wait above it is raised at once with the wait on the error, so a call
+    never blocks for minutes and never asks again sooner than it was told.
+    """
+    if batch and status == 503:
+        return _BATCH_MAX_AUTOMATIC_RETRY_AFTER_SECONDS
+    return _MAX_AUTOMATIC_RETRY_AFTER_SECONDS
+
+
+def _read_failed_response_body(
+    response: RunInfraResponse,
+    sensitive_values: Iterable[str] = (),
+) -> Optional[RunInfraError]:
+    """Read a failed response's body into memory, once, and close it.
+
+    The body is read before the SDK decides whether to ask again, because the
+    API can mark a failure as retryable or not inside it. Returns the timeout
+    when reading the body ran out of time, else None; a body that cannot be
+    read for another reason is treated as empty.
+    """
     if isinstance(response.body, bytes):
-        return
-    close_body = getattr(response.body, "close", None)
-    if callable(close_body):
-        close_body()
+        return None
+    body = response.body
+    timeout: Optional[RunInfraError] = None
+    data = b""
+    try:
+        data = b"".join(body)
+    except Exception as exc:
+        data = b""
+        error = _transport_error(exc, _request_id_from_headers(response.headers), sensitive_values)
+        if isinstance(error, RunInfraTimeoutError):
+            timeout = error
+    finally:
+        close_body = getattr(body, "close", None)
+        if callable(close_body):
+            close_body()
+    response.body = data
+    return timeout
 
 
 def _validated_header(value: str, name: str, max_length: int = 512) -> str:
@@ -853,9 +1233,13 @@ def _validate_embedding_response_options(options: Mapping[str, Any]) -> None:
 def _json_payload_with_extra(
     fields: Mapping[str, object],
     extra_body: Optional[Mapping[str, object]],
+    extra_body_open_keys: Iterable[str] = (),
 ) -> Dict[str, object]:
+    # `extra_body_open_keys` names the fields that became keyword parameters
+    # after callers had to put them in `extra_body`. They stay accepted there,
+    # as long as the keyword is left out; naming one in both places is refused.
     payload = {key: value for key, value in fields.items() if value is not None}
-    typed_keys = set(fields.keys())
+    typed_keys = set(fields.keys()) - set(extra_body_open_keys)
     if extra_body is None:
         return payload
     if not isinstance(extra_body, MappingABC):
@@ -863,7 +1247,7 @@ def _json_payload_with_extra(
     for key, value in extra_body.items():
         if not isinstance(key, str) or not key.strip():
             raise _invalid_request_option("extra_body keys must be non-empty strings")
-        if key in typed_keys:
+        if key in typed_keys or key in payload:
             raise _invalid_request_option(f"extra_body must not override typed request field: {key}")
         payload[key] = value
     return payload
@@ -1314,9 +1698,12 @@ def _redacted_runinfra_error(
 ) -> RunInfraError:
     sensitive = tuple(sensitive_values)
     redacted = _redacted_runinfra_error_copy(error, sensitive)
-    # A batch refusal's cause rides every error class; the copy rebuilds each
-    # class from its own constructor, which does not name it.
+    # A batch refusal's cause, the retry marker and the request id the SDK sent
+    # ride every error class; the copy rebuilds each class from its own
+    # constructor, which names none of them.
     redacted.reason = _redacted_error_metadata(getattr(error, "reason", None), sensitive)
+    redacted.retryable = getattr(error, "retryable", None)
+    redacted.client_request_id = getattr(error, "client_request_id", None)
     return redacted
 
 
@@ -1330,6 +1717,8 @@ def _redacted_runinfra_error_copy(
     param = _redacted_error_metadata(error.param, sensitive)
     if isinstance(error, RunInfraStreamParseError):
         return RunInfraStreamParseError(message, request_id=error.request_id)
+    if isinstance(error, RunInfraStreamIncompleteError):
+        return RunInfraStreamIncompleteError(message, request_id=error.request_id)
     if isinstance(error, UnsupportedOperationError):
         return UnsupportedOperationError(message)
     if isinstance(error, WebhookVerificationError):
@@ -1413,20 +1802,6 @@ def _idempotent_replay_from_headers(headers: Mapping[str, str]) -> bool:
     return False
 
 
-def _batch_refusal_is_raised_at_once(response: RunInfraResponse) -> bool:
-    """Whether a batch route's refusal is raised at once instead of being asked again.
-
-    A 409 is final. A 503 whose `Retry-After` is above five seconds reaches the
-    caller with that wait instead of a call that blocks.
-    """
-    if response.status == 409:
-        return True
-    if response.status != 503:
-        return False
-    wait = _retry_after_seconds(response)
-    return wait is not None and wait > _BATCH_MAX_AUTOMATIC_RETRY_AFTER_SECONDS
-
-
 def _batch_refusal_error(
     response: RunInfraResponse,
     *,
@@ -1442,10 +1817,10 @@ def _batch_refusal_error(
 ) -> RunInfraError:
     """A batch route's refusal as the SDK's typed error.
 
-    The class follows the HTTP status as on every route, with two differences:
+    The class follows the HTTP status as on every route, with one difference:
     only `model_not_sold` is a `ModelNotFoundError` (an unknown batch id is a
-    plain 404 `RunInfraError` that keeps the gateway's own type), and every
-    refusal keeps `reason` and `Retry-After` when the gateway sent them.
+    plain 404 `RunInfraError` that keeps the gateway's own type). The refusal
+    also keeps the gateway's cause word as `reason`.
     """
     status = response.status
     retry_after_seconds = _retry_after_seconds(response)
@@ -1518,11 +1893,19 @@ def _batch_refusal_error(
 
 
 def _error_from_response(response: RunInfraResponse, batch: bool = False) -> RunInfraError:
+    """A failed response as the SDK's typed error.
+
+    Whatever its class and status, the error keeps the wait the API named
+    (`Retry-After-Ms`, else `Retry-After`) as `retry_after_seconds`, and what
+    the API said about asking again (`x-should-retry`, `error.retryable`) as
+    `retryable`. A batch route's refusal also keeps its cause word.
+    """
     message = f"RunInfra request failed with status {response.status}"
     error_type = "api_error"
     code: Optional[str] = None
     param: Optional[str] = None
     reason: Optional[str] = None
+    body_retryable: Optional[bool] = None
     current_balance_cents: Optional[int] = None
     required_cents: Optional[int] = None
     topup_url: Optional[str] = None
@@ -1540,6 +1923,8 @@ def _error_from_response(response: RunInfraResponse, batch: bool = False) -> Run
                 param = error["param"]
             if isinstance(error.get("reason"), str):
                 reason = error["reason"]
+            if isinstance(error.get("retryable"), bool):
+                body_retryable = error["retryable"]
             # Structured remediation fields the gateway ships on 402.
             # `bool` is a subclass of `int`, so exclude it explicitly.
             if isinstance(error.get("current_balance_cents"), int) and not isinstance(
@@ -1556,8 +1941,9 @@ def _error_from_response(response: RunInfraResponse, batch: bool = False) -> Run
         pass
 
     request_id = _request_id_from_headers(response.headers)
+    typed_error: RunInfraError
     if batch:
-        return _batch_refusal_error(
+        typed_error = _batch_refusal_error(
             response,
             message=message,
             error_type=error_type,
@@ -1569,8 +1955,8 @@ def _error_from_response(response: RunInfraResponse, batch: bool = False) -> Run
             required_cents=required_cents,
             topup_url=topup_url,
         )
-    if response.status == 401:
-        return AuthenticationError(
+    elif response.status == 401:
+        typed_error = AuthenticationError(
             message,
             status=response.status,
             error_type="auth_error",
@@ -1578,11 +1964,11 @@ def _error_from_response(response: RunInfraResponse, batch: bool = False) -> Run
             code=code,
             param=param,
         )
-    if response.status == 403:
+    elif response.status == 403:
         # Default to "permission_denied", but keep a more specific gateway
         # discriminator (e.g. "byoc_plan_required") so callers can branch on
         # `.type` instead of regex-scraping the message.
-        return PermissionDeniedError(
+        typed_error = PermissionDeniedError(
             message,
             status=response.status,
             error_type=error_type if error_type != "api_error" else "permission_denied",
@@ -1590,8 +1976,8 @@ def _error_from_response(response: RunInfraResponse, batch: bool = False) -> Run
             code=code,
             param=param,
         )
-    if response.status == 402:
-        return InsufficientCreditsError(
+    elif response.status == 402:
+        typed_error = InsufficientCreditsError(
             message,
             status=response.status,
             error_type="insufficient_credits",
@@ -1602,8 +1988,8 @@ def _error_from_response(response: RunInfraResponse, batch: bool = False) -> Run
             required_cents=required_cents,
             topup_url=topup_url,
         )
-    if response.status == 404 or error_type == "model_not_found":
-        return ModelNotFoundError(
+    elif response.status == 404 or error_type == "model_not_found":
+        typed_error = ModelNotFoundError(
             message,
             status=response.status,
             error_type="model_not_found",
@@ -1611,18 +1997,17 @@ def _error_from_response(response: RunInfraResponse, batch: bool = False) -> Run
             code=code,
             param=param,
         )
-    if response.status == 429:
-        return RateLimitError(
+    elif response.status == 429:
+        typed_error = RateLimitError(
             message,
             status=response.status,
             error_type="rate_limit_error",
             request_id=request_id,
-            retry_after_seconds=_retry_after_seconds(response),
             code=code,
             param=param,
         )
-    if error_type == "deployment_error":
-        return DeploymentError(
+    elif error_type == "deployment_error":
+        typed_error = DeploymentError(
             message,
             status=response.status,
             error_type=error_type,
@@ -1630,14 +2015,18 @@ def _error_from_response(response: RunInfraResponse, batch: bool = False) -> Run
             code=code,
             param=param,
         )
-    return RunInfraError(
-        message,
-        status=response.status,
-        error_type=error_type,
-        request_id=request_id,
-        code=code,
-        param=param,
-    )
+    else:
+        typed_error = RunInfraError(
+            message,
+            status=response.status,
+            error_type=error_type,
+            request_id=request_id,
+            code=code,
+            param=param,
+        )
+    typed_error.retry_after_seconds = _retry_after_seconds(response)
+    typed_error.retryable = _retry_marker(response, body_retryable)
+    return typed_error
 
 
 def _json_body(payload: Mapping[str, Any]) -> bytes:
@@ -1664,6 +2053,16 @@ def _json_response(response: RunInfraResponse, sensitive_values: Iterable[str] =
         )
     if error_to_raise is not None:
         raise error_to_raise
+    return _json_answer_with_metadata(payload, response)
+
+
+def _json_answer_with_metadata(payload: Any, response: RunInfraResponse) -> Any:
+    """A parsed JSON answer as the SDK returns it.
+
+    The object, with `_request_id` and `_idempotent_replay` when the response
+    headers carry them. An answer that is not an object is a shape error.
+    """
+    request_id = _request_id_from_headers(response.headers)
     if isinstance(payload, dict):
         metadata: Dict[str, Any] = {}
         if request_id:
@@ -1677,6 +2076,37 @@ def _json_response(response: RunInfraResponse, sensitive_values: Iterable[str] =
         error_type="response_shape_error",
         request_id=request_id,
     )
+
+
+def _stream_answered_with_json(headers: Mapping[str, str]) -> bool:
+    """Whether a successful answer to a streamed call is one JSON object instead of an event stream.
+
+    The API answers this way when a streamed call repeats an `Idempotency-Key`
+    it has already answered: `Content-Type: application/json`,
+    `X-RunInfra-Idempotent-Replay: true` and one object.
+    """
+    content_type = (_header(headers, "content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type == "text/event-stream":
+        return False
+    if content_type == "application/json" or content_type.endswith("+json"):
+        return True
+    return _idempotent_replay_from_headers(headers)
+
+
+def _stream_response(
+    response: RunInfraResponse,
+    sensitive_values: Iterable[str] = (),
+    client_request_id: Optional[str] = None,
+) -> RunInfraStream:
+    """The stream of a successful answer to a streamed call.
+
+    `client_request_id` is the X-Client-Request-Id the SDK sent with the call.
+    """
+    stream = RunInfraStream(response.body, _request_id_from_headers(response.headers), sensitive_values)
+    stream._client_request_id = client_request_id
+    if _stream_answered_with_json(response.headers):
+        stream._answered_with_json = response
+    return stream
 
 
 def _json_payload_kind(payload: Any) -> str:
@@ -1796,12 +2226,23 @@ class _Requester:
         request_options: Optional[Mapping[str, Any]] = None,
         batch: bool = False,
         minimum_default_timeout_seconds: Optional[float] = None,
+        sent_client_request_ids: Optional[List[str]] = None,
     ) -> RunInfraResponse:
-        # `batch` marks a batch route: its refusals keep the gateway's reason and
-        # Retry-After on the typed error. A 409 is a final answer that is never
-        # retried, and a 503 that asks for a wait above five seconds is raised at
-        # once. `minimum_default_timeout_seconds` is the smallest timeout the
-        # call uses when the caller names none for it.
+        # `batch` marks a batch route: its refusals keep the gateway's reason on
+        # the typed error. A 409 is a final answer that is never retried, and a
+        # 503 that asks for a wait above five seconds is raised at once.
+        # `minimum_default_timeout_seconds` is the smallest timeout the call
+        # uses when the caller names none for it. `sent_client_request_ids`,
+        # when a list is given, receives the X-Client-Request-Id the SDK sends
+        # with the call.
+        #
+        # A call is sent again only when it is safe to: a GET, or a JSON POST
+        # that is marked replay-safe, is not streamed and carries an
+        # idempotency key. Such a call is asked again after a transport failure
+        # and after a failed response the API marks retryable (x-should-retry,
+        # error.retryable) or, when the API says nothing, one with a retryable
+        # status. It is never asked again after a timeout, after the API said
+        # not to, or when the API names a wait longer than the SDK sleeps for.
         request_options = _validated_request_options(request_options)
         client_request_id = _request_option(
             request_options,
@@ -1870,8 +2311,12 @@ class _Requester:
         can_retry = method_name in {"GET", "HEAD"} or (
             has_idempotency_key and has_replayable_json_body
         )
+        sent_client_request_id = request_headers["X-Client-Request-Id"]
+        if sent_client_request_ids is not None:
+            sent_client_request_ids.append(sent_client_request_id)
         while True:
             error_to_raise: Optional[RunInfraError] = None
+            may_send_again = False
             try:
                 response = self.transport(
                     RunInfraRequest(
@@ -1884,35 +2329,47 @@ class _Requester:
                     )
                 )
             except _TransportBodyReadError as exc:
-                if can_retry and attempt < max_retries:
-                    attempt += 1
-                    time.sleep(_retry_delay_seconds(attempt, retry_base_seconds))
-                    continue
                 error_to_raise = _redacted_runinfra_error(exc.error, [self.api_key])
+                may_send_again = True
             except RunInfraError as exc:
                 error_to_raise = _redacted_runinfra_error(exc, [self.api_key])
             except Exception as exc:
-                if can_retry and attempt < max_retries:
-                    attempt += 1
-                    time.sleep(_retry_delay_seconds(attempt, retry_base_seconds))
-                    continue
                 error_to_raise = _transport_error(exc, sensitive_values=[self.api_key])
+                may_send_again = True
             if error_to_raise is not None:
+                if isinstance(error_to_raise, RunInfraTimeoutError):
+                    # The call ran out of time. It is never sent again: the API may still be working on it,
+                    # and a second send could run and charge it twice.
+                    error_to_raise.client_request_id = sent_client_request_id
+                elif may_send_again and can_retry and attempt < max_retries:
+                    attempt += 1
+                    time.sleep(_backoff_delay_seconds(attempt, retry_base_seconds))
+                    continue
                 raise error_to_raise
 
             if 200 <= response.status < 300:
                 return response
+            # The error body is read before the SDK decides anything: the API can say inside it whether
+            # asking again helps.
+            body_timeout = _read_failed_response_body(response, [self.api_key])
+            if body_timeout is not None:
+                body_timeout.client_request_id = sent_client_request_id
+                raise body_timeout
+            failure = _redacted_runinfra_error(_error_from_response(response, batch), [self.api_key])
             if (
-                can_retry
-                and _is_retryable(response.status)
-                and not (batch and _batch_refusal_is_raised_at_once(response))
-                and attempt < max_retries
+                not can_retry
+                or attempt >= max_retries
+                or not _failed_response_may_be_asked_again(response.status, failure.retryable, batch)
             ):
-                attempt += 1
-                _discard_response_body(response)
-                time.sleep(_retry_delay_seconds(attempt, retry_base_seconds, response))
-                continue
-            raise _redacted_runinfra_error(_error_from_response(response, batch), [self.api_key])
+                raise failure
+            wait_seconds = failure.retry_after_seconds
+            # A wait longer than the SDK sleeps for is the caller's to plan: raise now, with the wait on the error.
+            if wait_seconds is not None and wait_seconds > _max_automatic_retry_after_seconds(response.status, batch):
+                raise failure
+            attempt += 1
+            time.sleep(
+                wait_seconds if wait_seconds is not None else _backoff_delay_seconds(attempt, retry_base_seconds)
+            )
 
 
 class _ChatCompletions:
@@ -1924,7 +2381,7 @@ class _ChatCompletions:
         self,
         *,
         model: str,
-        messages: Sequence[Mapping[str, object]],
+        messages: Sequence[Union[ChatMessage, Mapping[str, object]]],
         stream: Literal[True],
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
@@ -1942,6 +2399,28 @@ class _ChatCompletions:
         seed: Optional[int] = None,
         logprobs: Optional[bool] = None,
         top_logprobs: Optional[int] = None,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        n: Optional[int] = None,
+        best_of: Optional[int] = None,
+        logit_bias: Optional[Mapping[str, float]] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
+        reasoning: Optional[Mapping[str, object]] = None,
+        include_reasoning: Optional[bool] = None,
+        prompt_cache_key: Optional[str] = None,
+        service_tier: Optional[str] = None,
+        store: Optional[bool] = None,
+        safety_identifier: Optional[str] = None,
+        modalities: Optional[Sequence[str]] = None,
+        audio: Optional[Mapping[str, object]] = None,
+        prediction: Optional[Mapping[str, object]] = None,
+        verbosity: Optional[str] = None,
+        web_search_options: Optional[Mapping[str, object]] = None,
+        moderation: Optional[object] = None,
+        functions: Optional[Sequence[Mapping[str, object]]] = None,
+        function_call: Optional[Union[str, Mapping[str, object]]] = None,
         request_options: Optional[Mapping[str, Any]] = None,
         extra_body: Optional[Mapping[str, object]] = None,
     ) -> RunInfraStream: ...
@@ -1951,7 +2430,7 @@ class _ChatCompletions:
         self,
         *,
         model: str,
-        messages: Sequence[Mapping[str, object]],
+        messages: Sequence[Union[ChatMessage, Mapping[str, object]]],
         stream: Literal[False] = False,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
@@ -1969,6 +2448,28 @@ class _ChatCompletions:
         seed: Optional[int] = None,
         logprobs: Optional[bool] = None,
         top_logprobs: Optional[int] = None,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        n: Optional[int] = None,
+        best_of: Optional[int] = None,
+        logit_bias: Optional[Mapping[str, float]] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
+        reasoning: Optional[Mapping[str, object]] = None,
+        include_reasoning: Optional[bool] = None,
+        prompt_cache_key: Optional[str] = None,
+        service_tier: Optional[str] = None,
+        store: Optional[bool] = None,
+        safety_identifier: Optional[str] = None,
+        modalities: Optional[Sequence[str]] = None,
+        audio: Optional[Mapping[str, object]] = None,
+        prediction: Optional[Mapping[str, object]] = None,
+        verbosity: Optional[str] = None,
+        web_search_options: Optional[Mapping[str, object]] = None,
+        moderation: Optional[object] = None,
+        functions: Optional[Sequence[Mapping[str, object]]] = None,
+        function_call: Optional[Union[str, Mapping[str, object]]] = None,
         request_options: Optional[Mapping[str, Any]] = None,
         extra_body: Optional[Mapping[str, object]] = None,
     ) -> ChatCompletionResponse: ...
@@ -1978,7 +2479,7 @@ class _ChatCompletions:
         self,
         *,
         model: str,
-        messages: Sequence[Mapping[str, object]],
+        messages: Sequence[Union[ChatMessage, Mapping[str, object]]],
         stream: bool = False,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
@@ -1996,6 +2497,28 @@ class _ChatCompletions:
         seed: Optional[int] = None,
         logprobs: Optional[bool] = None,
         top_logprobs: Optional[int] = None,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        n: Optional[int] = None,
+        best_of: Optional[int] = None,
+        logit_bias: Optional[Mapping[str, float]] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
+        reasoning: Optional[Mapping[str, object]] = None,
+        include_reasoning: Optional[bool] = None,
+        prompt_cache_key: Optional[str] = None,
+        service_tier: Optional[str] = None,
+        store: Optional[bool] = None,
+        safety_identifier: Optional[str] = None,
+        modalities: Optional[Sequence[str]] = None,
+        audio: Optional[Mapping[str, object]] = None,
+        prediction: Optional[Mapping[str, object]] = None,
+        verbosity: Optional[str] = None,
+        web_search_options: Optional[Mapping[str, object]] = None,
+        moderation: Optional[object] = None,
+        functions: Optional[Sequence[Mapping[str, object]]] = None,
+        function_call: Optional[Union[str, Mapping[str, object]]] = None,
         request_options: Optional[Mapping[str, Any]] = None,
         extra_body: Optional[Mapping[str, object]] = None,
     ) -> Union[ChatCompletionResponse, RunInfraStream]: ...
@@ -2004,7 +2527,7 @@ class _ChatCompletions:
         self,
         *,
         model: str,
-        messages: Sequence[Mapping[str, object]],
+        messages: Sequence[Union[ChatMessage, Mapping[str, object]]],
         stream: bool = False,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
@@ -2022,9 +2545,70 @@ class _ChatCompletions:
         seed: Optional[int] = None,
         logprobs: Optional[bool] = None,
         top_logprobs: Optional[int] = None,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        n: Optional[int] = None,
+        best_of: Optional[int] = None,
+        logit_bias: Optional[Mapping[str, float]] = None,
+        parallel_tool_calls: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
+        reasoning: Optional[Mapping[str, object]] = None,
+        include_reasoning: Optional[bool] = None,
+        prompt_cache_key: Optional[str] = None,
+        service_tier: Optional[str] = None,
+        store: Optional[bool] = None,
+        safety_identifier: Optional[str] = None,
+        modalities: Optional[Sequence[str]] = None,
+        audio: Optional[Mapping[str, object]] = None,
+        prediction: Optional[Mapping[str, object]] = None,
+        verbosity: Optional[str] = None,
+        web_search_options: Optional[Mapping[str, object]] = None,
+        moderation: Optional[object] = None,
+        functions: Optional[Sequence[Mapping[str, object]]] = None,
+        function_call: Optional[Union[str, Mapping[str, object]]] = None,
         request_options: Optional[Mapping[str, Any]] = None,
         extra_body: Optional[Mapping[str, object]] = None,
     ) -> Union[ChatCompletionResponse, RunInfraStream]:
+        """Create a chat completion, or open its stream with `stream=True`.
+
+        `messages` follow `ChatMessage`: an assistant message may carry
+        `tool_calls` with `content` None or left out, and a `tool` message
+        answers one call by its `tool_call_id`. A keyword left at None is not
+        sent. Every other keyword is sent as given; whether a model accepts
+        one depends on the model.
+
+        A streamed call returns a `RunInfraStream`. Iterating it raises
+        `RunInfraStreamError` when the API reports a failure on the open
+        stream, and `RunInfraStreamIncompleteError` when the stream ends
+        without `[DONE]`. A streamed call that repeats an `idempotency_key`
+        the API has already answered yields one object, marked
+        `_idempotent_replay`, and ends quietly.
+        """
+        open_fields: Dict[str, object] = {
+            "top_k": top_k,
+            "min_p": min_p,
+            "repetition_penalty": repetition_penalty,
+            "n": n,
+            "best_of": best_of,
+            "logit_bias": logit_bias,
+            "parallel_tool_calls": parallel_tool_calls,
+            "reasoning_effort": reasoning_effort,
+            "reasoning": reasoning,
+            "include_reasoning": include_reasoning,
+            "prompt_cache_key": prompt_cache_key,
+            "service_tier": service_tier,
+            "store": store,
+            "safety_identifier": safety_identifier,
+            "modalities": modalities,
+            "audio": audio,
+            "prediction": prediction,
+            "verbosity": verbosity,
+            "web_search_options": web_search_options,
+            "moderation": moderation,
+            "functions": functions,
+            "function_call": function_call,
+        }
         payload = _json_payload_with_extra(
             {
                 "model": _validated_model(model),
@@ -2046,24 +2630,25 @@ class _ChatCompletions:
                 "seed": seed,
                 "logprobs": logprobs,
                 "top_logprobs": top_logprobs,
+                **open_fields,
             },
             extra_body,
+            # Keywords since 0.3.1. Callers had to put them in `extra_body` before, so they stay accepted there.
+            extra_body_open_keys=open_fields.keys(),
         )
         _validate_chat_messages(payload.get("messages"))
         is_stream = payload.get("stream") is True
+        sent_client_request_ids: List[str] = []
         response = self._requester.request(
             "/chat/completions",
             json_payload=payload,
             stream=is_stream,
             idempotent_replay_safe=True,
             request_options=request_options,
+            sent_client_request_ids=sent_client_request_ids,
         )
         if is_stream:
-            return RunInfraStream(
-                response.body,
-                _request_id_from_headers(response.headers),
-                [self._requester.api_key],
-            )
+            return _stream_response(response, [self._requester.api_key], sent_client_request_ids[0])
         return _json_response(response, [self._requester.api_key])
 
 
@@ -2168,19 +2753,17 @@ class _Responses:
         )
         _validate_responses_input(payload.get("input"))
         is_stream = payload.get("stream") is True
+        sent_client_request_ids: List[str] = []
         response = self._requester.request(
             "/responses",
             json_payload=payload,
             stream=is_stream,
             idempotent_replay_safe=True,
             request_options=request_options,
+            sent_client_request_ids=sent_client_request_ids,
         )
         if is_stream:
-            return RunInfraStream(
-                response.body,
-                _request_id_from_headers(response.headers),
-                [self._requester.api_key],
-            )
+            return _stream_response(response, [self._requester.api_key], sent_client_request_ids[0])
         return _json_response(response, [self._requester.api_key])
 
 
@@ -2603,13 +3186,26 @@ class _Voice:
 
 
 class RunInfra:
+    """The RunInfra client.
+
+    `timeout_seconds` is the timeout of every call. Left out, a non-streamed
+    call is given 750 seconds, and a streamed call 190 seconds to its response
+    headers and to each later read. A call's own `timeout_seconds` in
+    `request_options` wins over both. A call that runs out of time raises
+    `RunInfraTimeoutError` and is never sent again.
+
+    `max_retries` and `retry_base_seconds` bound the retries of a call that is
+    safe to send again: a GET, or a non-streamed chat, Responses or batch
+    create call that carries an `idempotency_key`.
+    """
+
     def __init__(
         self,
         *,
         api_key: str,
         pipeline_id: Optional[str] = None,
         base_url: str = "https://api.runinfra.ai/v1",
-        timeout_seconds: float = 120,
+        timeout_seconds: Optional[float] = None,
         transport: Optional[Transport] = None,
         max_retries: int = 2,
         retry_base_seconds: float = 0.25,
@@ -2620,7 +3216,8 @@ class RunInfra:
         if not api_key:
             raise AuthenticationError("api_key is required", status=401, error_type="auth_error")
         api_key = _validated_header(api_key, "api_key")
-        timeout_seconds = _validate_positive_number(timeout_seconds, "timeout_seconds")
+        if timeout_seconds is not None:
+            timeout_seconds = _validate_positive_number(timeout_seconds, "timeout_seconds")
         max_retries = _validate_non_negative_integer(max_retries, "max_retries")
         retry_base_seconds = _validate_non_negative_number(
             retry_base_seconds,
@@ -2679,7 +3276,17 @@ __all__ = [
     "BatchState",
     "BatchTestDelivery",
     "BatchUnavailableReason",
+    "ChatCompletionChoice",
+    "ChatCompletionMessageToolCall",
     "ChatCompletionResponse",
+    "ChatCompletionStreamChoice",
+    "ChatCompletionStreamDelta",
+    "ChatCompletionStreamEvent",
+    "ChatCompletionStreamToolCallDelta",
+    "ChatCompletionStreamToolCallFunction",
+    "ChatCompletionToolCallFunction",
+    "ChatMessage",
+    "ChatToolMessage",
     "DeploymentError",
     "EmbeddingObject",
     "EmbeddingResponse",
@@ -2698,6 +3305,8 @@ __all__ = [
     "RunInfraRequest",
     "RunInfraResponse",
     "RunInfraStream",
+    "RunInfraStreamError",
+    "RunInfraStreamIncompleteError",
     "RunInfraStreamParseError",
     "RunInfraTimeoutError",
     "ResponsesCreateResponse",

@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "runinfra"
-version = "0.3.0"
+version = "0.3.1"
 description = "RunInfra SDK for optimized inference deployments across text, embeddings, image, and audio routes"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -39,7 +39,7 @@ classifiers = [
 ]
 
 [project.urls]
-Documentation = "https://runinfra.ai/docs/tools-sdks/runinfra-sdk"
+Documentation = "https://www.rightnowai.co/docs/sdks/open-models/native-python"
 Homepage = "https://runinfra.ai"
 Issues = "https://github.com/RightNow-AI/runinfra-sdk/issues"
 Source = "https://github.com/RightNow-AI/runinfra-sdk"

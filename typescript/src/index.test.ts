@@ -19,6 +19,8 @@ import {
   RunInfraConnectionError,
   RunInfraError,
   RunInfraStream,
+  RunInfraStreamError,
+  RunInfraStreamIncompleteError,
   RunInfraStreamParseError,
   RunInfraTimeoutError,
   WebhookVerificationError,
@@ -30,7 +32,12 @@ import {
   type BatchJob,
   type BatchJobDetail,
   type BatchListParams,
+  type ChatCompletionRequest,
+  type ChatCompletionStreamEvent,
+  type ChatMessage,
+  type ChatToolMessage,
   type ResponsesCreateResponse,
+  type ResponsesStreamEvent,
   type VerifyBatchDeliveryOptions,
   type RunInfraOptions,
   type RunInfraRequestOptions,
@@ -7682,22 +7689,23 @@ with open(report, "w", encoding="utf-8") as handle:
     expect(rateLimitedFetcher).toHaveBeenCalledTimes(2);
   });
 
-  it("cancels failed retryable response bodies before retrying", async () => {
-    const cancel = vi.fn();
-    const failedBody = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode('{"error":{"message":"busy"}}'));
+  it("reads a failed retryable response body to its end before retrying", async () => {
+    // The error body is read, not dropped: the API can say inside it whether asking again helps.
+    const failedResponse = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"error":{"message":"busy"}}'));
+          controller.close();
+        },
+      }),
+      {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
       },
-      cancel,
-    });
+    );
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(failedBody, {
-          status: 503,
-          headers: { "Content-Type": "application/json" },
-        }),
-      )
+      .mockResolvedValueOnce(failedResponse)
       .mockResolvedValueOnce(jsonResponse({ object: "list", data: [] }));
     const client = new RunInfra({
       apiKey: "sk-ri-test",
@@ -7709,7 +7717,34 @@ with open(report, "w", encoding="utf-8") as handle:
     await expect(client.models.list()).resolves.toEqual({ object: "list", data: [] });
 
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(failedResponse.bodyUsed).toBe(true);
+  });
+
+  it("raises a timeout instead of waiting forever for a failed response body that never ends", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn().mockImplementation(async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"error":{"message":"busy"}}'));
+            },
+          }),
+          { status: 503, headers: { "Content-Type": "application/json", "x-request-id": "req-made-up-open-body" } },
+        ));
+      const client = new RunInfra({ apiKey: "sk-ri-test", fetch: fetcher, maxRetries: 2, retryBaseMs: 0, timeoutMs: 1_000 });
+
+      const pending = client.models.list().then(() => null, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1_000);
+      const error = await pending;
+
+      expect(error).toBeInstanceOf(RunInfraTimeoutError);
+      expect(error).toMatchObject({ requestId: "req-made-up-open-body" });
+      // The call ran out of time, so it is not sent again.
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("retries safe GET JSON body read failures after headers arrive", async () => {
@@ -7929,9 +7964,8 @@ with open(report, "w", encoding="utf-8") as handle:
     },
   );
 
-  it("does not sleep for unreasonable Retry-After values on transient retries", async () => {
+  it("raises at once, with the wait on the error, when Retry-After is above the longest wait it sleeps for", async () => {
     vi.useFakeTimers();
-    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
     try {
       const fetcher = vi
         .fn()
@@ -7949,14 +7983,11 @@ with open(report, "w", encoding="utf-8") as handle:
         retryBaseMs: 1,
       });
 
-      const result = client.models.list();
-      await Promise.resolve();
-      await vi.advanceTimersByTimeAsync(1);
-
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      await expect(result).resolves.toMatchObject({ object: "list", data: [] });
+      // No timer is advanced: the error arrives without any sleep, and no second request is sent sooner than asked.
+      await expect(client.models.list()).rejects.toMatchObject({ status: 503, retryAfterMs: 120_000 });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
-      randomSpy.mockRestore();
       vi.useRealTimers();
     }
   });
@@ -8358,7 +8389,7 @@ with open(report, "w", encoding="utf-8") as handle:
 
   it("streams the final OpenAI-compatible SSE event without a trailing newline", async () => {
     const encoded = new TextEncoder().encode(
-      'data: {"id":"chunk-1","choices":[{"delta":{"content":"hi"}}]}',
+      'data: {"id":"chunk-1","choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]',
     );
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -9263,10 +9294,10 @@ describe("RunInfra TypeScript SDK batch jobs", () => {
       expect(signals[2]?.aborted).toBe(true);
       expect(await read).toBeInstanceOf(RunInfraTimeoutError);
 
-      // A client whose timeout is already longer keeps it.
+      // A client whose timeout is already longer keeps it: here the default of a non-streamed call, 750 seconds.
       const patient = batchClient(hangingFetch as unknown as typeof fetch, { maxRetries: 0 });
       const withClientDefault = patient.batches.create(batchCreateRequest).then(() => null, (error: unknown) => error);
-      await vi.advanceTimersByTimeAsync(119_999);
+      await vi.advanceTimersByTimeAsync(749_999);
       expect(signals[3]?.aborted).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
       expect(await withClientDefault).toBeInstanceOf(RunInfraTimeoutError);
@@ -9503,7 +9534,7 @@ describe("RunInfra TypeScript SDK batch jobs", () => {
     expect(error).toMatchObject({ status: 409, code: "flex_not_available", reason: "partner", retryAfterMs: 7_000 });
   });
 
-  it("leaves the errors of every other route as they were", async () => {
+  it("keeps the class and type of every other route's errors: they carry the wait, and no reason", async () => {
     const busy = (): Response =>
       jsonResponse(
         { error: { reason: "model", message: "busy", type: "api_error" } },
@@ -9517,7 +9548,8 @@ describe("RunInfra TypeScript SDK batch jobs", () => {
 
     const unavailable = (await client.models.list().then(() => null, (thrown: unknown) => thrown)) as RunInfraError;
     expect(unavailable.status).toBe(503);
-    expect(unavailable.retryAfterMs).toBeUndefined();
+    // Since 0.3.1 every error keeps the wait the API named; the cause word stays a batch route's alone.
+    expect(unavailable.retryAfterMs).toBe(5_000);
     expect(unavailable.reason).toBeUndefined();
 
     const notFound = await client.models.retrieve("some-model").then(() => null, (thrown: unknown) => thrown);
@@ -9953,5 +9985,1413 @@ describe("RunInfra TypeScript SDK batch delivery verification", () => {
     expect(lines.reduce((sum, line) => sum + ((line as BatchAnswerDelivery).cost?.microcents ?? 0), 0)).toBe(
       job.cost_microcents,
     );
+  });
+});
+
+// ─── Streams that fail or are cut, timeouts, the retry rule, request fields ───
+//
+// Every frame, id and value below is made up. Nothing here opens a socket: each call goes through an injected fetch.
+
+const MADE_UP_API_KEY = ["sk", "ri", "made", "up", "unit"].join("-");
+const MADE_UP_MODEL = "made-up-model";
+const MADE_UP_MESSAGES: ChatMessage[] = [{ role: "user", content: "Count from one to three." }];
+
+function sseResponse(body: string, requestId = "req_made_up_stream"): Response {
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(body));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "text/event-stream", "x-request-id": requestId } },
+  );
+}
+
+function madeUpClient(fetcher: unknown, options: Partial<RunInfraOptions> = {}): RunInfra {
+  return new RunInfra({ apiKey: MADE_UP_API_KEY, fetch: fetcher as typeof fetch, ...options });
+}
+
+/** Reads a stream to its end: the events it yielded, and what it threw, if anything. */
+async function drain<TEvent>(stream: AsyncIterable<TEvent>): Promise<{ events: TEvent[]; error: unknown }> {
+  const events: TEvent[] = [];
+  try {
+    for await (const event of stream) events.push(event);
+  } catch (error) {
+    return { events, error };
+  }
+  return { events, error: null };
+}
+
+function chatDelta(content: string): string {
+  return `data: ${JSON.stringify({
+    id: "chatcmpl_made_up",
+    object: "chat.completion.chunk",
+    choices: [{ index: 0, delta: { content } }],
+  })}\n\n`;
+}
+
+function deltaTexts(events: ChatCompletionStreamEvent[]): Array<string | null | undefined> {
+  return events.map((event) => event.choices?.[0]?.delta?.content);
+}
+
+const CHAT_USAGE_FRAME = `data: ${JSON.stringify({
+  choices: [],
+  usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+})}\n\n`;
+const CHAT_DONE_FRAME = "data: [DONE]\n\n";
+const CHAT_ERROR_FRAME = `data: ${JSON.stringify({
+  error: {
+    message: "The stream ended before it was complete. Please retry.",
+    type: "api_error",
+    param: null,
+    code: "made_up_stream_error",
+    retryable: true,
+  },
+  request_id: "req_made_up_frame",
+})}\n\n`;
+
+function openChatStream(body: string, requestId?: string): Promise<RunInfraStream<ChatCompletionStreamEvent>> {
+  const fetcher = vi.fn().mockResolvedValue(sseResponse(body, requestId));
+  return madeUpClient(fetcher).chat.completions.create({
+    model: MADE_UP_MODEL,
+    messages: MADE_UP_MESSAGES,
+    stream: true,
+  });
+}
+
+function openResponsesStream(body: string, requestId?: string): Promise<RunInfraStream<ResponsesStreamEvent>> {
+  const fetcher = vi.fn().mockResolvedValue(sseResponse(body, requestId));
+  return madeUpClient(fetcher).responses.create({ model: MADE_UP_MODEL, input: "Count from one to three.", stream: true });
+}
+
+describe("RunInfra TypeScript SDK streams that fail or are cut", () => {
+  it("raises the typed error of an error frame after yielding the deltas that came first", async () => {
+    const stream = await openChatStream(chatDelta("One") + chatDelta(" two") + CHAT_ERROR_FRAME, "req_made_up_header");
+
+    const { events, error } = await drain(stream);
+
+    expect(deltaTexts(events)).toEqual(["One", " two"]);
+    expect(error).toBeInstanceOf(RunInfraStreamError);
+    expect(error).toBeInstanceOf(RunInfraError);
+    expect(error).toMatchObject({
+      name: "RunInfraStreamError",
+      message: "The stream ended before it was complete. Please retry.",
+      status: 0,
+      type: "api_error",
+      code: "made_up_stream_error",
+      // The frame names its own request id; it wins over the response header's.
+      requestId: "req_made_up_frame",
+      retryable: true,
+    });
+  });
+
+  it("falls back to the stream's request id and leaves retryable unset when the frame names neither", async () => {
+    const frame = `data: ${JSON.stringify({ error: { message: "The model stream ended.", type: "api_error", code: "made_up_upstream" } })}\n\n`;
+    const stream = await openChatStream(chatDelta("One") + frame, "req_made_up_header");
+
+    const { events, error } = await drain(stream);
+
+    expect(deltaTexts(events)).toEqual(["One"]);
+    expect(error).toBeInstanceOf(RunInfraStreamError);
+    expect(error).toMatchObject({ code: "made_up_upstream", requestId: "req_made_up_header" });
+    expect((error as RunInfraStreamError).retryable).toBeUndefined();
+    expect((error as RunInfraStreamError).param).toBeUndefined();
+  });
+
+  it("does not treat a [DONE] after an error frame, or a null error member, as an end marker", async () => {
+    // An event whose `error` is null is an ordinary event.
+    const ordinary = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "One" } }], error: null })}\n\n`;
+    const whole = await drain(await openChatStream(ordinary + CHAT_DONE_FRAME));
+    expect(whole.error).toBeNull();
+    expect(whole.events).toHaveLength(1);
+
+    // The failure is raised where it stands, whatever follows it.
+    const failed = await drain(await openChatStream(chatDelta("One") + CHAT_ERROR_FRAME + CHAT_DONE_FRAME));
+    expect(failed.error).toBeInstanceOf(RunInfraStreamError);
+    expect(deltaTexts(failed.events)).toEqual(["One"]);
+  });
+
+  it("redacts the API key from an error frame's message", async () => {
+    const frame = `data: ${JSON.stringify({ error: { message: `echoed ${MADE_UP_API_KEY} by mistake`, type: "api_error" } })}\n\n`;
+    const { error } = await drain(await openChatStream(frame));
+
+    expect(error).toBeInstanceOf(RunInfraStreamError);
+    expect((error as RunInfraStreamError).message).toBe("echoed [redacted] by mistake");
+  });
+
+  it("raises the incomplete-stream error when the body ends with no [DONE], after yielding its deltas", async () => {
+    const stream = await openChatStream(chatDelta("One") + chatDelta(" two"), "req_made_up_cut");
+
+    const { events, error } = await drain(stream);
+
+    expect(deltaTexts(events)).toEqual(["One", " two"]);
+    expect(error).toBeInstanceOf(RunInfraStreamIncompleteError);
+    expect(error).toBeInstanceOf(RunInfraError);
+    expect(error).toMatchObject({
+      name: "RunInfraStreamIncompleteError",
+      status: 0,
+      type: "stream_incomplete_error",
+      requestId: "req_made_up_cut",
+    });
+  });
+
+  it("yields a last event that has no trailing newline before it reports the cut", async () => {
+    const lastEventWithoutNewline = chatDelta("One") + chatDelta(" two").trimEnd();
+    const { events, error } = await drain(await openChatStream(lastEventWithoutNewline));
+
+    expect(deltaTexts(events)).toEqual(["One", " two"]);
+    expect(error).toBeInstanceOf(RunInfraStreamIncompleteError);
+  });
+
+  it("reports a body that ends in the middle of an event as a cut stream, not as a malformed event", async () => {
+    const cutInsideAnEvent = chatDelta("One") + 'data: {"id":"chatcmpl_made_up","choices":[{"index":0,"delta":{"content":"tw';
+    const { events, error } = await drain(await openChatStream(cutInsideAnEvent, "req_made_up_mid_event"));
+
+    expect(deltaTexts(events)).toEqual(["One"]);
+    expect(error).toBeInstanceOf(RunInfraStreamIncompleteError);
+    expect(error).not.toBeInstanceOf(RunInfraStreamParseError);
+    expect(error).toMatchObject({ requestId: "req_made_up_mid_event" });
+
+    // An event the body did finish, with a blank line after it, is still a malformed event when it cannot be read.
+    const malformed = await drain(await openChatStream(chatDelta("One") + "data: {not-json}\n\n" + CHAT_DONE_FRAME));
+    expect(deltaTexts(malformed.events)).toEqual(["One"]);
+    expect(malformed.error).toBeInstanceOf(RunInfraStreamParseError);
+  });
+
+  it("reports an empty body and a missing body as incomplete too", async () => {
+    expect((await drain(await openChatStream(""))).error).toBeInstanceOf(RunInfraStreamIncompleteError);
+
+    const bodyless = new RunInfraStream(new Response(null, { status: 200, headers: { "x-request-id": "req_made_up_bodyless" } }));
+    const { events, error } = await drain(bodyless);
+    expect(events).toEqual([]);
+    expect(error).toBeInstanceOf(RunInfraStreamIncompleteError);
+    expect(error).toMatchObject({ requestId: "req_made_up_bodyless" });
+  });
+
+  it("ends a complete chat stream quietly: deltas, the usage frame, then [DONE]", async () => {
+    const stream = await openChatStream(
+      ": keep-alive\n\n" + chatDelta("One") + chatDelta(" two") + CHAT_USAGE_FRAME + CHAT_DONE_FRAME,
+    );
+
+    const { events, error } = await drain(stream);
+
+    expect(error).toBeNull();
+    expect(deltaTexts(events)).toEqual(["One", " two", undefined]);
+    expect(events[2]).toEqual({ choices: [], usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 } });
+  });
+
+  it("raises nothing when the caller leaves the loop early, end marker or not", async () => {
+    const stream = await openChatStream(chatDelta("One") + chatDelta(" two"));
+    const seen: Array<string | null | undefined> = [];
+    for await (const event of stream) {
+      seen.push(event.choices?.[0]?.delta?.content);
+      break;
+    }
+    expect(seen).toEqual(["One"]);
+  });
+
+  it("raises the typed error of response.failed on a Responses stream, after the events that came first", async () => {
+    const body =
+      `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta: "One" })}\n\n` +
+      `event: response.failed\ndata: ${JSON.stringify({
+        type: "response.failed",
+        response: {
+          id: "resp_made_up",
+          status: "failed",
+          error: { code: "made_up_server_error", message: "The response failed.", retryable: true },
+        },
+      })}\n\n`;
+    const { events, error } = await drain(await openResponsesStream(body, "req_made_up_responses"));
+
+    expect(events).toEqual([{ type: "response.output_text.delta", delta: "One" }]);
+    expect(error).toBeInstanceOf(RunInfraStreamError);
+    expect(error).toMatchObject({
+      message: "The response failed.",
+      status: 0,
+      type: "api_error",
+      code: "made_up_server_error",
+      requestId: "req_made_up_responses",
+      retryable: true,
+    });
+  });
+
+  it("raises on a response.failed event that carries no error object at all", async () => {
+    const body = `data: ${JSON.stringify({ type: "response.failed", response: { id: "resp_made_up", status: "failed" } })}\n\n`;
+    const { error } = await drain(await openResponsesStream(body));
+
+    expect(error).toBeInstanceOf(RunInfraStreamError);
+    expect(error).toMatchObject({ message: "RunInfra stream ended with an error", type: "api_error" });
+    expect((error as RunInfraStreamError).code).toBeUndefined();
+  });
+
+  it("ends a Responses stream quietly on response.completed, and reports one without it as incomplete", async () => {
+    const delta = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta: "One" })}\n\n`;
+    const completed = `event: response.completed\ndata: ${JSON.stringify({
+      type: "response.completed",
+      response: { id: "resp_made_up", status: "completed" },
+    })}\n\n`;
+
+    const whole = await drain(await openResponsesStream(delta + completed));
+    expect(whole.error).toBeNull();
+    expect(whole.events.map((event) => event.type)).toEqual(["response.output_text.delta", "response.completed"]);
+
+    const cut = await drain(await openResponsesStream(delta, "req_made_up_responses_cut"));
+    expect(cut.events.map((event) => event.type)).toEqual(["response.output_text.delta"]);
+    expect(cut.error).toBeInstanceOf(RunInfraStreamIncompleteError);
+    expect(cut.error).toMatchObject({ requestId: "req_made_up_responses_cut" });
+  });
+
+  it("reports a body that ends in the middle of a character as a cut stream", async () => {
+    const bytes = new TextEncoder().encode(chatDelta("One") + 'data: {"choices":[{"index":0,"delta":{"content":"\u3053\u3093\u306b');
+    // The last character takes three bytes; the body ends after the first of them.
+    const cutInsideACharacter = bytes.slice(0, bytes.length - 2);
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(cutInsideACharacter, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream", "x-request-id": "req_made_up_mid_character" },
+      }),
+    );
+    const stream = await madeUpClient(fetcher).chat.completions.create({
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      stream: true,
+    });
+
+    const { events, error } = await drain(stream);
+
+    expect(deltaTexts(events)).toEqual(["One"]);
+    expect(error).toBeInstanceOf(RunInfraStreamIncompleteError);
+    expect(error).toMatchObject({ requestId: "req_made_up_mid_character" });
+  });
+
+  it("documents the two stream errors in the README", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("`RunInfraStreamError`");
+    expect(readme).toContain("`RunInfraStreamIncompleteError`");
+    expect(readme).toContain("`[DONE]`");
+    expect(readme).toContain("`response.completed`");
+  });
+});
+
+/** The one JSON object a repeated streamed call is answered with. Every field of this one is invented. */
+const MADE_UP_RECEIPT = {
+  id: "chatcmpl_made_up",
+  object: "made_up.receipt",
+  status: "completed",
+  usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+};
+
+/** A successful answer whose body is JSON, not an event stream. The body arrives in two reads. */
+function jsonAnswerToStreamedCall(body: string, headers: Record<string, string> = {}): Response {
+  const bytes = new TextEncoder().encode(body);
+  const middle = Math.floor(bytes.length / 2);
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (middle > 0) controller.enqueue(bytes.slice(0, middle));
+        if (bytes.length > middle) controller.enqueue(bytes.slice(middle));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "application/json", "x-request-id": "req_made_up_replay", ...headers } },
+  );
+}
+
+const REPLAY_HEADER = { "X-RunInfra-Idempotent-Replay": "true" };
+
+describe("RunInfra TypeScript SDK streamed calls answered with JSON", () => {
+  it("yields the receipt of a repeated streamed chat call once, marked as a replay, and ends quietly", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonAnswerToStreamedCall(JSON.stringify(MADE_UP_RECEIPT), REPLAY_HEADER));
+    const stream = await madeUpClient(fetcher).chat.completions.create(
+      { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, stream: true },
+      { idempotencyKey: "idem-made-up-replay-01" },
+    );
+
+    const { events, error } = await drain(stream);
+
+    // Not a cut stream: the receipt is the answer, and the caller can read it.
+    expect(error).toBeNull();
+    expect(events).toEqual([{ ...MADE_UP_RECEIPT, _request_id: "req_made_up_replay", _idempotent_replay: true }]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("does the same on a Responses stream, and when the replay names no content type", async () => {
+    const receipt = { id: "resp_made_up", object: "made_up.receipt", status: "completed" };
+    const fetcher = vi.fn().mockResolvedValue(jsonAnswerToStreamedCall(JSON.stringify(receipt), REPLAY_HEADER));
+    const stream = await madeUpClient(fetcher).responses.create(
+      { model: MADE_UP_MODEL, input: "Count from one to three.", stream: true },
+      { idempotencyKey: "idem-made-up-replay-02" },
+    );
+    const answered = await drain(stream);
+    expect(answered.error).toBeNull();
+    expect(answered.events).toEqual([{ ...receipt, _request_id: "req_made_up_replay", _idempotent_replay: true }]);
+
+    const untyped = new RunInfraStream(
+      new Response(new TextEncoder().encode(JSON.stringify(receipt)), { status: 200, headers: REPLAY_HEADER }),
+    );
+    const bare = await drain(untyped);
+    expect(bare.error).toBeNull();
+    expect(bare.events).toEqual([{ ...receipt, _idempotent_replay: true }]);
+  });
+
+  it("yields a JSON answer that is not a replay once, without the mark", async () => {
+    const whole = { id: "chatcmpl_made_up", object: "chat.completion", choices: [] };
+    const fetcher = vi.fn().mockResolvedValue(jsonAnswerToStreamedCall(JSON.stringify(whole), { "Content-Type": "application/json; charset=utf-8" }));
+    const stream = await madeUpClient(fetcher).chat.completions.create({
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      stream: true,
+    });
+
+    const { events, error } = await drain(stream);
+
+    expect(error).toBeNull();
+    expect(events).toEqual([{ ...whole, _request_id: "req_made_up_replay" }]);
+    expect(events[0]).not.toHaveProperty("_idempotent_replay");
+  });
+
+  it("still reads an event stream as events when its headers mark it as a replay", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(new TextEncoder().encode(chatDelta("One") + CHAT_DONE_FRAME), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream; charset=utf-8", ...REPLAY_HEADER },
+      }),
+    );
+    const stream = await madeUpClient(fetcher).chat.completions.create({
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      stream: true,
+    });
+
+    const { events, error } = await drain(stream);
+
+    expect(error).toBeNull();
+    expect(deltaTexts(events)).toEqual(["One"]);
+  });
+
+  it("reports a JSON answer that cannot be read as incomplete, and one that is not an object as a shape error", async () => {
+    const open = (body: string): Promise<RunInfraStream<ChatCompletionStreamEvent>> =>
+      madeUpClient(vi.fn().mockResolvedValue(jsonAnswerToStreamedCall(body, REPLAY_HEADER))).chat.completions.create({
+        model: MADE_UP_MODEL,
+        messages: MADE_UP_MESSAGES,
+        stream: true,
+      });
+
+    for (const body of ['{"id":"chatcmpl_made_up","sta', ""]) {
+      const cut = await drain(await open(body));
+      expect(cut.events).toEqual([]);
+      expect(cut.error).toBeInstanceOf(RunInfraStreamIncompleteError);
+      expect(cut.error).toMatchObject({ type: "stream_incomplete_error", requestId: "req_made_up_replay" });
+    }
+
+    const list = await drain(await open("[1,2]"));
+    expect(list.events).toEqual([]);
+    expect(list.error).toBeInstanceOf(RunInfraError);
+    expect(list.error).toMatchObject({ status: 200, type: "response_shape_error", requestId: "req_made_up_replay" });
+  });
+
+  it("documents the JSON answer to a streamed call in the README", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("When a streamed call is answered with JSON");
+    expect(readme).toContain("`_idempotent_replay: true`");
+  });
+});
+
+/** A fetch that never answers and rejects, as fetch does, when the call's signal aborts. */
+function hangingFetch(): { fetcher: ReturnType<typeof vi.fn>; signals: AbortSignal[] } {
+  const signals: AbortSignal[] = [];
+  const fetcher = vi.fn((_: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    const signal = init!.signal as AbortSignal;
+    signals.push(signal);
+    signal.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+  }));
+  return { fetcher, signals };
+}
+
+function settled(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(() => null, (error: unknown) => error);
+}
+
+/**
+ * The shape of what Node's built-in fetch rejects with when it gives up by its own clock: a `TypeError` whose
+ * `cause` names the code.
+ */
+function runtimeFetchFailure(message: string, causeName: string, code: string): TypeError {
+  const cause = Object.assign(new Error(causeName), { name: causeName, code });
+  return new TypeError(message, { cause });
+}
+
+describe("RunInfra TypeScript SDK timeouts", () => {
+  it("gives a non-streamed call 750 seconds and a streamed call 190 seconds to its response headers by default", async () => {
+    vi.useFakeTimers();
+    try {
+      const { fetcher, signals } = hangingFetch();
+      const client = madeUpClient(fetcher, { maxRetries: 0 });
+
+      const whole = settled(client.chat.completions.create({ model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES }));
+      await vi.advanceTimersByTimeAsync(749_999);
+      expect(signals[0]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(await whole).toBeInstanceOf(RunInfraTimeoutError);
+
+      const streamed = settled(
+        client.chat.completions.create({ model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, stream: true }),
+      );
+      await vi.advanceTimersByTimeAsync(189_999);
+      expect(signals[1]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signals[1]?.aborted).toBe(true);
+      expect(await streamed).toBeInstanceOf(RunInfraTimeoutError);
+
+      const streamedResponses = settled(client.responses.create({ model: MADE_UP_MODEL, input: "Hi", stream: true }));
+      await vi.advanceTimersByTimeAsync(189_999);
+      expect(signals[2]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await streamedResponses).toBeInstanceOf(RunInfraTimeoutError);
+
+      const read = settled(client.models.list());
+      await vi.advanceTimersByTimeAsync(749_999);
+      expect(signals[3]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await read).toBeInstanceOf(RunInfraTimeoutError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits 190 seconds by default for each later read of an open stream", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn().mockResolvedValue(
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream", "x-request-id": "req_made_up_stalled" },
+        }),
+      );
+      const stream = await madeUpClient(fetcher).chat.completions.create({
+        model: MADE_UP_MODEL,
+        messages: MADE_UP_MESSAGES,
+        stream: true,
+      });
+      let outcome: unknown = "pending";
+      void stream[Symbol.asyncIterator]().next().then(
+        () => { outcome = "resolved"; },
+        (error: unknown) => { outcome = error; },
+      );
+
+      await vi.advanceTimersByTimeAsync(189_999);
+      expect(outcome).toBe("pending");
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(outcome).toBeInstanceOf(RunInfraTimeoutError);
+      expect(outcome).toMatchObject({ requestId: "req_made_up_stalled" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets the caller's own timeout win over both defaults: the client's, and the call's over the client's", async () => {
+    vi.useFakeTimers();
+    try {
+      const { fetcher, signals } = hangingFetch();
+      const client = madeUpClient(fetcher, { maxRetries: 0, timeoutMs: 2_000 });
+
+      const whole = settled(client.chat.completions.create({ model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES }));
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(signals[0]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await whole).toBeInstanceOf(RunInfraTimeoutError);
+
+      const streamed = settled(
+        client.chat.completions.create({ model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, stream: true }),
+      );
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(signals[1]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await streamed).toBeInstanceOf(RunInfraTimeoutError);
+
+      const perCall = settled(
+        client.chat.completions.create(
+          { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, stream: true },
+          { timeoutMs: 500 },
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(499);
+      expect(signals[2]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await perCall).toBeInstanceOf(RunInfraTimeoutError);
+
+      // A longer wait than the defaults is the caller's to ask for, too.
+      const patient = settled(
+        madeUpClient(fetcher, { maxRetries: 0 }).chat.completions.create(
+          { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES },
+          { timeoutMs: 900_000 },
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(899_999);
+      expect(signals[3]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await patient).toBeInstanceOf(RunInfraTimeoutError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends one request and no second one after its own timeout, and names the request id it sent", async () => {
+    vi.useFakeTimers();
+    try {
+      const { fetcher } = hangingFetch();
+      // Retries are allowed and the calls are safe to send again: only the timeout stops the second request.
+      const client = madeUpClient(fetcher, { maxRetries: 3, retryBaseMs: 0, timeoutMs: 1_000 });
+
+      const read = settled(client.models.list({ clientRequestId: "client-made-up-01" }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      const readError = await read;
+      expect(readError).toBeInstanceOf(RunInfraTimeoutError);
+      expect(readError).toMatchObject({ status: 0, type: "timeout_error", clientRequestId: "client-made-up-01" });
+      expect((readError as RunInfraError).requestId).toBeUndefined();
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      // However long the caller waits afterwards, the call is not sent again.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      const keyed = settled(
+        client.responses.create({ model: MADE_UP_MODEL, input: "Hi" }, { idempotencyKey: "idem-made-up-01" }),
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      const keyedError = await keyed;
+      expect(keyedError).toBeInstanceOf(RunInfraTimeoutError);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      // With no id from the caller, the error names the one the SDK generated and sent.
+      const sentId = sentHeader(fetcher.mock.calls[1]?.[1] as RequestInit, "X-Client-Request-Id");
+      expect(sentId).toBeTruthy();
+      expect((keyedError as RunInfraError).clientRequestId).toBe(sentId);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still sends a keyed call again after a connection failure: only a timeout is final", async () => {
+    const fetcher = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("socket closed"))
+      .mockResolvedValueOnce(jsonResponse({ id: "resp_made_up" }));
+    const client = madeUpClient(fetcher, { maxRetries: 1, retryBaseMs: 0 });
+
+    await expect(
+      client.responses.create({ model: MADE_UP_MODEL, input: "Hi" }, { idempotencyKey: "idem-made-up-02" }),
+    ).resolves.toMatchObject({ id: "resp_made_up" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not send a call again when its timeout fires while the answer's body is read", async () => {
+    vi.useFakeTimers();
+    try {
+      // The headers arrive; the body stalls and fails, as fetch's does, when the call's signal aborts.
+      const fetcher = vi.fn(async (_: unknown, init?: RequestInit) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              (init!.signal as AbortSignal).addEventListener("abort", () => {
+                controller.error(new DOMException("The operation was aborted.", "AbortError"));
+              });
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json", "x-request-id": "req_made_up_body" } },
+        ));
+      const client = madeUpClient(fetcher, { maxRetries: 2, retryBaseMs: 0, timeoutMs: 1_000 });
+
+      const read = settled(client.models.list({ clientRequestId: "client-made-up-02" }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      const error = await read;
+
+      expect(error).toBeInstanceOf(RunInfraTimeoutError);
+      // A response had begun, so the server's request id is known as well.
+      expect(error).toMatchObject({ requestId: "req_made_up_body", clientRequestId: "client-made-up-02" });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats the runtime fetch giving up on the response headers as a timeout: one request, never a second", async () => {
+    const fetcher = vi.fn().mockImplementation(async () => {
+      throw runtimeFetchFailure("fetch failed", "HeadersTimeoutError", "UND_ERR_HEADERS_TIMEOUT");
+    });
+    // Retries are allowed and the calls are safe to send again: only the timeout stops the second request.
+    const client = madeUpClient(fetcher, { maxRetries: 2, retryBaseMs: 0 });
+
+    const keyed = await settled(
+      client.chat.completions.create(
+        { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES },
+        { idempotencyKey: "idem-made-up-04", clientRequestId: "client-made-up-03" },
+      ),
+    );
+    expect(keyed).toBeInstanceOf(RunInfraTimeoutError);
+    expect(keyed).toMatchObject({ status: 0, type: "timeout_error", clientRequestId: "client-made-up-03" });
+    expect((keyed as RunInfraError).message).toContain("response headers");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    const read = await settled(client.models.list());
+    expect(read).toBeInstanceOf(RunInfraTimeoutError);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    // With no id from the caller, the error names the one the SDK generated and sent.
+    const sentId = sentHeader(fetcher.mock.calls[1]?.[1] as RequestInit, "X-Client-Request-Id");
+    expect(sentId).toBeTruthy();
+    expect((read as RunInfraError).clientRequestId).toBe(sentId);
+  });
+
+  it("treats the runtime fetch giving up on the response body as a timeout too, on a JSON answer and on a stream", async () => {
+    const stalledBody = (contentType: string): Response =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(runtimeFetchFailure("terminated", "BodyTimeoutError", "UND_ERR_BODY_TIMEOUT"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": contentType, "x-request-id": "req_made_up_stalled_body" } },
+      );
+
+    const fetcher = vi.fn().mockImplementation(async () => stalledBody("application/json"));
+    const read = await settled(
+      madeUpClient(fetcher, { maxRetries: 2, retryBaseMs: 0 }).models.list({ clientRequestId: "client-made-up-04" }),
+    );
+    expect(read).toBeInstanceOf(RunInfraTimeoutError);
+    expect(read).toMatchObject({ requestId: "req_made_up_stalled_body", clientRequestId: "client-made-up-04" });
+    expect((read as RunInfraError).message).toContain("response body");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    const stream = await madeUpClient(vi.fn().mockResolvedValue(stalledBody("text/event-stream"))).chat.completions.create({
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      stream: true,
+    });
+    const { events, error } = await drain(stream);
+    expect(events).toEqual([]);
+    expect(error).toBeInstanceOf(RunInfraTimeoutError);
+    expect(error).toMatchObject({ requestId: "req_made_up_stalled_body" });
+  });
+
+  it("names the request id it sent on a timeout while an open stream is read", async () => {
+    const firstRead = (stream: AsyncIterable<unknown>): Promise<unknown> =>
+      settled(stream[Symbol.asyncIterator]().next());
+
+    vi.useFakeTimers();
+    try {
+      // The headers arrive and the stream opens; then no data comes.
+      const fetcher = vi.fn().mockImplementation(async () =>
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream", "x-request-id": "req_made_up_stalled_stream" },
+        }));
+      const client = madeUpClient(fetcher, { timeoutMs: 1_000 });
+
+      const chat = firstRead(
+        await client.chat.completions.create(
+          { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, stream: true },
+          { clientRequestId: "client-made-up-05" },
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      const chatError = await chat;
+      expect(chatError).toBeInstanceOf(RunInfraTimeoutError);
+      // The response had begun, so the server's request id is known as well.
+      expect(chatError).toMatchObject({ requestId: "req_made_up_stalled_stream", clientRequestId: "client-made-up-05" });
+
+      // With no id from the caller, the error names the one the SDK generated and sent.
+      const responses = firstRead(await client.responses.create({ model: MADE_UP_MODEL, input: "Hi", stream: true }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      const responsesError = await responses;
+      const sentId = sentHeader(fetcher.mock.calls[1]?.[1] as RequestInit, "X-Client-Request-Id");
+      expect(sentId).toBeTruthy();
+      expect(responsesError).toBeInstanceOf(RunInfraTimeoutError);
+      expect((responsesError as RunInfraError).clientRequestId).toBe(sentId);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The runtime's fetch giving up on the body of an open stream is a timeout that names it too.
+    const cutByRuntime = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(runtimeFetchFailure("terminated", "BodyTimeoutError", "UND_ERR_BODY_TIMEOUT"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    const runtimeError = await firstRead(
+      await madeUpClient(cutByRuntime).chat.completions.create(
+        { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, stream: true },
+        { clientRequestId: "client-made-up-06" },
+      ),
+    );
+    expect(runtimeError).toBeInstanceOf(RunInfraTimeoutError);
+    expect(runtimeError).toMatchObject({ clientRequestId: "client-made-up-06" });
+  });
+
+  it("names the request id it sent on a timeout while the body of an audio speech answer is read", async () => {
+    vi.useFakeTimers();
+    try {
+      // The headers arrive; then no audio comes.
+      const fetcher = vi.fn().mockImplementation(async () =>
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { "Content-Type": "audio/mpeg", "x-request-id": "req_made_up_stalled_audio" },
+        }));
+      const client = madeUpClient(fetcher, { timeoutMs: 1_000 });
+      const speech = { model: MADE_UP_MODEL, input: "Hello", voice: "made-up-voice" };
+
+      const answer = await client.audio.speech.create(speech, { clientRequestId: "client-made-up-07" });
+      const read = settled(answer.arrayBuffer());
+      await vi.advanceTimersByTimeAsync(1_000);
+      const readError = await read;
+      expect(readError).toBeInstanceOf(RunInfraTimeoutError);
+      // The response had begun, so the server's request id is known as well.
+      expect(readError).toMatchObject({ requestId: "req_made_up_stalled_audio", clientRequestId: "client-made-up-07" });
+
+      // With no id from the caller, the error names the one the SDK generated and sent.
+      const blob = settled((await client.audio.speech.create(speech)).blob());
+      await vi.advanceTimersByTimeAsync(1_000);
+      const blobError = await blob;
+      const sentId = sentHeader(fetcher.mock.calls[1]?.[1] as RequestInit, "X-Client-Request-Id");
+      expect(sentId).toBeTruthy();
+      expect(blobError).toBeInstanceOf(RunInfraTimeoutError);
+      expect((blobError as RunInfraError).clientRequestId).toBe(sentId);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The runtime's fetch giving up on the audio body is a timeout that names it too.
+    const cutByRuntime = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(runtimeFetchFailure("terminated", "BodyTimeoutError", "UND_ERR_BODY_TIMEOUT"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "audio/mpeg" } },
+      ),
+    );
+    const cut = await madeUpClient(cutByRuntime).audio.speech.create(
+      { model: MADE_UP_MODEL, input: "Hello", voice: "made-up-voice" },
+      { clientRequestId: "client-made-up-08" },
+    );
+    const runtimeError = await settled(cut.arrayBuffer());
+    expect(runtimeError).toBeInstanceOf(RunInfraTimeoutError);
+    expect(runtimeError).toMatchObject({ clientRequestId: "client-made-up-08" });
+  });
+
+  it("still sends a call again after the runtime fetch fails to connect: nothing was sent", async () => {
+    const fetcher = vi.fn().mockImplementation(async () => {
+      throw runtimeFetchFailure("fetch failed", "ConnectTimeoutError", "UND_ERR_CONNECT_TIMEOUT");
+    });
+
+    const read = await settled(madeUpClient(fetcher, { maxRetries: 2, retryBaseMs: 0 }).models.list());
+
+    expect(read).toBeInstanceOf(RunInfraConnectionError);
+    expect(read).not.toBeInstanceOf(RunInfraTimeoutError);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("documents the default timeouts and the no-resend rule in the README", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("750 seconds");
+    expect(readme).toContain("190 seconds");
+    expect(readme).toContain("never sent again after a timeout");
+    expect(readme).toContain("`clientRequestId`");
+    // The limit of Node's built-in fetch on a non-streamed call.
+    expect(readme).toContain("300 seconds to its response headers");
+  });
+});
+
+function busyResponse(status: number, headers: Record<string, string> = {}, error: Record<string, unknown> = {}): Response {
+  return jsonResponse(
+    { error: { message: "busy", type: "api_error", ...error }, request_id: "req_made_up_busy" },
+    { status, headers: { "x-request-id": "req_made_up_busy", ...headers } },
+  );
+}
+
+const LISTED = { object: "list", data: [] };
+
+describe("RunInfra TypeScript SDK retry rule", () => {
+  it("reads Retry-After-Ms before Retry-After", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(busyResponse(503, { "Retry-After-Ms": "1500", "Retry-After": "30" }))
+        .mockResolvedValueOnce(jsonResponse(LISTED));
+      const pending = madeUpClient(fetcher, { maxRetries: 1, retryBaseMs: 1 }).models.list();
+
+      await vi.advanceTimersByTimeAsync(1_499);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect((await pending).data).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The same order decides the wait the error carries.
+    const raised = vi.fn().mockResolvedValue(busyResponse(503, { "Retry-After-Ms": "1500", "Retry-After": "30" }));
+    await expect(madeUpClient(raised, { maxRetries: 0 }).models.list()).rejects.toMatchObject({ retryAfterMs: 1_500 });
+  });
+
+  it.each(["soon", "-5", "1e3", ""])(
+    "falls back to Retry-After when Retry-After-Ms is malformed (%j)",
+    async (retryAfterMs) => {
+      const fetcher = vi.fn().mockResolvedValue(busyResponse(503, { "Retry-After-Ms": retryAfterMs, "Retry-After": "2" }));
+      await expect(madeUpClient(fetcher, { maxRetries: 0 }).models.list()).rejects.toMatchObject({ retryAfterMs: 2_000 });
+    },
+  );
+
+  it("reads a Retry-After or Retry-After-Ms with more digits than a number can hold as no wait named: its own backoff applies", async () => {
+    // Made up: 400 digits, more than a number can hold, so it reads as infinity.
+    const tooManyDigits = "9".repeat(400);
+    for (const headers of [
+      { "Retry-After": tooManyDigits },
+      { "Retry-After-Ms": tooManyDigits },
+      { "Retry-After-Ms": tooManyDigits, "Retry-After": tooManyDigits },
+    ] as Array<Record<string, string>>) {
+      // The error carries no wait.
+      const raised = vi.fn().mockImplementation(async () => busyResponse(503, headers));
+      const error = (await settled(madeUpClient(raised, { maxRetries: 0 }).models.list())) as RunInfraError;
+      expect(error.status).toBe(503);
+      expect(error.retryAfterMs).toBeUndefined();
+
+      // A call that is safe to send again sleeps the SDK's own backoff, then asks again.
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+      try {
+        const fetcher = vi
+          .fn()
+          .mockImplementationOnce(async () => busyResponse(503, headers))
+          .mockResolvedValueOnce(jsonResponse(LISTED));
+        const pending = settled(madeUpClient(fetcher, { maxRetries: 1, retryBaseMs: 40 }).models.list());
+
+        await vi.advanceTimersByTimeAsync(39);
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        // Nothing was raised: the second answer was returned.
+        expect(await pending).toBeNull();
+      } finally {
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    }
+
+    // A Retry-After-Ms that names no wait still falls back to a Retry-After that does.
+    const fallback = vi.fn().mockResolvedValue(busyResponse(503, { "Retry-After-Ms": tooManyDigits, "Retry-After": "2" }));
+    await expect(madeUpClient(fallback, { maxRetries: 0 }).models.list()).rejects.toMatchObject({ retryAfterMs: 2_000 });
+  });
+
+  it("reads a Retry-After in seconds above the largest safe integer as no wait named", async () => {
+    // Made up: 20 digits. A number holds a value that large, but no longer every whole number.
+    const headers = { "Retry-After": "12345678901234567890" };
+
+    // The error carries no wait.
+    const raised = vi.fn().mockImplementation(async () => busyResponse(503, headers));
+    const error = (await settled(madeUpClient(raised, { maxRetries: 0 }).models.list())) as RunInfraError;
+    expect(error.status).toBe(503);
+    expect(error.retryAfterMs).toBeUndefined();
+
+    // A call that is safe to send again sleeps the SDK's own backoff, then asks again.
+    vi.useFakeTimers();
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const fetcher = vi
+        .fn()
+        .mockImplementationOnce(async () => busyResponse(503, headers))
+        .mockResolvedValueOnce(jsonResponse(LISTED));
+      const pending = settled(madeUpClient(fetcher, { maxRetries: 1, retryBaseMs: 40 }).models.list());
+
+      await vi.advanceTimersByTimeAsync(39);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      // Nothing was raised: the second answer was returned.
+      expect(await pending).toBeNull();
+    } finally {
+      randomSpy.mockRestore();
+      vi.useRealTimers();
+    }
+
+    // The line is the largest safe integer, 2^53 - 1. One above it names no wait.
+    const above = vi.fn().mockImplementation(async () => busyResponse(503, { "Retry-After": "9007199254740992" }));
+    const aboveError = (await settled(madeUpClient(above, { maxRetries: 0 }).models.list())) as RunInfraError;
+    expect(aboveError.status).toBe(503);
+    expect(aboveError.retryAfterMs).toBeUndefined();
+
+    // The largest one itself still names its wait: longer than the SDK sleeps for, so it is raised at once.
+    const largest = vi.fn().mockImplementation(async () => busyResponse(503, { "Retry-After": "9007199254740991" }));
+    const largestError = (await settled(
+      madeUpClient(largest, { maxRetries: 1, retryBaseMs: 40 }).models.list(),
+    )) as RunInfraError;
+    expect(largestError.retryAfterMs).toBe(9007199254740991 * 1000);
+    expect(largest).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops retrying when x-should-retry is false", async () => {
+    const fetcher = vi.fn().mockImplementation(async () => busyResponse(503, { "x-should-retry": "false" }));
+    const client = madeUpClient(fetcher, { maxRetries: 3, retryBaseMs: 0 });
+
+    // A 503 on a GET is otherwise asked again.
+    await expect(client.models.list()).rejects.toMatchObject({ status: 503, retryable: false });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    await expect(
+      client.responses.create({ model: MADE_UP_MODEL, input: "Hi" }, { idempotencyKey: "idem-made-up-03" }),
+    ).rejects.toMatchObject({ status: 503, retryable: false });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops retrying when the error object says retryable false, and lets false win over a true header", async () => {
+    const inBody = vi.fn().mockImplementation(async () => busyResponse(503, {}, { retryable: false }));
+    await expect(madeUpClient(inBody, { maxRetries: 3, retryBaseMs: 0 }).models.list()).rejects.toMatchObject({
+      status: 503,
+      retryable: false,
+    });
+    expect(inBody).toHaveBeenCalledTimes(1);
+
+    const disagreeing = vi.fn().mockImplementation(async () =>
+      busyResponse(503, { "x-should-retry": "true" }, { retryable: false }));
+    await expect(madeUpClient(disagreeing, { maxRetries: 3, retryBaseMs: 0 }).models.list()).rejects.toMatchObject({
+      retryable: false,
+    });
+    expect(disagreeing).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again when the API marks a failure retryable, for a call that is safe to send again only", async () => {
+    // 529 is not among the statuses the SDK retries by itself.
+    const marked = (): Response => busyResponse(529, { "x-should-retry": "true" });
+    const unmarked = vi.fn().mockImplementation(async () => busyResponse(529));
+    await expect(madeUpClient(unmarked, { maxRetries: 2, retryBaseMs: 0 }).models.list()).rejects.toMatchObject({ status: 529 });
+    expect(unmarked).toHaveBeenCalledTimes(1);
+
+    const read = vi.fn().mockImplementationOnce(async () => marked()).mockResolvedValueOnce(jsonResponse(LISTED));
+    await expect(madeUpClient(read, { maxRetries: 2, retryBaseMs: 0 }).models.list()).resolves.toMatchObject(LISTED);
+    expect(read).toHaveBeenCalledTimes(2);
+
+    const inBody = vi
+      .fn()
+      .mockImplementationOnce(async () => busyResponse(529, {}, { retryable: true }))
+      .mockResolvedValueOnce(jsonResponse(LISTED));
+    await expect(madeUpClient(inBody, { maxRetries: 2, retryBaseMs: 0 }).models.list()).resolves.toMatchObject(LISTED);
+    expect(inBody).toHaveBeenCalledTimes(2);
+
+    const keyed = vi.fn().mockImplementationOnce(async () => marked()).mockResolvedValueOnce(jsonResponse({ id: "resp_made_up" }));
+    await expect(
+      madeUpClient(keyed, { maxRetries: 2, retryBaseMs: 0 }).responses.create(
+        { model: MADE_UP_MODEL, input: "Hi" },
+        { idempotencyKey: "idem-made-up-04" },
+      ),
+    ).resolves.toMatchObject({ id: "resp_made_up" });
+    expect(keyed).toHaveBeenCalledTimes(2);
+
+    // No idempotency key: the call is not safe to send again, whatever the API says.
+    const unkeyed = vi.fn().mockImplementation(async () => marked());
+    await expect(
+      madeUpClient(unkeyed, { maxRetries: 2, retryBaseMs: 0 }).responses.create({ model: MADE_UP_MODEL, input: "Hi" }),
+    ).rejects.toMatchObject({ status: 529, retryable: true });
+    expect(unkeyed).toHaveBeenCalledTimes(1);
+
+    // A streamed call is never sent again, keyed or not.
+    const streamed = vi.fn().mockImplementation(async () => marked());
+    await expect(
+      madeUpClient(streamed, { maxRetries: 2, retryBaseMs: 0 }).responses.create(
+        { model: MADE_UP_MODEL, input: "Hi", stream: true },
+        { idempotencyKey: "idem-made-up-05" },
+      ),
+    ).rejects.toMatchObject({ status: 529, retryable: true });
+    expect(streamed).toHaveBeenCalledTimes(1);
+  });
+
+  it("raises at once, with the wait on the error, when the API names a wait above the longest it sleeps for", async () => {
+    vi.useFakeTimers();
+    try {
+      for (const headers of [
+        { "Retry-After": "3600" },
+        { "Retry-After": "61" },
+        { "Retry-After-Ms": "60001", "Retry-After": "1" },
+      ] as Array<Record<string, string>>) {
+        const fetcher = vi.fn().mockImplementation(async () => busyResponse(503, headers, { code: "made_up_paused" }));
+        const client = madeUpClient(fetcher, { maxRetries: 3, retryBaseMs: 0 });
+        const expectedMs = headers["Retry-After-Ms"] ? Number(headers["Retry-After-Ms"]) : Number(headers["Retry-After"]) * 1000;
+
+        // No timer is advanced: nothing is slept, and no request is sent sooner than the API asked.
+        await expect(client.models.list()).rejects.toMatchObject({
+          status: 503,
+          code: "made_up_paused",
+          retryAfterMs: expectedMs,
+        });
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        expect(vi.getTimerCount()).toBe(0);
+
+        await expect(
+          client.responses.create({ model: MADE_UP_MODEL, input: "Hi" }, { idempotencyKey: "idem-made-up-06" }),
+        ).rejects.toMatchObject({ status: 503, retryAfterMs: expectedMs });
+        expect(fetcher).toHaveBeenCalledTimes(2);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sleeps a wait of exactly the longest it sleeps for, then asks again", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(busyResponse(503, { "Retry-After-Ms": "60000" }))
+        .mockResolvedValueOnce(jsonResponse(LISTED));
+      const pending = madeUpClient(fetcher, { maxRetries: 1, retryBaseMs: 0 }).models.list();
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await pending).data).toEqual([]);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    [400, "RunInfraError"],
+    [401, "AuthenticationError"],
+    [402, "InsufficientCreditsError"],
+    [403, "PermissionDeniedError"],
+    [404, "ModelNotFoundError"],
+    [409, "RunInfraError"],
+    [429, "RateLimitError"],
+    [500, "RunInfraError"],
+    [503, "RunInfraError"],
+    [504, "RunInfraError"],
+  ] as Array<[number, string]>)("puts retryAfterMs on a %i that came with Retry-After (%s)", async (status, name) => {
+    const fetcher = vi.fn().mockImplementation(async () => busyResponse(status, { "Retry-After": "7" }));
+
+    const error = await settled(madeUpClient(fetcher, { maxRetries: 0 }).models.list());
+
+    expect(error).toBeInstanceOf(RunInfraError);
+    expect(error).toMatchObject({ name, status, retryAfterMs: 7_000, requestId: "req_made_up_busy" });
+  });
+
+  it("puts retryAfterMs on a deployment error too, and leaves it unset when the API named no wait", async () => {
+    const deployment = vi.fn().mockResolvedValue(
+      busyResponse(503, { "Retry-After-Ms": "250" }, { type: "deployment_error" }),
+    );
+    await expect(madeUpClient(deployment, { maxRetries: 0 }).models.list()).rejects.toMatchObject({
+      name: "DeploymentError",
+      retryAfterMs: 250,
+    });
+
+    const bare = (await settled(
+      madeUpClient(vi.fn().mockResolvedValue(busyResponse(503)), { maxRetries: 0 }).models.list(),
+    )) as RunInfraError;
+    expect(bare.status).toBe(503);
+    expect(bare.retryAfterMs).toBeUndefined();
+    expect(bare.retryable).toBeUndefined();
+    expect(bare.clientRequestId).toBeUndefined();
+  });
+
+  it("keeps the wait and the retry marker when the API key is redacted from the message", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      busyResponse(503, { "Retry-After": "9", "x-should-retry": "true" }, { message: `echoed ${MADE_UP_API_KEY} by mistake` }),
+    );
+
+    const error = (await settled(madeUpClient(fetcher, { maxRetries: 0 }).models.list())) as RunInfraError;
+
+    expect(error.message).toBe("echoed [redacted] by mistake");
+    expect(error).toMatchObject({ status: 503, retryAfterMs: 9_000, retryable: true });
+  });
+
+  it("documents the retry rule in the README", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("`Retry-After-Ms`");
+    expect(readme).toContain("`x-should-retry`");
+    expect(readme).toContain("`error.retryable`");
+    expect(readme).toContain("raised at once");
+  });
+});
+
+// The request fields the API's chat reference documents that the SDK did not type before 0.3.1.
+const CHAT_FIELDS_TYPED_SINCE_0_3_1 = {
+  top_k: 40,
+  min_p: 0.05,
+  repetition_penalty: 1.1,
+  n: 2,
+  best_of: 2,
+  logit_bias: { "1234": -5 },
+  parallel_tool_calls: false,
+  reasoning_effort: "low",
+  reasoning: { effort: "low", exclude: true },
+  include_reasoning: false,
+  prompt_cache_key: "made-up-session",
+  service_tier: "default",
+  store: false,
+  safety_identifier: "made-up-user",
+  modalities: ["text"],
+  audio: { voice: "made-up-voice" },
+  prediction: { type: "content", content: "made up" },
+  verbosity: "low",
+  web_search_options: {},
+  moderation: { made_up: true },
+  functions: [{ name: "made_up_function", parameters: { type: "object" } }],
+  function_call: "auto",
+} satisfies Partial<ChatCompletionRequest>;
+
+const WEATHER_TOOL = {
+  type: "function",
+  function: {
+    name: "get_weather",
+    description: "Get the current weather for a city",
+    parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+  },
+};
+
+function sentJson(fetcher: ReturnType<typeof vi.fn>, call = 0): Record<string, unknown> {
+  return JSON.parse((fetcher.mock.calls[call]?.[1] as RequestInit).body as string) as Record<string, unknown>;
+}
+
+describe("RunInfra TypeScript SDK chat request fields and tool calls", () => {
+  it("sends every chat request field typed since 0.3.1", async () => {
+    expect(Object.keys(CHAT_FIELDS_TYPED_SINCE_0_3_1)).toHaveLength(22);
+    const fetcher = vi.fn().mockImplementation(async () => jsonResponse({ id: "chatcmpl_made_up", choices: [] }));
+    const client = madeUpClient(fetcher);
+    const request: ChatCompletionRequest = {
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      ...CHAT_FIELDS_TYPED_SINCE_0_3_1,
+    };
+
+    await client.chat.completions.create(request);
+    expect(sentJson(fetcher)).toEqual(request);
+
+    // Each one passes by itself as well.
+    for (const [field, value] of Object.entries(CHAT_FIELDS_TYPED_SINCE_0_3_1)) {
+      fetcher.mockClear();
+      await client.chat.completions.create({ model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, [field]: value });
+      expect(sentJson(fetcher), field).toEqual({ model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, [field]: value });
+    }
+  });
+
+  it("types each of those fields on ChatCompletionRequest and still refuses a field it does not know", async () => {
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    const chatRequest = source.match(/export interface ChatCompletionRequest \{[\s\S]*?\n\}/u)?.[0] ?? "";
+    for (const field of Object.keys(CHAT_FIELDS_TYPED_SINCE_0_3_1)) {
+      expect(chatRequest, field).toMatch(new RegExp(`\\n  ${field}\\?: `, "u"));
+    }
+
+    const fetcher = vi.fn();
+    expect(() =>
+      madeUpClient(fetcher).chat.completions.create({
+        model: MADE_UP_MODEL,
+        messages: MADE_UP_MESSAGES,
+        made_up_field: true,
+      } as unknown as ChatCompletionRequest),
+    ).toThrow("Unknown chat completion request field: made_up_field");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("still takes those fields in extraBody, where callers had to put them, and refuses one named twice", async () => {
+    const fetcher = vi.fn().mockImplementation(async () => jsonResponse({ id: "chatcmpl_made_up", choices: [] }));
+    const client = madeUpClient(fetcher);
+
+    await client.chat.completions.create(
+      { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES },
+      { extraBody: { ...CHAT_FIELDS_TYPED_SINCE_0_3_1 } },
+    );
+    expect(sentJson(fetcher)).toEqual({
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      ...CHAT_FIELDS_TYPED_SINCE_0_3_1,
+    });
+
+    fetcher.mockClear();
+    await expect(
+      client.chat.completions.create(
+        { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, reasoning_effort: "low" },
+        { extraBody: { reasoning_effort: "none" } },
+      ),
+    ).rejects.toThrow("extraBody must not override typed request field: reasoning_effort");
+    // The older typed fields stay closed to extraBody, set on the request or not.
+    await expect(
+      client.chat.completions.create(
+        { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES },
+        { extraBody: { temperature: 0.2 } },
+      ),
+    ).rejects.toThrow("extraBody must not override typed request field: temperature");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("runs a tool-call round trip: the assistant's calls go back with the tool's answer", async () => {
+    const firstAnswer = {
+      id: "chatcmpl_made_up_1",
+      choices: [{
+        index: 0,
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [{
+            id: "call_made_up",
+            type: "function",
+            function: { name: "get_weather", arguments: "{\"city\":\"Paris\"}" },
+          }],
+        },
+        finish_reason: "tool_calls",
+      }],
+    };
+    const secondAnswer = {
+      id: "chatcmpl_made_up_2",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", reasoning: "The tool answered.", content: "It is 21 degrees in Paris." },
+        finish_reason: "stop",
+      }],
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(firstAnswer))
+      .mockResolvedValueOnce(jsonResponse(secondAnswer));
+    const client = madeUpClient(fetcher);
+    const messages: ChatMessage[] = [{ role: "user", content: "What is the weather in Paris?" }];
+
+    const first = await client.chat.completions.create({ model: MADE_UP_MODEL, messages, tools: [WEATHER_TOOL] });
+    const asked = first.choices?.[0]?.message;
+    expect(asked?.content).toBeNull();
+    expect(first.choices?.[0]?.finish_reason).toBe("tool_calls");
+    messages.push(asked!);
+    for (const call of asked?.tool_calls ?? []) {
+      const args = JSON.parse(call.function.arguments) as { city: string };
+      const answer: ChatToolMessage = {
+        role: "tool",
+        tool_call_id: call.id,
+        content: JSON.stringify({ city: args.city, temp_c: 21 }),
+      };
+      messages.push(answer);
+    }
+    const second = await client.chat.completions.create({
+      model: MADE_UP_MODEL,
+      messages,
+      tools: [WEATHER_TOOL],
+      parallel_tool_calls: false,
+    });
+
+    expect(second.choices?.[0]?.message?.content).toBe("It is 21 degrees in Paris.");
+    expect(second.choices?.[0]?.message?.reasoning).toBe("The tool answered.");
+    expect(sentJson(fetcher, 1)).toEqual({
+      model: MADE_UP_MODEL,
+      tools: [WEATHER_TOOL],
+      parallel_tool_calls: false,
+      messages: [
+        { role: "user", content: "What is the weather in Paris?" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [{
+            id: "call_made_up",
+            type: "function",
+            function: { name: "get_weather", arguments: "{\"city\":\"Paris\"}" },
+          }],
+        },
+        { role: "tool", tool_call_id: "call_made_up", content: "{\"city\":\"Paris\",\"temp_c\":21}" },
+      ],
+    });
+  });
+
+  it("sends an assistant message that carries tool calls and no content at all", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse({ id: "chatcmpl_made_up", choices: [] }));
+    const messages: ChatMessage[] = [
+      { role: "user", content: "What is the weather in Paris?" },
+      {
+        role: "assistant",
+        tool_calls: [{ id: "call_made_up", type: "function", function: { name: "get_weather", arguments: "{}" } }],
+      },
+      { role: "tool", tool_call_id: "call_made_up", content: "{\"temp_c\":21}" },
+    ];
+
+    await madeUpClient(fetcher).chat.completions.create({ model: MADE_UP_MODEL, messages, tools: [WEATHER_TOOL] });
+
+    expect(sentJson(fetcher).messages).toEqual(messages);
+  });
+
+  it("reads a streamed tool call and the model's reasoning from the typed delta", async () => {
+    const frame = (delta: Record<string, unknown>, finishReason: string | null = null): string =>
+      `data: ${JSON.stringify({ id: "chatcmpl_made_up", choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
+    const stream = await openChatStream(
+      frame({ role: "assistant", content: null, reasoning: "The user asks " }) +
+        frame({ reasoning: "for the weather." }) +
+        frame({ tool_calls: [{ index: 0, id: "call_made_up", type: "function", function: { name: "get_weather", arguments: "" } }] }) +
+        frame({ tool_calls: [{ index: 0, function: { arguments: "{\"city\":" } }] }) +
+        frame({ tool_calls: [{ index: 0, function: { arguments: "\"Paris\"}" } }] }) +
+        frame({}, "tool_calls") +
+        CHAT_DONE_FRAME,
+    );
+
+    let reasoning = "";
+    let callId = "";
+    let name = "";
+    let argumentsText = "";
+    let finishReason: string | null | undefined;
+    for await (const event of stream) {
+      const choice = event.choices?.[0];
+      reasoning += choice?.delta?.reasoning ?? "";
+      for (const piece of choice?.delta?.tool_calls ?? []) {
+        if (piece.index !== 0) continue;
+        callId ||= piece.id ?? "";
+        name += piece.function?.name ?? "";
+        argumentsText += piece.function?.arguments ?? "";
+      }
+      finishReason = choice?.finish_reason ?? finishReason;
+    }
+
+    expect(reasoning).toBe("The user asks for the weather.");
+    expect({ callId, name, finishReason }).toEqual({ callId: "call_made_up", name: "get_weather", finishReason: "tool_calls" });
+    expect(JSON.parse(argumentsText)).toEqual({ city: "Paris" });
+  });
+
+  it("type-checks a tool-call round trip written with no cast", () => {
+    // The unit tests are not type-checked when they run, so the compiler is asked directly: the fixture follows one
+    // tool-calling turn and a streamed tool call the way a caller writes them, and names what must not compile.
+    const result = spawnSync(
+      process.execPath,
+      [join("node_modules", "typescript", "bin", "tsc"), "-p", join("test-fixtures", "types", "tsconfig.json")],
+      { cwd: new URL("..", import.meta.url), encoding: "utf8" },
+    );
+
+    expect(`${result.stdout}${result.stderr}`).toBe("");
+    expect(result.status).toBe(0);
+  }, 180_000);
+});
+
+describe("RunInfra TypeScript SDK package links", () => {
+  it("points the package's homepage at the public TypeScript guide", () => {
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      homepage?: string;
+    };
+    const pyproject = readFileSync(new URL("../../python/pyproject.toml", import.meta.url), "utf8");
+
+    expect(packageJson.homepage).toBe("https://www.rightnowai.co/docs/sdks/open-models/native-typescript");
+    expect(pyproject).toContain('Documentation = "https://www.rightnowai.co/docs/sdks/open-models/native-python"');
+  });
+
+  it("says once, in the root README, that the same key works at the other public host, and keeps the default host", () => {
+    const rootReadme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+
+    expect(rootReadme.split("https://api.rightnowai.co/v1").length - 1).toBe(1);
+    expect(source).toContain('options.baseURL ?? "https://api.runinfra.ai/v1"');
   });
 });
