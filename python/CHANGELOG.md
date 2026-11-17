@@ -54,10 +54,11 @@ after a timeout.
     `true` allows the retry of a status that used not to be.
   - The wait is read from `Retry-After-Ms` first, then from `Retry-After`.
     Before, `Retry-After-Ms` was not read.
-  - A `Retry-After-Ms` or `Retry-After` with more digits than a number can
-    hold names no wait: the SDK's own backoff applies, and
-    `retry_after_seconds` stays `None`. Before, such a `Retry-After` was read
-    as infinity.
+  - A `Retry-After` in whole seconds above 9007199254740991 (2^53 - 1, past
+    which a float no longer holds every whole number) names no wait: the SDK's
+    own backoff applies, and `retry_after_seconds` stays `None`. So does a
+    `Retry-After-Ms` with more digits than a float can hold. Before, such a
+    `Retry-After` was read as that many seconds, or as infinity.
   - A wait above 60 seconds is raised at once, with the wait on the error.
     Before, the SDK slept a short backoff instead and sent the call again
     sooner than the API asked. On a batch route the line stays 5 seconds for a

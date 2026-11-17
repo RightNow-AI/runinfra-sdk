@@ -5489,6 +5489,39 @@ class RunInfraPythonSdkRetryRuleTest(unittest.TestCase):
             made_up_client(fallback, max_retries=0).models.list()
         self.assertEqual(raised.exception.retry_after_seconds, 2.0)
 
+    def test_a_retry_after_in_seconds_above_the_largest_safe_integer_names_no_wait(self):
+        # Made up: 20 digits. A float holds a value that large, but no longer every whole number.
+        headers = {"Retry-After": "12345678901234567890"}
+
+        # The error carries no wait.
+        raised_transport = RecordingTransport(busy_response(503, headers))
+        with self.assertRaises(RunInfraError) as raised:
+            made_up_client(raised_transport, max_retries=0).models.list()
+        self.assertEqual(raised.exception.status, 503)
+        self.assertIsNone(raised.exception.retry_after_seconds)
+
+        # A call that is safe to send again sleeps the SDK's own backoff, then asks again.
+        transport = RecordingTransport(busy_response(503, headers), json_response(LISTED))
+        with patch("runinfra.time.sleep") as sleep, patch("runinfra.random.random", return_value=0.0):
+            answer = made_up_client(transport, max_retries=1, retry_base_seconds=0.04).models.list()
+        self.assertEqual(answer["data"], [])
+        self.assertEqual(len(transport.calls), 2)
+        sleep.assert_called_once_with(0.04)
+
+        # The line is the largest safe integer, 2^53 - 1. One above it names no wait.
+        above = RecordingTransport(busy_response(503, {"Retry-After": "9007199254740992"}))
+        with self.assertRaises(RunInfraError) as raised:
+            made_up_client(above, max_retries=0).models.list()
+        self.assertIsNone(raised.exception.retry_after_seconds)
+
+        # The largest one itself still names its wait: longer than the SDK sleeps for, so it is raised at once.
+        largest = RecordingTransport(busy_response(503, {"Retry-After": "9007199254740991"}), json_response(LISTED))
+        with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as raised:
+            made_up_client(largest, max_retries=1, retry_base_seconds=0.04).models.list()
+        self.assertEqual(raised.exception.retry_after_seconds, 9007199254740991.0)
+        self.assertEqual(len(largest.calls), 1)
+        sleep.assert_not_called()
+
     def test_x_should_retry_false_stops_a_retry(self):
         transport = RecordingTransport(
             busy_response(503, {"x-should-retry": "false"}),

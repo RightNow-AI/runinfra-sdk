@@ -27,6 +27,10 @@ __version__ = "0.3.1"
 # sleeps for before it asks again. A longer wait is raised at once, with the
 # wait on the error.
 _MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 60.0
+# The largest whole number of seconds a Retry-After may name: 2^53 - 1, the
+# largest safe integer, the same line in every runtime. A larger value names no
+# wait.
+_MAX_RETRY_AFTER_HEADER_SECONDS = 9007199254740991
 # The timeout of a non-streamed call when the caller names none. The API allows
 # a whole response up to 740 seconds, so the default sits just above.
 _DEFAULT_TIMEOUT_SECONDS = 750.0
@@ -1036,8 +1040,9 @@ def _retry_after_header_seconds(response: RunInfraResponse) -> Optional[float]:
     value = value.strip()
     if re.fullmatch(r"[0-9]+", value):
         seconds = float(value)
-        # More digits than a float holds reads as infinity. That names no wait: the SDK's own backoff applies.
-        return seconds if math.isfinite(seconds) else None
+        # A value above the largest safe integer names no wait: the SDK's own backoff applies. More digits than a
+        # float holds reads as infinity, which is above that line too.
+        return seconds if seconds <= _MAX_RETRY_AFTER_HEADER_SECONDS else None
     if re.match(r"^(?:[+-]|\d)", value):
         return None
     try:

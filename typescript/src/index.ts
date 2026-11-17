@@ -1239,13 +1239,21 @@ export class RunInfraAudioResponse {
   private readonly response: Response;
   private readonly readTimeoutMs?: number;
   private readonly sensitiveValues: readonly string[];
+  /** The `X-Client-Request-Id` the SDK sent with the call. A timeout while the body is read names it. */
+  private readonly clientRequestId?: string;
 
-  constructor(response: Response, readTimeoutMs?: number, sensitiveValues: readonly string[] = []) {
+  constructor(
+    response: Response,
+    readTimeoutMs?: number,
+    sensitiveValues: readonly string[] = [],
+    clientRequestId?: string,
+  ) {
     this.response = response;
     this.contentType = response.headers.get("content-type") ?? "application/octet-stream";
     this.requestId = response.headers.get("x-request-id") ?? undefined;
     this.readTimeoutMs = readTimeoutMs;
     this.sensitiveValues = sensitiveValues;
+    this.clientRequestId = clientRequestId;
   }
 
   arrayBuffer(): Promise<ArrayBuffer> {
@@ -1276,7 +1284,7 @@ export class RunInfraAudioResponse {
       try {
         return await bodyRead;
       } catch (error) {
-        throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
+        throw this.bodyReadFailure(error);
       }
     }
 
@@ -1292,10 +1300,18 @@ export class RunInfraAudioResponse {
         }),
       ]);
     } catch (error) {
-      throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
+      throw this.bodyReadFailure(error);
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
     }
+  }
+
+  /** A failed body read as the SDK's error. A timeout names the request id the SDK sent. */
+  private bodyReadFailure(error: unknown): RunInfraError {
+    const failure = normalizeTransportError(error, this.requestId, this.sensitiveValues);
+    return failure instanceof RunInfraTimeoutError
+      ? withErrorFacts(failure, { clientRequestId: this.clientRequestId })
+      : failure;
   }
 }
 
@@ -2186,6 +2202,7 @@ function retryAfterHeader(response: Response): number | null {
   const trimmed = value.trim();
   if (/^[0-9]+$/.test(trimmed)) {
     const seconds = Number(trimmed);
+    // A value above the largest safe integer names no wait: the SDK's own backoff applies.
     if (Number.isSafeInteger(seconds)) return seconds * 1000;
     return null;
   }
@@ -2817,13 +2834,14 @@ export class RunInfra {
           const body = withValidatedModel(request);
           validateNonEmptyStringField(body.input, "input");
           validateSpeechReference(body);
-          const response = await this.rawRequest("/audio/speech", {
+          // The answer is handed the X-Client-Request-Id the SDK sent, so a timeout while its body is read can name it.
+          return this.sendWithRetry("/audio/speech", {
             method: "POST",
             body,
             typedBodyKeys: SPEECH_REQUEST_KEYS,
             binary: true,
-          }, requestOptions);
-          return new RunInfraAudioResponse(response, this.requestTimeoutMs(requestOptions), [this.apiKey]);
+          }, requestOptions, async (response, sensitiveValues, clientRequestId) =>
+            new RunInfraAudioResponse(response, this.requestTimeoutMs(requestOptions), sensitiveValues, clientRequestId));
         },
       },
       transcriptions: {
@@ -2963,14 +2981,6 @@ export class RunInfra {
       validatedRequestOptions.timeoutMs ?? Math.max(this.timeoutMs ?? defaultTimeoutMs, minDefaultTimeoutMs),
       "timeoutMs",
     );
-  }
-
-  private async rawRequest(
-    path: string,
-    options: RequestOptions,
-    requestOptions: RunInfraRequestOptions = {},
-  ): Promise<Response> {
-    return this.sendWithRetry(path, options, requestOptions, async (response) => response);
   }
 
   private async sendWithRetry<TResponse>(

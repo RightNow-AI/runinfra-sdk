@@ -10738,6 +10738,58 @@ describe("RunInfra TypeScript SDK timeouts", () => {
     expect(runtimeError).toMatchObject({ clientRequestId: "client-made-up-06" });
   });
 
+  it("names the request id it sent on a timeout while the body of an audio speech answer is read", async () => {
+    vi.useFakeTimers();
+    try {
+      // The headers arrive; then no audio comes.
+      const fetcher = vi.fn().mockImplementation(async () =>
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { "Content-Type": "audio/mpeg", "x-request-id": "req_made_up_stalled_audio" },
+        }));
+      const client = madeUpClient(fetcher, { timeoutMs: 1_000 });
+      const speech = { model: MADE_UP_MODEL, input: "Hello", voice: "made-up-voice" };
+
+      const answer = await client.audio.speech.create(speech, { clientRequestId: "client-made-up-07" });
+      const read = settled(answer.arrayBuffer());
+      await vi.advanceTimersByTimeAsync(1_000);
+      const readError = await read;
+      expect(readError).toBeInstanceOf(RunInfraTimeoutError);
+      // The response had begun, so the server's request id is known as well.
+      expect(readError).toMatchObject({ requestId: "req_made_up_stalled_audio", clientRequestId: "client-made-up-07" });
+
+      // With no id from the caller, the error names the one the SDK generated and sent.
+      const blob = settled((await client.audio.speech.create(speech)).blob());
+      await vi.advanceTimersByTimeAsync(1_000);
+      const blobError = await blob;
+      const sentId = sentHeader(fetcher.mock.calls[1]?.[1] as RequestInit, "X-Client-Request-Id");
+      expect(sentId).toBeTruthy();
+      expect(blobError).toBeInstanceOf(RunInfraTimeoutError);
+      expect((blobError as RunInfraError).clientRequestId).toBe(sentId);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The runtime's fetch giving up on the audio body is a timeout that names it too.
+    const cutByRuntime = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(runtimeFetchFailure("terminated", "BodyTimeoutError", "UND_ERR_BODY_TIMEOUT"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "audio/mpeg" } },
+      ),
+    );
+    const cut = await madeUpClient(cutByRuntime).audio.speech.create(
+      { model: MADE_UP_MODEL, input: "Hello", voice: "made-up-voice" },
+      { clientRequestId: "client-made-up-08" },
+    );
+    const runtimeError = await settled(cut.arrayBuffer());
+    expect(runtimeError).toBeInstanceOf(RunInfraTimeoutError);
+    expect(runtimeError).toMatchObject({ clientRequestId: "client-made-up-08" });
+  });
+
   it("still sends a call again after the runtime fetch fails to connect: nothing was sent", async () => {
     const fetcher = vi.fn().mockImplementation(async () => {
       throw runtimeFetchFailure("fetch failed", "ConnectTimeoutError", "UND_ERR_CONNECT_TIMEOUT");
@@ -10842,6 +10894,52 @@ describe("RunInfra TypeScript SDK retry rule", () => {
     // A Retry-After-Ms that names no wait still falls back to a Retry-After that does.
     const fallback = vi.fn().mockResolvedValue(busyResponse(503, { "Retry-After-Ms": tooManyDigits, "Retry-After": "2" }));
     await expect(madeUpClient(fallback, { maxRetries: 0 }).models.list()).rejects.toMatchObject({ retryAfterMs: 2_000 });
+  });
+
+  it("reads a Retry-After in seconds above the largest safe integer as no wait named", async () => {
+    // Made up: 20 digits. A number holds a value that large, but no longer every whole number.
+    const headers = { "Retry-After": "12345678901234567890" };
+
+    // The error carries no wait.
+    const raised = vi.fn().mockImplementation(async () => busyResponse(503, headers));
+    const error = (await settled(madeUpClient(raised, { maxRetries: 0 }).models.list())) as RunInfraError;
+    expect(error.status).toBe(503);
+    expect(error.retryAfterMs).toBeUndefined();
+
+    // A call that is safe to send again sleeps the SDK's own backoff, then asks again.
+    vi.useFakeTimers();
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const fetcher = vi
+        .fn()
+        .mockImplementationOnce(async () => busyResponse(503, headers))
+        .mockResolvedValueOnce(jsonResponse(LISTED));
+      const pending = settled(madeUpClient(fetcher, { maxRetries: 1, retryBaseMs: 40 }).models.list());
+
+      await vi.advanceTimersByTimeAsync(39);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      // Nothing was raised: the second answer was returned.
+      expect(await pending).toBeNull();
+    } finally {
+      randomSpy.mockRestore();
+      vi.useRealTimers();
+    }
+
+    // The line is the largest safe integer, 2^53 - 1. One above it names no wait.
+    const above = vi.fn().mockImplementation(async () => busyResponse(503, { "Retry-After": "9007199254740992" }));
+    const aboveError = (await settled(madeUpClient(above, { maxRetries: 0 }).models.list())) as RunInfraError;
+    expect(aboveError.status).toBe(503);
+    expect(aboveError.retryAfterMs).toBeUndefined();
+
+    // The largest one itself still names its wait: longer than the SDK sleeps for, so it is raised at once.
+    const largest = vi.fn().mockImplementation(async () => busyResponse(503, { "Retry-After": "9007199254740991" }));
+    const largestError = (await settled(
+      madeUpClient(largest, { maxRetries: 1, retryBaseMs: 40 }).models.list(),
+    )) as RunInfraError;
+    expect(largestError.retryAfterMs).toBe(9007199254740991 * 1000);
+    expect(largest).toHaveBeenCalledTimes(1);
   });
 
   it("stops retrying when x-should-retry is false", async () => {
