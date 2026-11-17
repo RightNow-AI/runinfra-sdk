@@ -5052,6 +5052,32 @@ class RunInfraPythonSdkStreamFailureTest(unittest.TestCase):
         self.assertIs(type(error), RunInfraStreamIncompleteError)
         self.assertEqual(error.request_id, "req_made_up_responses_cut")
 
+    def test_a_body_that_ends_in_the_middle_of_a_character_is_a_cut_stream(self):
+        cut_inside_an_event = 'data: {"choices":[{"index":0,"delta":{"content":"\u3053\u3093\u306b'.encode("utf-8")
+        # The last character takes three bytes; the body ends after the first of them.
+        cut_inside_a_character = cut_inside_an_event[:-2]
+
+        def chunks():
+            yield chat_delta("One").encode("utf-8")
+            yield cut_inside_a_character
+
+        transport = RecordingTransport(
+            RunInfraResponse(
+                200,
+                {"content-type": "text/event-stream", "x-request-id": "req_made_up_mid_character"},
+                chunks(),
+            )
+        )
+        stream = made_up_client(transport).chat.completions.create(
+            model=MADE_UP_MODEL, messages=MADE_UP_MESSAGES, stream=True
+        )
+
+        events, error = drain(stream)
+
+        self.assertEqual(delta_texts(events), ["One"])
+        self.assertIs(type(error), RunInfraStreamIncompleteError)
+        self.assertEqual(error.request_id, "req_made_up_mid_character")
+
     def test_readme_documents_the_two_stream_errors(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
 
@@ -5059,6 +5085,131 @@ class RunInfraPythonSdkStreamFailureTest(unittest.TestCase):
         self.assertIn("`RunInfraStreamIncompleteError`", readme)
         self.assertIn("`[DONE]`", readme)
         self.assertIn("`response.completed`", readme)
+
+
+# The one JSON object a repeated streamed call is answered with. Every field of this one is invented.
+MADE_UP_RECEIPT = {
+    "id": "chatcmpl_made_up",
+    "object": "made_up.receipt",
+    "status": "completed",
+    "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16},
+}
+REPLAY_HEADER = {"X-RunInfra-Idempotent-Replay": "true"}
+
+
+def json_answer_to_streamed_call(body, headers=None):
+    """A successful answer whose body is JSON, not an event stream. The body arrives in two reads."""
+    raw = body if isinstance(body, bytes) else body.encode("utf-8")
+    middle = len(raw) // 2
+
+    def chunks():
+        yield raw[:middle]
+        yield raw[middle:]
+
+    return RunInfraResponse(
+        200,
+        {"content-type": "application/json", "x-request-id": "req_made_up_replay", **(headers or {})},
+        chunks(),
+    )
+
+
+class RunInfraPythonSdkStreamAnsweredWithJsonTest(unittest.TestCase):
+    def open_chat_stream(self, response, **request_options):
+        transport = RecordingTransport(response)
+        stream = made_up_client(transport).chat.completions.create(
+            model=MADE_UP_MODEL,
+            messages=MADE_UP_MESSAGES,
+            stream=True,
+            request_options=request_options or None,
+        )
+        return stream, transport
+
+    def test_the_receipt_of_a_repeated_streamed_chat_call_is_yielded_once_marked_and_the_loop_ends_quietly(self):
+        stream, transport = self.open_chat_stream(
+            json_answer_to_streamed_call(json.dumps(MADE_UP_RECEIPT), REPLAY_HEADER),
+            idempotency_key="idem-made-up-replay-01",
+        )
+
+        events, error = drain(stream)
+
+        # Not a cut stream: the receipt is the answer, and the caller can read it.
+        self.assertIsNone(error)
+        self.assertEqual(
+            events,
+            [{**MADE_UP_RECEIPT, "_request_id": "req_made_up_replay", "_idempotent_replay": True}],
+        )
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_the_same_on_a_responses_stream_and_when_the_replay_names_no_content_type(self):
+        receipt = {"id": "resp_made_up", "object": "made_up.receipt", "status": "completed"}
+        transport = RecordingTransport(json_answer_to_streamed_call(json.dumps(receipt), REPLAY_HEADER))
+        stream = made_up_client(transport).responses.create(
+            model=MADE_UP_MODEL,
+            input="Count from one to three.",
+            stream=True,
+            request_options={"idempotency_key": "idem-made-up-replay-02"},
+        )
+
+        events, error = drain(stream)
+
+        self.assertIsNone(error)
+        self.assertEqual(events, [{**receipt, "_request_id": "req_made_up_replay", "_idempotent_replay": True}])
+
+        bare, _transport = self.open_chat_stream(
+            RunInfraResponse(200, {"x-runinfra-idempotent-replay": "TRUE"}, json.dumps(receipt).encode("utf-8"))
+        )
+        events, error = drain(bare)
+        self.assertIsNone(error)
+        self.assertEqual(events, [{**receipt, "_idempotent_replay": True}])
+
+    def test_a_json_answer_that_is_not_a_replay_is_yielded_once_without_the_mark(self):
+        whole = {"id": "chatcmpl_made_up", "object": "chat.completion", "choices": []}
+        stream, _transport = self.open_chat_stream(
+            json_answer_to_streamed_call(json.dumps(whole), {"content-type": "application/json; charset=utf-8"})
+        )
+
+        events, error = drain(stream)
+
+        self.assertIsNone(error)
+        self.assertEqual(events, [{**whole, "_request_id": "req_made_up_replay"}])
+
+    def test_an_event_stream_is_still_read_as_events_when_its_headers_mark_it_as_a_replay(self):
+        stream, _transport = self.open_chat_stream(
+            RunInfraResponse(
+                200,
+                {"Content-Type": "text/event-stream; charset=utf-8", **REPLAY_HEADER},
+                (chat_delta("One") + CHAT_DONE_FRAME).encode("utf-8"),
+            )
+        )
+
+        events, error = drain(stream)
+
+        self.assertIsNone(error)
+        self.assertEqual(delta_texts(events), ["One"])
+
+    def test_a_json_answer_that_cannot_be_read_is_incomplete_and_one_that_is_not_an_object_is_a_shape_error(self):
+        for body in ('{"id":"chatcmpl_made_up","sta', "", json.dumps(MADE_UP_RECEIPT).encode("utf-8")[:-40] + b"\xe3"):
+            with self.subTest(body=body):
+                stream, _transport = self.open_chat_stream(json_answer_to_streamed_call(body, REPLAY_HEADER))
+                events, error = drain(stream)
+                self.assertEqual(events, [])
+                self.assertIs(type(error), RunInfraStreamIncompleteError)
+                self.assertEqual((error.type, error.request_id), ("stream_incomplete_error", "req_made_up_replay"))
+
+        stream, _transport = self.open_chat_stream(json_answer_to_streamed_call("[1,2]", REPLAY_HEADER))
+        events, error = drain(stream)
+        self.assertEqual(events, [])
+        self.assertIs(type(error), RunInfraError)
+        self.assertEqual(
+            (error.status, error.type, error.request_id),
+            (200, "response_shape_error", "req_made_up_replay"),
+        )
+
+    def test_readme_documents_the_json_answer_to_a_streamed_call(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
+
+        self.assertIn("When a streamed call is answered with JSON", readme)
+        self.assertIn("`_idempotent_replay`", readme)
 
 
 class FakeHttpAnswer:

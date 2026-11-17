@@ -719,6 +719,11 @@ class RunInfraStream:
     open stream (`RunInfraStreamError`) or when the body ends without the end
     marker (`RunInfraStreamIncompleteError`). Closing the iterator early raises
     nothing.
+
+    When the API answers the call with one JSON object instead of an event
+    stream, the iteration yields that object once and ends quietly. That is the
+    answer to a streamed call that repeats an `Idempotency-Key`: the object
+    carries `_idempotent_replay` true, as a non-streamed answer does.
     """
 
     def __init__(
@@ -730,6 +735,8 @@ class RunInfraStream:
         self._body = body
         self.request_id = request_id
         self._sensitive_values = tuple(sensitive_values)
+        # The response, when its body is one JSON object instead of an event stream. Set by the client.
+        self._answered_with_json: Optional[RunInfraResponse] = None
 
     def __iter__(self) -> Iterator[JsonDict]:
         buffer = ""
@@ -784,6 +791,19 @@ class RunInfraStream:
 
         error_to_raise: Optional[RunInfraError] = None
         try:
+            if self._answered_with_json is not None:
+                # One JSON object, not an event stream: read it whole and yield it as the only event.
+                try:
+                    answer = json.loads(b"".join(chunks).decode("utf-8"))
+                except ValueError as exc:
+                    raise RunInfraStreamIncompleteError(
+                        "RunInfra answered a streamed call with a JSON body that could not be read; "
+                        "the answer is incomplete",
+                        request_id=self.request_id,
+                    ) from exc
+                yield _json_answer_with_metadata(answer, self._answered_with_json)
+                return
+
             for chunk in chunks:
                 buffer += decoder.decode(chunk, final=False)
                 lines = buffer.split("\n")
@@ -793,7 +813,11 @@ class RunInfraStream:
                     if parsed is not None:
                         yield parsed
 
-            buffer += decoder.decode(b"", final=True)
+            try:
+                buffer += decoder.decode(b"", final=True)
+            except UnicodeDecodeError:
+                # The body ended inside a character. What is left is an unfinished event, judged below.
+                buffer += "\ufffd"
             # What is left was not ended by a blank line. If it cannot be read and no end marker came before
             # it, the body ended inside an event: that is a cut stream, reported below, not a malformed event.
             unfinished: List[JsonDict] = []
@@ -2015,6 +2039,16 @@ def _json_response(response: RunInfraResponse, sensitive_values: Iterable[str] =
         )
     if error_to_raise is not None:
         raise error_to_raise
+    return _json_answer_with_metadata(payload, response)
+
+
+def _json_answer_with_metadata(payload: Any, response: RunInfraResponse) -> Any:
+    """A parsed JSON answer as the SDK returns it.
+
+    The object, with `_request_id` and `_idempotent_replay` when the response
+    headers carry them. An answer that is not an object is a shape error.
+    """
+    request_id = _request_id_from_headers(response.headers)
     if isinstance(payload, dict):
         metadata: Dict[str, Any] = {}
         if request_id:
@@ -2028,6 +2062,29 @@ def _json_response(response: RunInfraResponse, sensitive_values: Iterable[str] =
         error_type="response_shape_error",
         request_id=request_id,
     )
+
+
+def _stream_answered_with_json(headers: Mapping[str, str]) -> bool:
+    """Whether a successful answer to a streamed call is one JSON object instead of an event stream.
+
+    The API answers this way when a streamed call repeats an `Idempotency-Key`
+    it has already answered: `Content-Type: application/json`,
+    `X-RunInfra-Idempotent-Replay: true` and one object.
+    """
+    content_type = (_header(headers, "content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type == "text/event-stream":
+        return False
+    if content_type == "application/json" or content_type.endswith("+json"):
+        return True
+    return _idempotent_replay_from_headers(headers)
+
+
+def _stream_response(response: RunInfraResponse, sensitive_values: Iterable[str] = ()) -> RunInfraStream:
+    """The stream of a successful answer to a streamed call."""
+    stream = RunInfraStream(response.body, _request_id_from_headers(response.headers), sensitive_values)
+    if _stream_answered_with_json(response.headers):
+        stream._answered_with_json = response
+    return stream
 
 
 def _json_payload_kind(payload: Any) -> str:
@@ -2497,7 +2554,9 @@ class _ChatCompletions:
         A streamed call returns a `RunInfraStream`. Iterating it raises
         `RunInfraStreamError` when the API reports a failure on the open
         stream, and `RunInfraStreamIncompleteError` when the stream ends
-        without `[DONE]`.
+        without `[DONE]`. A streamed call that repeats an `idempotency_key`
+        the API has already answered yields one object, marked
+        `_idempotent_replay`, and ends quietly.
         """
         open_fields: Dict[str, object] = {
             "top_k": top_k,
@@ -2560,11 +2619,7 @@ class _ChatCompletions:
             request_options=request_options,
         )
         if is_stream:
-            return RunInfraStream(
-                response.body,
-                _request_id_from_headers(response.headers),
-                [self._requester.api_key],
-            )
+            return _stream_response(response, [self._requester.api_key])
         return _json_response(response, [self._requester.api_key])
 
 
@@ -2677,11 +2732,7 @@ class _Responses:
             request_options=request_options,
         )
         if is_stream:
-            return RunInfraStream(
-                response.body,
-                _request_id_from_headers(response.headers),
-                [self._requester.api_key],
-            )
+            return _stream_response(response, [self._requester.api_key])
         return _json_response(response, [self._requester.api_key])
 
 

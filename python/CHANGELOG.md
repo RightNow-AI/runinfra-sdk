@@ -21,6 +21,15 @@ after a timeout.
   the iterator early raises nothing. Before, both cases ended the loop as if
   the answer were complete. Wrap the loop in `try`/`except`, and keep a
   partial answer only if it is useful to you.
+- **A streamed call answered with JSON yields that answer once.** A streamed
+  call that repeats an `Idempotency-Key` the API has already answered gets one
+  JSON object back instead of an event stream (`Content-Type:
+  application/json`, `X-RunInfra-Idempotent-Replay: true`). The stream yields
+  that object once, marked `_idempotent_replay` true, and ends quietly; it is
+  not reported as a cut stream. Any other successful answer that is JSON
+  instead of an event stream is yielded once in the same way, without the
+  mark. Before, such an answer ended the loop with no event. Check
+  `_idempotent_replay` on an event before you read deltas from it.
 - **New default timeouts.** With no `timeout_seconds`, a non-streamed call is
   given 750 seconds (was 120), and a streamed call 190 seconds to its response
   headers and to each later read (was 120). The API allows a whole response up

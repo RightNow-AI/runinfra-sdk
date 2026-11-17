@@ -10242,6 +10242,29 @@ describe("RunInfra TypeScript SDK streams that fail or are cut", () => {
     expect(cut.error).toMatchObject({ requestId: "req_made_up_responses_cut" });
   });
 
+  it("reports a body that ends in the middle of a character as a cut stream", async () => {
+    const bytes = new TextEncoder().encode(chatDelta("One") + 'data: {"choices":[{"index":0,"delta":{"content":"\u3053\u3093\u306b');
+    // The last character takes three bytes; the body ends after the first of them.
+    const cutInsideACharacter = bytes.slice(0, bytes.length - 2);
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(cutInsideACharacter, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream", "x-request-id": "req_made_up_mid_character" },
+      }),
+    );
+    const stream = await madeUpClient(fetcher).chat.completions.create({
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      stream: true,
+    });
+
+    const { events, error } = await drain(stream);
+
+    expect(deltaTexts(events)).toEqual(["One"]);
+    expect(error).toBeInstanceOf(RunInfraStreamIncompleteError);
+    expect(error).toMatchObject({ requestId: "req_made_up_mid_character" });
+  });
+
   it("documents the two stream errors in the README", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
@@ -10249,6 +10272,131 @@ describe("RunInfra TypeScript SDK streams that fail or are cut", () => {
     expect(readme).toContain("`RunInfraStreamIncompleteError`");
     expect(readme).toContain("`[DONE]`");
     expect(readme).toContain("`response.completed`");
+  });
+});
+
+/** The one JSON object a repeated streamed call is answered with. Every field of this one is invented. */
+const MADE_UP_RECEIPT = {
+  id: "chatcmpl_made_up",
+  object: "made_up.receipt",
+  status: "completed",
+  usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+};
+
+/** A successful answer whose body is JSON, not an event stream. The body arrives in two reads. */
+function jsonAnswerToStreamedCall(body: string, headers: Record<string, string> = {}): Response {
+  const bytes = new TextEncoder().encode(body);
+  const middle = Math.floor(bytes.length / 2);
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (middle > 0) controller.enqueue(bytes.slice(0, middle));
+        if (bytes.length > middle) controller.enqueue(bytes.slice(middle));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "application/json", "x-request-id": "req_made_up_replay", ...headers } },
+  );
+}
+
+const REPLAY_HEADER = { "X-RunInfra-Idempotent-Replay": "true" };
+
+describe("RunInfra TypeScript SDK streamed calls answered with JSON", () => {
+  it("yields the receipt of a repeated streamed chat call once, marked as a replay, and ends quietly", async () => {
+    const fetcher = vi.fn().mockResolvedValue(jsonAnswerToStreamedCall(JSON.stringify(MADE_UP_RECEIPT), REPLAY_HEADER));
+    const stream = await madeUpClient(fetcher).chat.completions.create(
+      { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, stream: true },
+      { idempotencyKey: "idem-made-up-replay-01" },
+    );
+
+    const { events, error } = await drain(stream);
+
+    // Not a cut stream: the receipt is the answer, and the caller can read it.
+    expect(error).toBeNull();
+    expect(events).toEqual([{ ...MADE_UP_RECEIPT, _request_id: "req_made_up_replay", _idempotent_replay: true }]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("does the same on a Responses stream, and when the replay names no content type", async () => {
+    const receipt = { id: "resp_made_up", object: "made_up.receipt", status: "completed" };
+    const fetcher = vi.fn().mockResolvedValue(jsonAnswerToStreamedCall(JSON.stringify(receipt), REPLAY_HEADER));
+    const stream = await madeUpClient(fetcher).responses.create(
+      { model: MADE_UP_MODEL, input: "Count from one to three.", stream: true },
+      { idempotencyKey: "idem-made-up-replay-02" },
+    );
+    const answered = await drain(stream);
+    expect(answered.error).toBeNull();
+    expect(answered.events).toEqual([{ ...receipt, _request_id: "req_made_up_replay", _idempotent_replay: true }]);
+
+    const untyped = new RunInfraStream(
+      new Response(new TextEncoder().encode(JSON.stringify(receipt)), { status: 200, headers: REPLAY_HEADER }),
+    );
+    const bare = await drain(untyped);
+    expect(bare.error).toBeNull();
+    expect(bare.events).toEqual([{ ...receipt, _idempotent_replay: true }]);
+  });
+
+  it("yields a JSON answer that is not a replay once, without the mark", async () => {
+    const whole = { id: "chatcmpl_made_up", object: "chat.completion", choices: [] };
+    const fetcher = vi.fn().mockResolvedValue(jsonAnswerToStreamedCall(JSON.stringify(whole), { "Content-Type": "application/json; charset=utf-8" }));
+    const stream = await madeUpClient(fetcher).chat.completions.create({
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      stream: true,
+    });
+
+    const { events, error } = await drain(stream);
+
+    expect(error).toBeNull();
+    expect(events).toEqual([{ ...whole, _request_id: "req_made_up_replay" }]);
+    expect(events[0]).not.toHaveProperty("_idempotent_replay");
+  });
+
+  it("still reads an event stream as events when its headers mark it as a replay", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(new TextEncoder().encode(chatDelta("One") + CHAT_DONE_FRAME), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream; charset=utf-8", ...REPLAY_HEADER },
+      }),
+    );
+    const stream = await madeUpClient(fetcher).chat.completions.create({
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      stream: true,
+    });
+
+    const { events, error } = await drain(stream);
+
+    expect(error).toBeNull();
+    expect(deltaTexts(events)).toEqual(["One"]);
+  });
+
+  it("reports a JSON answer that cannot be read as incomplete, and one that is not an object as a shape error", async () => {
+    const open = (body: string): Promise<RunInfraStream<ChatCompletionStreamEvent>> =>
+      madeUpClient(vi.fn().mockResolvedValue(jsonAnswerToStreamedCall(body, REPLAY_HEADER))).chat.completions.create({
+        model: MADE_UP_MODEL,
+        messages: MADE_UP_MESSAGES,
+        stream: true,
+      });
+
+    for (const body of ['{"id":"chatcmpl_made_up","sta', ""]) {
+      const cut = await drain(await open(body));
+      expect(cut.events).toEqual([]);
+      expect(cut.error).toBeInstanceOf(RunInfraStreamIncompleteError);
+      expect(cut.error).toMatchObject({ type: "stream_incomplete_error", requestId: "req_made_up_replay" });
+    }
+
+    const list = await drain(await open("[1,2]"));
+    expect(list.events).toEqual([]);
+    expect(list.error).toBeInstanceOf(RunInfraError);
+    expect(list.error).toMatchObject({ status: 200, type: "response_shape_error", requestId: "req_made_up_replay" });
+  });
+
+  it("documents the JSON answer to a streamed call in the README", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+
+    expect(readme).toContain("When a streamed call is answered with JSON");
+    expect(readme).toContain("`_idempotent_replay: true`");
   });
 });
 
@@ -10265,6 +10413,15 @@ function hangingFetch(): { fetcher: ReturnType<typeof vi.fn>; signals: AbortSign
 
 function settled(promise: Promise<unknown>): Promise<unknown> {
   return promise.then(() => null, (error: unknown) => error);
+}
+
+/**
+ * The shape of what Node's built-in fetch rejects with when it gives up by its own clock: a `TypeError` whose
+ * `cause` names the code.
+ */
+function runtimeFetchFailure(message: string, causeName: string, code: string): TypeError {
+  const cause = Object.assign(new Error(causeName), { name: causeName, code });
+  return new TypeError(message, { cause });
 }
 
 describe("RunInfra TypeScript SDK timeouts", () => {
@@ -10464,6 +10621,76 @@ describe("RunInfra TypeScript SDK timeouts", () => {
     }
   });
 
+  it("treats the runtime fetch giving up on the response headers as a timeout: one request, never a second", async () => {
+    const fetcher = vi.fn().mockImplementation(async () => {
+      throw runtimeFetchFailure("fetch failed", "HeadersTimeoutError", "UND_ERR_HEADERS_TIMEOUT");
+    });
+    // Retries are allowed and the calls are safe to send again: only the timeout stops the second request.
+    const client = madeUpClient(fetcher, { maxRetries: 2, retryBaseMs: 0 });
+
+    const keyed = await settled(
+      client.chat.completions.create(
+        { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES },
+        { idempotencyKey: "idem-made-up-04", clientRequestId: "client-made-up-03" },
+      ),
+    );
+    expect(keyed).toBeInstanceOf(RunInfraTimeoutError);
+    expect(keyed).toMatchObject({ status: 0, type: "timeout_error", clientRequestId: "client-made-up-03" });
+    expect((keyed as RunInfraError).message).toContain("response headers");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    const read = await settled(client.models.list());
+    expect(read).toBeInstanceOf(RunInfraTimeoutError);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    // With no id from the caller, the error names the one the SDK generated and sent.
+    const sentId = sentHeader(fetcher.mock.calls[1]?.[1] as RequestInit, "X-Client-Request-Id");
+    expect(sentId).toBeTruthy();
+    expect((read as RunInfraError).clientRequestId).toBe(sentId);
+  });
+
+  it("treats the runtime fetch giving up on the response body as a timeout too, on a JSON answer and on a stream", async () => {
+    const stalledBody = (contentType: string): Response =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(runtimeFetchFailure("terminated", "BodyTimeoutError", "UND_ERR_BODY_TIMEOUT"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": contentType, "x-request-id": "req_made_up_stalled_body" } },
+      );
+
+    const fetcher = vi.fn().mockImplementation(async () => stalledBody("application/json"));
+    const read = await settled(
+      madeUpClient(fetcher, { maxRetries: 2, retryBaseMs: 0 }).models.list({ clientRequestId: "client-made-up-04" }),
+    );
+    expect(read).toBeInstanceOf(RunInfraTimeoutError);
+    expect(read).toMatchObject({ requestId: "req_made_up_stalled_body", clientRequestId: "client-made-up-04" });
+    expect((read as RunInfraError).message).toContain("response body");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    const stream = await madeUpClient(vi.fn().mockResolvedValue(stalledBody("text/event-stream"))).chat.completions.create({
+      model: MADE_UP_MODEL,
+      messages: MADE_UP_MESSAGES,
+      stream: true,
+    });
+    const { events, error } = await drain(stream);
+    expect(events).toEqual([]);
+    expect(error).toBeInstanceOf(RunInfraTimeoutError);
+    expect(error).toMatchObject({ requestId: "req_made_up_stalled_body" });
+  });
+
+  it("still sends a call again after the runtime fetch fails to connect: nothing was sent", async () => {
+    const fetcher = vi.fn().mockImplementation(async () => {
+      throw runtimeFetchFailure("fetch failed", "ConnectTimeoutError", "UND_ERR_CONNECT_TIMEOUT");
+    });
+
+    const read = await settled(madeUpClient(fetcher, { maxRetries: 2, retryBaseMs: 0 }).models.list());
+
+    expect(read).toBeInstanceOf(RunInfraConnectionError);
+    expect(read).not.toBeInstanceOf(RunInfraTimeoutError);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
   it("documents the default timeouts and the no-resend rule in the README", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
@@ -10471,6 +10698,8 @@ describe("RunInfra TypeScript SDK timeouts", () => {
     expect(readme).toContain("190 seconds");
     expect(readme).toContain("never sent again after a timeout");
     expect(readme).toContain("`clientRequestId`");
+    // The limit of Node's built-in fetch on a non-streamed call.
+    expect(readme).toContain("300 seconds to its response headers");
   });
 });
 

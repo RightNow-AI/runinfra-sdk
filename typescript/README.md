@@ -159,6 +159,20 @@ try {
 }
 ```
 
+### When a streamed call is answered with JSON
+
+A streamed call that repeats an `Idempotency-Key` the API has already answered gets one JSON object back instead of an event stream: `Content-Type: application/json` and `X-RunInfra-Idempotent-Replay: true`. The SDK does not read that as a cut stream. The stream yields the object once, marked `_idempotent_replay: true` as a non-streamed answer is, and the loop ends quietly. Check the mark before you read deltas from an event: a replayed answer is not a new stream of deltas. Any other successful answer that is JSON instead of an event stream is yielded once in the same way, without the mark. A JSON body that cannot be read throws `RunInfraStreamIncompleteError`. Before 0.3.1 such an answer ended the loop with no event at all.
+
+```ts
+for await (const event of chatStream) {
+  if (event._idempotent_replay) {
+    console.log("Already answered. This is the API's receipt for the first call.", event);
+    continue;
+  }
+  answer += event.choices?.[0]?.delta?.content ?? "";
+}
+```
+
 RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gateway converts supported `input` and `instructions` values into chat messages, forwards the supported request through the chat-completions serving path, and rewraps the result into a Responses-style envelope. It does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics.
 
 ## Supported public routes
@@ -409,7 +423,9 @@ const client = new RunInfra({
 
 When you set no `timeoutMs`, a non-streamed call is given 750 seconds for the whole call, and a streamed call is given 190 seconds to its response headers and to each later read. The API allows a whole response up to 740 seconds and a stream up to 180 seconds to its first token, so the defaults sit just above both. Your own setting wins: `timeoutMs` on the client applies to every call, and `timeoutMs` in a call's options wins over the client's. Before 0.3.1 the default was 120 seconds for every call, so a long answer the API was still writing was cut off by the SDK.
 
-A call is never sent again after a timeout, even when it carries an `idempotencyKey` and retries are left: the API may still be working on the first send. The call throws `RunInfraTimeoutError`. Its `clientRequestId` is the `X-Client-Request-Id` the SDK sent, so the call can be found; `requestId` is set only when a response had begun. Before 0.3.1 a `GET` and a keyed call were sent again after the SDK's own timeout.
+On Node.js the built-in `fetch` has a limit of its own: it gives up when no response headers arrive within 300 seconds, and a non-streamed answer can keep its headers back until it is whole. So with the built-in `fetch` a non-streamed call gets at most 300 seconds to its response headers, whatever `timeoutMs` says, unless you pass the client a `fetch` that allows more. Stream an answer that may take longer.
+
+A call is never sent again after a timeout, even when it carries an `idempotencyKey` and retries are left: the API may still be working on the first send. The call throws `RunInfraTimeoutError`. Its `clientRequestId` is the `X-Client-Request-Id` the SDK sent, so the call can be found; `requestId` is set only when a response had begun. The same holds when the runtime's `fetch` gives up on the response headers or the body by its own clock, as Node's does after 300 seconds: the SDK throws `RunInfraTimeoutError`, not `RunInfraConnectionError`, and does not send the call again. Before 0.3.1 a `GET` and a keyed call were sent again after the SDK's own timeout.
 
 ### Retries
 
@@ -461,7 +477,7 @@ Every typed error includes `retryAfterMs` when its response named a wait (`Retry
 `PermissionDeniedError.type` preserves a specific gateway discriminator on `403` responses when one is present (for example `byoc_plan_required` when a workspace below the deploy tier calls a BYOC-deployed endpoint); it falls back to `permission_denied`. Branch on `err.type` instead of matching the message string.
 `InsufficientCreditsError` includes `currentBalanceCents`, `requiredCents`, and `topupUrl` when the gateway returns them on a `402` response, so you can render an exact top-up prompt without parsing the message.
 `RunInfraStreamParseError` includes `requestId` when a malformed SSE frame came from a traced gateway response.
-`RunInfraTimeoutError` also covers stalled streaming reads, stalled non-streaming JSON body reads, and stalled binary audio `arrayBuffer()` / `blob()` reads after headers arrive, and includes `requestId` when the response was traced.
+`RunInfraTimeoutError` also covers stalled streaming reads, stalled non-streaming JSON body reads, and stalled binary audio `arrayBuffer()` / `blob()` reads after headers arrive, and includes `requestId` when the response was traced. It also covers the runtime's `fetch` giving up on the response headers or the body by its own clock.
 `RunInfraConnectionError` also covers streaming body transport failures, non-streaming JSON body transport failures, and binary audio `arrayBuffer()` / `blob()` transport failures after headers arrive, and includes `requestId` when the response was traced.
 
 JSON helpers return typed response objects for the public gateway contract:

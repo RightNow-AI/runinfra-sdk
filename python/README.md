@@ -148,6 +148,19 @@ except RunInfraStreamIncompleteError as error:
     print("The stream was cut short.", error.request_id)
 ```
 
+### When a streamed call is answered with JSON
+
+A streamed call that repeats an `Idempotency-Key` the API has already answered gets one JSON object back instead of an event stream: `Content-Type: application/json` and `X-RunInfra-Idempotent-Replay: true`. The SDK does not read that as a cut stream. The stream yields the object once, marked `_idempotent_replay` true as a non-streamed answer is, and the loop ends quietly. Check the mark before you read deltas from an event: a replayed answer is not a new stream of deltas. Any other successful answer that is JSON instead of an event stream is yielded once in the same way, without the mark. A JSON body that cannot be read raises `RunInfraStreamIncompleteError`. Before 0.3.1 such an answer ended the loop with no event at all.
+
+```python
+for event in chat_stream:
+    if event.get("_idempotent_replay"):
+        print("Already answered. This is the API's receipt for the first call.", event)
+        continue
+    if event["choices"]:
+        answer += event["choices"][0]["delta"].get("content") or ""
+```
+
 RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gateway converts supported `input` and `instructions` values into chat messages, forwards the supported request through the chat-completions serving path, and rewraps the result into a Responses-style envelope. It does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics.
 
 ## Async Python runtimes

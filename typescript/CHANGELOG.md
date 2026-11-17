@@ -21,6 +21,15 @@ after a timeout.
   and leaving the loop early throws nothing. Before, both cases ended the loop
   as if the answer were complete. Wrap the loop in `try`/`catch`, and keep a
   partial answer only if it is useful to you.
+- **A streamed call answered with JSON yields that answer once.** A streamed
+  call that repeats an `Idempotency-Key` the API has already answered gets one
+  JSON object back instead of an event stream (`Content-Type:
+  application/json`, `X-RunInfra-Idempotent-Replay: true`). The stream yields
+  that object once, marked `_idempotent_replay: true`, and ends quietly; it is
+  not reported as a cut stream. Any other successful answer that is JSON
+  instead of an event stream is yielded once in the same way, without the
+  mark. Before, such an answer ended the loop with no event. Check
+  `_idempotent_replay` on an event before you read deltas from it.
 - **New default timeouts.** With no `timeoutMs`, a non-streamed call is given
   750 seconds (was 120), and a streamed call 190 seconds to its response
   headers and to each later read (was 120). The API allows a whole response up
@@ -28,12 +37,23 @@ after a timeout.
   default cut such calls off. A `timeoutMs` you set, on the client or on a
   call, is used as before. A call that hangs now takes longer to fail unless
   you set your own timeout.
+- **On Node.js the built-in `fetch` still gives a non-streamed call at most
+  300 seconds to its response headers.** It gives up when no response headers
+  arrive within 300 seconds, whatever `timeoutMs` says, and a non-streamed
+  answer can keep its headers back until it is whole. Pass the client a
+  `fetch` that allows more, or stream an answer that may take longer.
 - **No re-send after a timeout.** A call that runs out of time throws
   `RunInfraTimeoutError` and is never sent again, whatever `maxRetries` says
   and whether or not it carries an `idempotencyKey`. Before, a `GET` and a
   keyed non-streamed call were sent again after the SDK's own timeout, while
   the API could still be working on the first send. The error carries
-  `clientRequestId`, the `X-Client-Request-Id` the SDK sent.
+  `clientRequestId`, the `X-Client-Request-Id` the SDK sent. The runtime's
+  `fetch` giving up on the response headers or the body by its own clock, as
+  Node's does after 300 seconds, counts as a timeout too: it throws
+  `RunInfraTimeoutError` where it used to throw `RunInfraConnectionError`, and
+  the call is not sent again. A failure to connect is still a
+  `RunInfraConnectionError`, and a call that is safe to send again is still
+  sent again after one.
 - **The retry rule follows what the API says.** Which calls may be sent again
   has not changed: a `GET`, or a non-streamed chat, Responses or batch create
   call that carries an `idempotencyKey`. For those calls:

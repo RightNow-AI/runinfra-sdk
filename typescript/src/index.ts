@@ -10,6 +10,8 @@ const MAX_AUTOMATIC_RETRY_AFTER_MS = 60_000;
 /**
  * The timeout of a non-streamed call when the caller names none. The API
  * allows a whole response up to 740 seconds, so the default sits just above.
+ * The runtime's `fetch` may give up sooner by its own clock: Node's built-in
+ * `fetch` waits at most 300 seconds for the response headers.
  */
 const DEFAULT_TIMEOUT_MS = 750_000;
 /**
@@ -26,11 +28,18 @@ export interface RunInfraOptions {
   /**
    * The timeout of every call, in milliseconds. Left out, a non-streamed call
    * is given 750 seconds, and a streamed call 190 seconds to its response
-   * headers and to each later read.
+   * headers and to each later read. The `fetch` in use has its own limits:
+   * Node's built-in `fetch` waits at most 300 seconds for the response
+   * headers, whatever this says.
    */
   timeoutMs?: number;
   maxRetries?: number;
   retryBaseMs?: number;
+  /**
+   * The `fetch` every call is sent with. Defaults to the runtime's own. Pass
+   * one whose own time limits allow more when a non-streamed call must wait
+   * longer for its response headers than the runtime's `fetch` does.
+   */
   fetch?: typeof fetch;
   dangerouslyAllowBrowser?: boolean;
 }
@@ -895,10 +904,11 @@ export class ModelNotFoundError extends RunInfraError {
 }
 
 /**
- * A call that ran out of time. `clientRequestId` holds the
- * `X-Client-Request-Id` the SDK sent with the call; `requestId` is set only
- * when a response had begun. A call is never sent again after a timeout: the
- * API may still be working on it.
+ * A call that ran out of time: the SDK's own timeout, or the runtime's `fetch`
+ * giving up on the response headers or the body by its own clock.
+ * `clientRequestId` holds the `X-Client-Request-Id` the SDK sent with the
+ * call; `requestId` is set only when a response had begun. A call is never
+ * sent again after a timeout: the API may still be working on it.
  */
 export class RunInfraTimeoutError extends RunInfraError {
   constructor(message = "RunInfra request timed out", requestId?: string, clientRequestId?: string) {
@@ -1319,6 +1329,19 @@ function streamFailure(event: unknown, streamRequestId?: string): RunInfraStream
 }
 
 /**
+ * Whether a successful answer to a streamed call is one JSON object instead of
+ * an event stream. The API answers this way when a streamed call repeats an
+ * `Idempotency-Key` it has already answered: `Content-Type: application/json`,
+ * `X-RunInfra-Idempotent-Replay: true` and one object.
+ */
+function streamAnsweredWithJson(response: Response): boolean {
+  const contentType = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (contentType === "text/event-stream") return false;
+  if (contentType === "application/json" || contentType.endsWith("+json")) return true;
+  return isIdempotentReplay(response);
+}
+
+/**
  * The events of one streamed answer.
  *
  * Iterating yields each event as it arrives. The iteration ends quietly only
@@ -1328,6 +1351,11 @@ function streamFailure(event: unknown, streamRequestId?: string): RunInfraStream
  * open stream (`RunInfraStreamError`) or when the body ends without the end
  * marker (`RunInfraStreamIncompleteError`). Leaving the loop early throws
  * nothing.
+ *
+ * When the API answers the call with one JSON object instead of an event
+ * stream, the iteration yields that object once and ends quietly. That is the
+ * answer to a streamed call that repeats an `Idempotency-Key`: the object
+ * carries `_idempotent_replay: true`, as a non-streamed answer does.
  */
 export class RunInfraStream<TEvent extends Record<string, unknown> = Record<string, unknown>>
   implements AsyncIterable<TEvent> {
@@ -1408,6 +1436,30 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
     };
 
     try {
+      if (streamAnsweredWithJson(this.response)) {
+        // One JSON object, not an event stream: read it whole and yield it as the only event.
+        while (true) {
+          const { done, value } = await readChunk();
+          if (done) {
+            readerDone = true;
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+        }
+        buffer += decoder.decode();
+        let answer: unknown;
+        try {
+          answer = JSON.parse(buffer);
+        } catch {
+          throw new RunInfraStreamIncompleteError(
+            "RunInfra answered a streamed call with a JSON body that could not be read; the answer is incomplete",
+            this.requestId,
+          );
+        }
+        yield jsonAnswer<TEvent>(answer, this.response);
+        return;
+      }
+
       while (true) {
         const { done, value } = await readChunk();
         if (done) {
@@ -2382,24 +2434,23 @@ function errorFromResponse(
   });
 }
 
-async function parseJsonResponse<TResponse>(
-  response: Response,
-  sensitiveValues: readonly string[] = [],
-): Promise<TResponse> {
+/** Whether the response says it is a replay: the answer to a call that repeats an `Idempotency-Key` already answered. */
+function isIdempotentReplay(response: Response): boolean {
+  return response.headers.get("x-runinfra-idempotent-replay")?.trim().toLowerCase() === "true";
+}
+
+/**
+ * A parsed JSON answer as the SDK returns it: the object, with `_request_id`
+ * and `_idempotent_replay` when the response headers carry them. An answer
+ * that is not an object is a shape error.
+ */
+function jsonAnswer<TResponse>(payload: unknown, response: Response): TResponse {
   const requestId = response.headers.get("x-request-id") ?? undefined;
-  const idempotentReplay =
-    response.headers.get("x-runinfra-idempotent-replay")?.trim().toLowerCase() === "true";
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch (error) {
-    throw new ResponseBodyReadError(normalizeTransportError(error, requestId, sensitiveValues));
-  }
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
     return {
       ...(payload as Record<string, unknown>),
       ...(requestId ? { _request_id: requestId } : {}),
-      ...(idempotentReplay ? { _idempotent_replay: true } : {}),
+      ...(isIdempotentReplay(response) ? { _idempotent_replay: true } : {}),
     } as TResponse;
   }
   throw new RunInfraError(
@@ -2410,6 +2461,20 @@ async function parseJsonResponse<TResponse>(
       requestId,
     },
   );
+}
+
+async function parseJsonResponse<TResponse>(
+  response: Response,
+  sensitiveValues: readonly string[] = [],
+): Promise<TResponse> {
+  const requestId = response.headers.get("x-request-id") ?? undefined;
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    throw new ResponseBodyReadError(normalizeTransportError(error, requestId, sensitiveValues));
+  }
+  return jsonAnswer<TResponse>(payload, response);
 }
 
 function jsonPayloadKind(payload: unknown): string {
@@ -2512,8 +2577,38 @@ function normalizeTransportError(
   if (error instanceof Error && error.name === "AbortError") {
     return new RunInfraTimeoutError(redactSensitiveValues(error.message, sensitiveValues), requestId);
   }
+  // The runtime's fetch ran out of its own time for the response headers or the body. The request was sent,
+  // so this is a timeout like the SDK's own and never a connection failure that is sent again. A connect
+  // timeout is not one of these: nothing was sent, so it stays a connection failure.
+  const runtimeCode = runtimeFetchFailureCode(error);
+  if (runtimeCode === "UND_ERR_HEADERS_TIMEOUT") {
+    return new RunInfraTimeoutError(
+      "RunInfra request timed out: the runtime's fetch stopped waiting for the response headers",
+      requestId,
+    );
+  }
+  if (runtimeCode === "UND_ERR_BODY_TIMEOUT") {
+    return new RunInfraTimeoutError(
+      "RunInfra request timed out: the runtime's fetch stopped waiting for the response body",
+      requestId,
+    );
+  }
   const message = redactSensitiveValues(error instanceof Error ? error.message : String(error), sensitiveValues);
   return new RunInfraConnectionError(message, requestId);
+}
+
+/**
+ * The code of a failure the runtime's `fetch` reports, when it names one.
+ * Node's built-in `fetch` rejects with a `TypeError` (`fetch failed`, or
+ * `terminated` once the body had begun) and names the code on `error.cause`.
+ */
+function runtimeFetchFailureCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const { code, cause } = error as { code?: unknown; cause?: unknown };
+  if (typeof code === "string") return code;
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const causeCode = (cause as { code?: unknown }).code;
+  return typeof causeCode === "string" ? causeCode : undefined;
 }
 
 export class RunInfra {
