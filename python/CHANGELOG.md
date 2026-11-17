@@ -3,6 +3,88 @@
 All notable changes to the `runinfra` Python SDK are documented here. This
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-17
+
+Read "Changed" before you upgrade. A stream now raises where it used to end
+silently, the default timeouts are longer, and a call is no longer sent again
+after a timeout.
+
+### Changed
+- **A stream raises where it used to end silently.** Iterating a
+  `RunInfraStream` raises `RunInfraStreamError` when the API reports a failure
+  on the open stream (a frame that holds an `error` object, or a
+  `response.failed` event on a Responses stream), and
+  `RunInfraStreamIncompleteError` when the body ends without its end marker
+  (`[DONE]` on a chat stream, `response.completed` on a Responses stream; an
+  empty body counts, and so does a body that ends in the middle of an event).
+  Every event that came first is still yielded before the raise, and closing
+  the iterator early raises nothing. Before, both cases ended the loop as if
+  the answer were complete. Wrap the loop in `try`/`except`, and keep a
+  partial answer only if it is useful to you.
+- **New default timeouts.** With no `timeout_seconds`, a non-streamed call is
+  given 750 seconds (was 120), and a streamed call 190 seconds to its response
+  headers and to each later read (was 120). The API allows a whole response up
+  to 740 seconds and a stream up to 180 seconds to its first token, and the old
+  default cut such calls off. A `timeout_seconds` you set, on the client or in
+  a call's `request_options`, is used as before. A call that hangs now takes
+  longer to fail unless you set your own timeout. The default of the client's
+  `timeout_seconds` parameter is now `None`, which means "use the defaults
+  above". A custom `transport` is handed the same `timeout_seconds` as before.
+- **No re-send after a timeout.** A call that runs out of time raises
+  `RunInfraTimeoutError` and is never sent again, whatever `max_retries` says
+  and whether or not it carries an `idempotency_key`. Before, a `GET` and a
+  keyed non-streamed call were sent again after a timeout, while the API could
+  still be working on the first send. The error carries `client_request_id`,
+  the `X-Client-Request-Id` the SDK sent.
+- **The retry rule follows what the API says.** Which calls may be sent again
+  has not changed: a `GET`, or a non-streamed chat, Responses or batch create
+  call that carries an `idempotency_key`. For those calls:
+  - `x-should-retry` on the response and `error.retryable` in the error body
+    are obeyed. `false` stops the retry of a status that used to be retried.
+    `true` allows the retry of a status that used not to be.
+  - The wait is read from `Retry-After-Ms` first, then from `Retry-After`.
+    Before, `Retry-After-Ms` was not read.
+  - A wait above 60 seconds is raised at once, with the wait on the error.
+    Before, the SDK slept a short backoff instead and sent the call again
+    sooner than the API asked. On a batch route the line stays 5 seconds for a
+    `503`, and a `409` stays final.
+  - The SDK's own backoff, used when the API names no wait, now has jitter: up
+    to one `retry_base_seconds` is added to each wait. Before, the Python
+    backoff was the same for every client.
+  - The error body of a failed response is read before the SDK decides, where
+    it used to be closed unread.
+- **`retry_after_seconds` is on every typed error whose response named a
+  wait**, whatever its status. Before, only `RateLimitError` and the batch
+  routes' refusals carried it. Code that reads `retry_after_seconds is None`
+  to tell a rate limit from another error must test the class or the status
+  instead.
+- **A chat answer's `choices` are typed.** `ChatCompletionResponse["choices"]`
+  is now a list of `ChatCompletionChoice` instead of plain dictionaries, and
+  its message's `content` may be `None`. A type checker now reports a `content`
+  used where a `str` is required, and a key of a choice the type does not name.
+  Nothing changes at run time.
+- The package's Documentation link points at the public Python guide.
+
+### Added
+- `RunInfraStreamError` and `RunInfraStreamIncompleteError`, described above.
+- `RunInfraError.retryable`: what the API said about asking again, when it
+  said it. `RunInfraError.client_request_id`: set on a timeout.
+- Keywords on `client.chat.completions.create` for the chat request fields the
+  API documents and the helper did not name: `top_k`, `min_p`,
+  `repetition_penalty`, `n`, `best_of`, `logit_bias`, `parallel_tool_calls`,
+  `reasoning_effort`, `reasoning`, `include_reasoning`, `prompt_cache_key`,
+  `service_tier`, `store`, `safety_identifier`, `modalities`, `audio`,
+  `prediction`, `verbosity`, `web_search_options`, `moderation`, `functions`,
+  and `function_call`. Each of them is still accepted in `extra_body`, where it
+  had to go before; naming one in both places is refused.
+- Tool calls have a shape: `ChatMessage` with `tool_calls`
+  (`ChatCompletionMessageToolCall`), a `content` that may be `None`, and
+  `reasoning`; `ChatToolMessage` for the message that answers a call by its
+  `tool_call_id`; and `ChatCompletionStreamEvent`,
+  `ChatCompletionStreamChoice`, `ChatCompletionStreamDelta`, and
+  `ChatCompletionStreamToolCallDelta` for a chat stream, whose delta types
+  `tool_calls` and `reasoning`.
+
 ## [0.3.0] - 2026-11-16
 
 ### Added

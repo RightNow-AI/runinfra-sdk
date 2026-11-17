@@ -10,7 +10,7 @@ Requires Python 3.9 or newer.
 pip install runinfra
 ```
 
-## Modality status (v0.3.0)
+## Modality status (v0.3.1)
 
 This SDK is in **beta**. The surfaces below have different verification levels:
 
@@ -152,7 +152,7 @@ RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gatewa
 
 ## Async Python runtimes
 
-`RunInfra` is intentionally sync-only in v0.3.0 and uses Python's standard
+`RunInfra` is intentionally sync-only in v0.3.1 and uses Python's standard
 library HTTP stack. FastAPI, Starlette, Django ASGI, and other asyncio apps
 should run SDK calls in a worker thread, task queue, or background job so an
 inference request does not block the event loop. Do not instantiate an
