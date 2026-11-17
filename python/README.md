@@ -108,6 +108,46 @@ calls are not automatically retried. The Python type surface overloads
 `client.responses.create()` to return `RunInfraStream`; non-stream calls keep
 their typed response envelopes.
 
+### When a stream fails or is cut
+
+A stream is complete only when it carried its end marker: `[DONE]` on a chat
+stream, `response.completed` on a Responses stream. The loop ends quietly in
+that case alone. Otherwise the iteration raises, after it has yielded every
+event that came first:
+
+- `RunInfraStreamError` when the API reports a failure on the open stream: a
+  frame that holds an `error` object, or a `response.failed` event on a
+  Responses stream. It keeps the API's `type` and `code`, the request id as
+  `request_id`, and `retryable` when the API marked the failure. Its `status`
+  is `0`, because the failure arrived after the HTTP status.
+- `RunInfraStreamIncompleteError` when the body ends without the end marker:
+  the connection was cut or the stream was closed early.
+
+Either way the answer is not whole, even though the HTTP status was 200. Keep
+what was yielded only if a partial answer is useful to you. Closing the
+iterator early raises nothing. Before 0.3.1 both cases ended the loop silently,
+as if the answer were complete.
+
+```python
+from runinfra import RunInfraStreamError, RunInfraStreamIncompleteError
+
+chat_stream = client.chat.completions.create(
+    model="your-deployed-model-id",
+    messages=[{"role": "user", "content": "Count from one to three."}],
+    stream=True,
+)
+
+answer = ""
+try:
+    for chunk in chat_stream:
+        if chunk["choices"]:
+            answer += chunk["choices"][0]["delta"].get("content") or ""
+except RunInfraStreamError as error:
+    print("The stream failed.", error.code, error.request_id, error.retryable)
+except RunInfraStreamIncompleteError as error:
+    print("The stream was cut short.", error.request_id)
+```
+
 RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gateway converts supported `input` and `instructions` values into chat messages, forwards the supported request through the chat-completions serving path, and rewraps the result into a Responses-style envelope. It does not claim full OpenAI Responses state, include, reasoning, tool, conversation-item, or background-job semantics.
 
 ## Async Python runtimes
@@ -179,6 +219,15 @@ The typed native SDK subset is:
   `max_tokens`, `stop`, `presence_penalty`, `frequency_penalty`, `user`, and
   `metadata`; streaming usage chunks are covered separately with
   `stream_options.include_usage`.
+- Chat Completions also takes, from 0.3.1, a keyword for each of the other
+  request fields the API documents: `top_k`, `min_p`, `repetition_penalty`,
+  `n`, `best_of`, `logit_bias`, `parallel_tool_calls`, `reasoning_effort`,
+  `reasoning`, `include_reasoning`, `prompt_cache_key`, `service_tier`,
+  `store`, `safety_identifier`, `modalities`, `audio`, `prediction`,
+  `verbosity`, `web_search_options`, `moderation`, `functions`, and
+  `function_call`. They are sent as given; whether a model accepts one depends
+  on the model. Each of them is still accepted in `extra_body` too, where it
+  had to go before, as long as the keyword is left out.
 - Responses: `model`, `input`, `stream`, `instructions`, `temperature`,
   `top_p`, `tools`, `tool_choice`, `response_format`, and `max_output_tokens`.
 - Embeddings: `model`, `input`, `encoding_format="float"`, and `dimensions`
@@ -207,6 +256,52 @@ LLM pass-through options are typed for parity with the TypeScript SDK and
 OpenAI-style request shapes, but actual support depends on the deployed backend.
 Embedding `user`, TTS `speed`, and ASR `temperature` are typed pass-through
 options for SDK parity, but actual support depends on the deployed backend.
+
+## Tool calls
+
+`ChatMessage` types the whole tool-calling turn. An assistant message carries
+the model's calls in `tool_calls`, and its `content` is `None` or left out when
+it carries nothing else. Answer each call with a `tool` message
+(`ChatToolMessage`) that repeats the call's `id` as `tool_call_id`. On a
+stream, `delta["tool_calls"]` carries the pieces of each call
+(`ChatCompletionStreamToolCallDelta`) and `delta["reasoning"]` the model's
+thinking.
+
+```python
+import json
+from typing import List
+
+from runinfra import ChatMessage, ChatToolMessage
+
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get the current weather for a city",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+    },
+}]
+messages: List[ChatMessage] = [{"role": "user", "content": "What is the weather in Paris?"}]
+
+first = client.chat.completions.create(model="your-deployed-model-id", messages=messages, tools=tools)
+asked = first["choices"][0]["message"]
+if asked.get("tool_calls"):
+    # Send the whole assistant message back, then one tool message per call.
+    messages.append(asked)
+    for call in asked["tool_calls"]:
+        arguments = json.loads(call["function"]["arguments"])
+        result: ChatToolMessage = {
+            "role": "tool",
+            "tool_call_id": call["id"],
+            "content": json.dumps({"city": arguments.get("city"), "temp_c": 21}),
+        }
+        messages.append(result)
+    second = client.chat.completions.create(model="your-deployed-model-id", messages=messages, tools=tools)
+    print(second["choices"][0]["message"].get("content"))
+```
+
+The arguments of a call arrive as a JSON string the model wrote: parse and
+check them before you run anything. Tool calling depends on the model.
 
 ## Text to speech
 
@@ -339,7 +434,27 @@ client = RunInfra(
 )
 ```
 
-The SDK retries transient transport failures and `408`, `409`, `429`, `500`, `502`, `503`, and `504` responses for safe `GET` requests. Charge-bearing `POST` inference requests retry only when you provide `idempotency_key`, and automatic POST retries are limited to non-streaming JSON calls whose gateway responses can be replayed safely. Only `responses.create()` and non-streaming `chat.completions.create()` are currently auto-retry replay-safe. Embeddings, images, streaming calls, binary TTS responses, and multipart ASR uploads are sent once even when you provide an idempotency key. Keep `max_retries=0` for any cost-sensitive operation whose replay behavior is not documented as safe. Automatic retries honor reasonable `Retry-After` values up to 60 seconds when the header is a plain integer second value or HTTP-date, then fall back to bounded exponential backoff. The SDK does not retry authentication errors, insufficient credits, or unsupported operations.
+### Timeouts
+
+When you set no `timeout_seconds`, a non-streamed call is given 750 seconds, and a streamed call is given 190 seconds to its response headers and to each later read. The API allows a whole response up to 740 seconds and a stream up to 180 seconds to its first token, so the defaults sit just above both. Your own setting wins: `timeout_seconds` on the client applies to every call, and `timeout_seconds` in a call's `request_options` wins over the client's. Before 0.3.1 the default was 120 seconds for every call, so a long answer the API was still writing was cut off by the SDK.
+
+The timeout bounds the wait for the response headers and each later read. A custom `transport` receives a call's own `timeout_seconds` on the request, and `None` when the call named none, exactly as before: the defaults above are the standard-library transport's.
+
+A call is never sent again after a timeout, even when it carries an `idempotency_key` and retries are left: the API may still be working on the first send. The call raises `RunInfraTimeoutError`. Its `client_request_id` is the `X-Client-Request-Id` the SDK sent, so the call can be found; `request_id` is set only when a response had begun. Before 0.3.1 a `GET` and a keyed call were sent again after a timeout.
+
+### Retries
+
+The SDK retries transient transport failures and `408`, `409`, `429`, `500`, `502`, `503`, and `504` responses for safe `GET` requests. Charge-bearing `POST` inference requests retry only when you provide `idempotency_key`, and automatic POST retries are limited to non-streaming JSON calls whose gateway responses can be replayed safely. Only `responses.create()` and non-streaming `chat.completions.create()` are currently auto-retry replay-safe. Embeddings, images, streaming calls, binary TTS responses, and multipart ASR uploads are sent once even when you provide an idempotency key. Keep `max_retries=0` for any cost-sensitive operation whose replay behavior is not documented as safe. The SDK does not retry authentication errors, insufficient credits, or unsupported operations.
+
+For a call that is safe to send again, what the API says comes first:
+
+- `x-should-retry` on the response and `error.retryable` in the error body are obeyed when present. `false` from either means the call is not sent again, whatever its status. `true` allows another send, whatever its status. When the API says nothing, the status decides, as listed above.
+- The wait is read from `Retry-After-Ms` first, then from `Retry-After` (whole seconds or an HTTP date), and the SDK sleeps that long.
+- A wait above 60 seconds is not slept. The error is raised at once with the wait as `retry_after_seconds`, so the call never blocks for minutes and you can plan the next attempt yourself. Before 0.3.1 such a wait was replaced by a short backoff, and the call was sent again sooner than the API asked.
+- When the API names no wait, the SDK backs off exponentially from `retry_base_seconds`, with jitter, for at most 30 seconds. Before 0.3.1 the Python backoff had no jitter.
+- The error body of a failed response is read before the SDK decides, because the API can mark the failure inside it.
+
+Every typed error whose response named a wait carries it as `retry_after_seconds`, whatever its status, and `retryable` holds what the API said about asking again.
 
 For replay-safe operations, if the gateway successfully finishes a request but the response body is too large to replay from the idempotency cache, later calls with the same `idempotency_key` return `idempotency_replay_unavailable` without running or charging the inference again.
 
@@ -371,8 +486,10 @@ client.responses.create(
 
 ## Typed errors
 
-The SDK exposes `AuthenticationError`, `PermissionDeniedError`, `RateLimitError`, `InsufficientCreditsError`, `DeploymentError`, `ModelNotFoundError`, `RunInfraTimeoutError`, `RunInfraConnectionError`, and `RunInfraStreamParseError`. `UnsupportedOperationError` remains exported for compatibility with older v0.1.x code, but current public helpers do not raise it.
-`RateLimitError` includes `retry_after_seconds` when the gateway returns `Retry-After`.
+The SDK exposes `AuthenticationError`, `PermissionDeniedError`, `RateLimitError`, `InsufficientCreditsError`, `DeploymentError`, `ModelNotFoundError`, `RunInfraTimeoutError`, `RunInfraConnectionError`, `RunInfraStreamParseError`, `RunInfraStreamError`, and `RunInfraStreamIncompleteError`. `UnsupportedOperationError` remains exported for compatibility with older v0.1.x code, but current public helpers do not raise it.
+Every typed error includes `retry_after_seconds` when its response named a wait (`Retry-After-Ms`, else `Retry-After`), and `retryable` when the API said whether asking again helps. Before 0.3.1 only `RateLimitError` and the batch routes' refusals carried the wait.
+`RunInfraStreamError` and `RunInfraStreamIncompleteError` are raised while a stream is read; see "When a stream fails or is cut".
+`RunInfraTimeoutError` includes `client_request_id`, the `X-Client-Request-Id` the SDK sent with the call that timed out.
 `PermissionDeniedError.type` preserves a specific gateway discriminator on `403` responses when one is present (for example `byoc_plan_required` when a workspace below the deploy tier calls a BYOC-deployed endpoint); it falls back to `permission_denied`. Branch on `err.type` instead of matching the message string.
 `InsufficientCreditsError` includes `current_balance_cents`, `required_cents`, and `topup_url` when the gateway returns them on a `402` response, so you can render an exact top-up prompt without parsing the message.
 `RunInfraStreamParseError` includes `request_id` when a malformed SSE frame came from a traced gateway response.
@@ -388,6 +505,8 @@ When `idempotency_key` is provided, the SDK sends it as `Idempotency-Key`. Use a
 Successful JSON object responses include `_request_id` when the gateway returns `x-request-id`. Streaming responses expose the same value as `stream.request_id`, malformed stream frames raise `RunInfraStreamParseError` with that request id, and binary audio responses expose it as `audio.request_id`. Gateway errors expose `request_id`, `type`, and, when returned by the API, OpenAI-style `code` and `param` metadata such as `unsupported_parameter` and `dimensions`. Log the request id with production errors and customer support reports.
 
 The wheel ships `py.typed` so type checkers can inspect the package. Fixed-shape helpers expose `TypedDict` response contracts: `ModelListResponse`, `ModelObject`, `ResponsesCreateResponse`, `ChatCompletionResponse`, `EmbeddingResponse`, `TranscriptionResponse`, and `ImageGenerationResponse`. Batch helpers return `BatchCreateResponse`, `BatchRetrieveResponse`, `BatchListResponse`, and `BatchCancelResponse` around the typed `BatchJob`. Stream-capable helpers are typed as either the JSON response contract or `RunInfraStream` when `stream=True`.
+
+From 0.3.1 a chat answer's `choices` are typed as `ChatCompletionChoice`, whose `message` is a `ChatMessage` with `tool_calls` (`ChatCompletionMessageToolCall`), a `content` that may be `None`, and `reasoning`. `ChatToolMessage` types the message that answers a call. `ChatCompletionStreamEvent`, `ChatCompletionStreamChoice`, `ChatCompletionStreamDelta`, and `ChatCompletionStreamToolCallDelta` type the events of a chat stream; a `RunInfraStream` yields plain dictionaries, so annotate an event with `ChatCompletionStreamEvent` to have it checked.
 
 ## Webhook verification
 

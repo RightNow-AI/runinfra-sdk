@@ -56,6 +56,8 @@ response = client.chat.completions.create(
 print(response["choices"][0]["message"]["content"])
 ```
 
+The same key works at `https://api.rightnowai.co/v1` through the base URL option (`baseURL` in TypeScript, `base_url` in Python).
+
 ## Packages
 
 | Package | Registry | Source | Status |

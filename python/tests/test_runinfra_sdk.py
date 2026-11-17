@@ -20,7 +20,7 @@ from collections import UserDict
 from email.message import Message
 from email.utils import formatdate
 from pathlib import Path
-from typing import Literal, Union, get_type_hints
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Union, get_type_hints
 from unittest.mock import patch
 
 try:
@@ -32,7 +32,17 @@ import runinfra
 from runinfra import (
     __version__,
     AuthenticationError,
+    ChatCompletionChoice,
+    ChatCompletionMessageToolCall,
     ChatCompletionResponse,
+    ChatCompletionStreamChoice,
+    ChatCompletionStreamDelta,
+    ChatCompletionStreamEvent,
+    ChatCompletionStreamToolCallDelta,
+    ChatCompletionStreamToolCallFunction,
+    ChatCompletionToolCallFunction,
+    ChatMessage,
+    ChatToolMessage,
     DeploymentError,
     EmbeddingResponse,
     ImageGenerationResponse,
@@ -48,6 +58,8 @@ from runinfra import (
     RunInfraResponse,
     ResponsesCreateResponse,
     RunInfraStream,
+    RunInfraStreamError,
+    RunInfraStreamIncompleteError,
     RunInfraStreamParseError,
     RunInfraTimeoutError,
     TranscriptionResponse,
@@ -2375,7 +2387,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         sleep.assert_called_once_with(10.0)
         self.assertEqual(len(transport.calls), 2)
 
-    def test_retries_ignore_unreasonable_retry_after_headers(self):
+    def test_a_retry_after_above_the_longest_wait_is_raised_at_once_with_the_wait(self):
         transport = RecordingTransport(
             RunInfraResponse(
                 503,
@@ -2391,11 +2403,13 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             retry_base_seconds=0.25,
         )
 
-        with patch("runinfra.time.sleep") as sleep:
-            self.assertEqual(client.models.list()["data"], [])
+        # Nothing is slept, and no second request is sent sooner than the API asked.
+        with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as raised:
+            client.models.list()
 
-        sleep.assert_called_once_with(0.25)
-        self.assertEqual(len(transport.calls), 2)
+        sleep.assert_not_called()
+        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual((raised.exception.status, raised.exception.retry_after_seconds), (503, 120.0))
 
     def test_retries_ignore_non_plain_retry_after_delay_seconds(self):
         for retry_after in ["-1", "+1", "1.5", "0x10", "Infinity"]:
@@ -2415,7 +2429,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                     retry_base_seconds=0.25,
                 )
 
-                with patch("runinfra.time.sleep") as sleep:
+                with patch("runinfra.time.sleep") as sleep, patch("runinfra.random.random", return_value=0.0):
                     self.assertEqual(client.models.list()["data"], [])
 
                 sleep.assert_called_once_with(0.25)
@@ -3245,7 +3259,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
                 {"content-type": "text/event-stream", "x-request-id": "req-stream-123"},
                 (
                     b'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
-                    b'data: {"choices":[{"delta":{"content":"lo"}}]}'
+                    b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+                    b'data: [DONE]'
                 ),
             )
         )
@@ -3283,6 +3298,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         def chunks():
             yield payload[:split_at]
             yield payload[split_at:]
+            yield b"data: [DONE]\n\n"
 
         transport = RecordingTransport(
             RunInfraResponse(
@@ -3312,7 +3328,8 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         def chunks():
             yield b'data: {"choices":[{"delta":{"content":"hel"}}]}\n'
             yield b"\n"
-            yield b'data: {"choices":[{"delta":{"content":"lo"}}]}'
+            yield b'data: {"choices":[{"delta":{"content":"lo"}}]}\n'
+            yield b"\ndata: [DONE]"
 
         transport = RecordingTransport(
             RunInfraResponse(200, {"content-type": "text/event-stream"}, chunks())
@@ -4075,7 +4092,8 @@ class RunInfraPythonSdkBatchTest(unittest.TestCase):
             RunInfra(api_key=BATCH_TEST_API_KEY).batches.create(**BATCH_CREATE_REQUEST)
             RunInfra(api_key=BATCH_TEST_API_KEY, timeout_seconds=5).batches.retrieve(BATCH_ID)
 
-        self.assertEqual(seen, [30.0, 120.0, 5.0])
+        # With no timeout named anywhere, the create is given the default of a non-streamed call.
+        self.assertEqual(seen, [30.0, 750.0, 5.0])
 
     def test_list_sends_the_gateway_query_names_and_parses_the_recorded_page(self):
         fixture = batch_fixture("list.json")
@@ -4306,7 +4324,7 @@ class RunInfraPythonSdkBatchTest(unittest.TestCase):
             (409, "flex_not_available", "partner", 7.0),
         )
 
-    def test_errors_of_every_other_route_are_as_they_were(self):
+    def test_errors_of_every_other_route_keep_their_class_and_type_and_carry_the_wait_and_no_reason(self):
         transport = RecordingTransport(
             json_response(
                 {"error": {"reason": "model", "message": "busy", "type": "api_error"}},
@@ -4320,7 +4338,8 @@ class RunInfraPythonSdkBatchTest(unittest.TestCase):
         with self.assertRaises(RunInfraError) as unavailable:
             client.models.list()
         self.assertEqual(unavailable.exception.status, 503)
-        self.assertIsNone(unavailable.exception.retry_after_seconds)
+        # Since 0.3.1 every error keeps the wait the API named; the cause word stays a batch route's alone.
+        self.assertEqual(unavailable.exception.retry_after_seconds, 5.0)
         self.assertIsNone(unavailable.exception.reason)
 
         with self.assertRaises(ModelNotFoundError) as not_found:
@@ -4800,6 +4819,1008 @@ class RunInfraPythonSdkBatchDeliveryTest(unittest.TestCase):
         # What the three lines cost is what the stored job says it cost.
         job = batch_fixture("get-completed.json")["body"]["batch"]
         self.assertEqual(sum(line["cost"]["microcents"] for line in lines), job["cost_microcents"])
+
+
+# --- Streams that fail or are cut, timeouts, the retry rule, request fields ---
+#
+# Every frame, id and value below is made up. Nothing here opens a socket: each call goes through an injected
+# transport, or through the standard-library transport with its opener replaced.
+
+MADE_UP_API_KEY = "-".join(["sk", "ri", "made", "up", "unit"])
+MADE_UP_MODEL = "made-up-model"
+MADE_UP_MESSAGES = [{"role": "user", "content": "Count from one to three."}]
+LISTED = {"object": "list", "data": []}
+
+
+def sse_frame(payload):
+    return "data: " + json.dumps(payload) + "\n\n"
+
+
+def chat_delta(content):
+    return sse_frame(
+        {"id": "chatcmpl_made_up", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"content": content}}]}
+    )
+
+
+CHAT_USAGE_FRAME = sse_frame({"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}})
+CHAT_DONE_FRAME = "data: [DONE]\n\n"
+CHAT_ERROR_FRAME = sse_frame(
+    {
+        "error": {
+            "message": "The stream ended before it was complete. Please retry.",
+            "type": "api_error",
+            "param": None,
+            "code": "made_up_stream_error",
+            "retryable": True,
+        },
+        "request_id": "req_made_up_frame",
+    }
+)
+
+
+def stream_answer(*frames, request_id="req_made_up_stream"):
+    """A streamed answer whose frames arrive one chunk at a time."""
+
+    def chunks():
+        for frame in frames:
+            yield frame.encode("utf-8")
+
+    return RunInfraResponse(200, {"content-type": "text/event-stream", "x-request-id": request_id}, chunks())
+
+
+def made_up_client(transport, **options):
+    return RunInfra(api_key=MADE_UP_API_KEY, transport=transport, **options)
+
+
+def open_chat_stream(*frames, request_id="req_made_up_stream"):
+    transport = RecordingTransport(stream_answer(*frames, request_id=request_id))
+    return made_up_client(transport).chat.completions.create(
+        model=MADE_UP_MODEL,
+        messages=MADE_UP_MESSAGES,
+        stream=True,
+    )
+
+
+def open_responses_stream(*frames, request_id="req_made_up_stream"):
+    transport = RecordingTransport(stream_answer(*frames, request_id=request_id))
+    return made_up_client(transport).responses.create(model=MADE_UP_MODEL, input="Count from one to three.", stream=True)
+
+
+def drain(stream):
+    """Read a stream to its end: the events it yielded, and what it raised, if anything."""
+    events = []
+    try:
+        for event in stream:
+            events.append(event)
+    except RunInfraError as error:
+        return events, error
+    return events, None
+
+
+def delta_texts(events):
+    return [event["choices"][0]["delta"].get("content") if event["choices"] else None for event in events]
+
+
+def busy_response(status, headers=None, **error):
+    return json_response(
+        {"error": {"message": "busy", "type": "api_error", **error}, "request_id": "req_made_up_busy"},
+        status=status,
+        headers={"x-request-id": "req_made_up_busy", **(headers or {})},
+    )
+
+
+class RunInfraPythonSdkStreamFailureTest(unittest.TestCase):
+    def test_an_error_frame_raises_the_typed_error_after_yielding_the_deltas_that_came_first(self):
+        stream = open_chat_stream(chat_delta("One"), chat_delta(" two"), CHAT_ERROR_FRAME, request_id="req_made_up_header")
+
+        events, error = drain(stream)
+
+        self.assertEqual(delta_texts(events), ["One", " two"])
+        self.assertIs(type(error), RunInfraStreamError)
+        self.assertIsInstance(error, RunInfraError)
+        self.assertEqual(str(error), "The stream ended before it was complete. Please retry.")
+        self.assertEqual(
+            (error.status, error.type, error.code, error.retryable),
+            (0, "api_error", "made_up_stream_error", True),
+        )
+        # The frame names its own request id; it wins over the response header's.
+        self.assertEqual(error.request_id, "req_made_up_frame")
+
+    def test_an_error_frame_that_names_no_request_id_and_no_retry_marker_falls_back_and_leaves_it_unset(self):
+        frame = sse_frame({"error": {"message": "The model stream ended.", "type": "api_error", "code": "made_up_upstream"}})
+
+        events, error = drain(open_chat_stream(chat_delta("One"), frame, request_id="req_made_up_header"))
+
+        self.assertEqual(delta_texts(events), ["One"])
+        self.assertIs(type(error), RunInfraStreamError)
+        self.assertEqual((error.code, error.request_id), ("made_up_upstream", "req_made_up_header"))
+        self.assertIsNone(error.retryable)
+        self.assertIsNone(error.param)
+
+    def test_a_null_error_member_is_an_ordinary_event_and_a_done_after_a_failure_changes_nothing(self):
+        ordinary = sse_frame({"choices": [{"index": 0, "delta": {"content": "One"}}], "error": None})
+        events, error = drain(open_chat_stream(ordinary, CHAT_DONE_FRAME))
+        self.assertIsNone(error)
+        self.assertEqual(len(events), 1)
+
+        events, error = drain(open_chat_stream(chat_delta("One"), CHAT_ERROR_FRAME, CHAT_DONE_FRAME))
+        self.assertIs(type(error), RunInfraStreamError)
+        self.assertEqual(delta_texts(events), ["One"])
+
+    def test_the_api_key_is_redacted_from_an_error_frame_message(self):
+        frame = sse_frame({"error": {"message": f"echoed {MADE_UP_API_KEY} by mistake", "type": "api_error"}})
+
+        _events, error = drain(open_chat_stream(frame))
+
+        self.assertIs(type(error), RunInfraStreamError)
+        self.assertEqual(str(error), "echoed [redacted] by mistake")
+
+    def test_a_body_that_ends_with_no_done_raises_the_incomplete_stream_error_after_yielding_its_deltas(self):
+        events, error = drain(open_chat_stream(chat_delta("One"), chat_delta(" two"), request_id="req_made_up_cut"))
+
+        self.assertEqual(delta_texts(events), ["One", " two"])
+        self.assertIs(type(error), RunInfraStreamIncompleteError)
+        self.assertIsInstance(error, RunInfraError)
+        self.assertEqual((error.status, error.type, error.request_id), (0, "stream_incomplete_error", "req_made_up_cut"))
+
+    def test_a_last_event_with_no_trailing_newline_is_yielded_before_the_cut_is_reported(self):
+        events, error = drain(open_chat_stream(chat_delta("One"), chat_delta(" two").rstrip()))
+
+        self.assertEqual(delta_texts(events), ["One", " two"])
+        self.assertIs(type(error), RunInfraStreamIncompleteError)
+
+    def test_a_body_that_ends_in_the_middle_of_an_event_is_a_cut_stream_not_a_malformed_event(self):
+        cut_inside_an_event = 'data: {"id":"chatcmpl_made_up","choices":[{"index":0,"delta":{"content":"tw'
+
+        events, error = drain(open_chat_stream(chat_delta("One"), cut_inside_an_event, request_id="req_made_up_mid_event"))
+
+        self.assertEqual(delta_texts(events), ["One"])
+        self.assertIs(type(error), RunInfraStreamIncompleteError)
+        self.assertEqual(error.request_id, "req_made_up_mid_event")
+
+        # An event the body did finish, with a blank line after it, is still a malformed event when it cannot be read.
+        events, error = drain(open_chat_stream(chat_delta("One"), "data: {not-json}\n\n", CHAT_DONE_FRAME))
+        self.assertEqual(delta_texts(events), ["One"])
+        self.assertIs(type(error), RunInfraStreamParseError)
+
+    def test_an_empty_body_is_incomplete_too(self):
+        for body in (b"", []):
+            with self.subTest(body=body):
+                events, error = drain(RunInfraStream(body, "req_made_up_empty"))
+                self.assertEqual(events, [])
+                self.assertIs(type(error), RunInfraStreamIncompleteError)
+                self.assertEqual(error.request_id, "req_made_up_empty")
+
+    def test_a_complete_chat_stream_ends_quietly(self):
+        events, error = drain(
+            open_chat_stream(": keep-alive\n\n", chat_delta("One"), chat_delta(" two"), CHAT_USAGE_FRAME, CHAT_DONE_FRAME)
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(delta_texts(events), ["One", " two", None])
+        self.assertEqual(events[2], {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}})
+
+    def test_closing_the_iterator_early_raises_nothing_end_marker_or_not(self):
+        iterator = iter(open_chat_stream(chat_delta("One"), chat_delta(" two")))
+
+        self.assertEqual(delta_texts([next(iterator)]), ["One"])
+        iterator.close()
+
+    def test_response_failed_raises_the_typed_error_after_the_events_that_came_first(self):
+        delta = "event: response.output_text.delta\n" + sse_frame({"type": "response.output_text.delta", "delta": "One"})
+        failed = "event: response.failed\n" + sse_frame(
+            {
+                "type": "response.failed",
+                "response": {
+                    "id": "resp_made_up",
+                    "status": "failed",
+                    "error": {"code": "made_up_server_error", "message": "The response failed.", "retryable": True},
+                },
+            }
+        )
+
+        events, error = drain(open_responses_stream(delta, failed, request_id="req_made_up_responses"))
+
+        self.assertEqual(events, [{"type": "response.output_text.delta", "delta": "One"}])
+        self.assertIs(type(error), RunInfraStreamError)
+        self.assertEqual(str(error), "The response failed.")
+        self.assertEqual(
+            (error.status, error.type, error.code, error.request_id, error.retryable),
+            (0, "api_error", "made_up_server_error", "req_made_up_responses", True),
+        )
+
+    def test_response_failed_with_no_error_object_still_raises(self):
+        failed = sse_frame({"type": "response.failed", "response": {"id": "resp_made_up", "status": "failed"}})
+
+        _events, error = drain(open_responses_stream(failed))
+
+        self.assertIs(type(error), RunInfraStreamError)
+        self.assertEqual((str(error), error.type, error.code), ("RunInfra stream ended with an error", "api_error", None))
+
+    def test_response_completed_ends_a_responses_stream_quietly_and_one_without_it_is_incomplete(self):
+        delta = "event: response.output_text.delta\n" + sse_frame({"type": "response.output_text.delta", "delta": "One"})
+        completed = "event: response.completed\n" + sse_frame(
+            {"type": "response.completed", "response": {"id": "resp_made_up", "status": "completed"}}
+        )
+
+        events, error = drain(open_responses_stream(delta, completed))
+        self.assertIsNone(error)
+        self.assertEqual([event["type"] for event in events], ["response.output_text.delta", "response.completed"])
+
+        events, error = drain(open_responses_stream(delta, request_id="req_made_up_responses_cut"))
+        self.assertEqual([event["type"] for event in events], ["response.output_text.delta"])
+        self.assertIs(type(error), RunInfraStreamIncompleteError)
+        self.assertEqual(error.request_id, "req_made_up_responses_cut")
+
+    def test_readme_documents_the_two_stream_errors(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
+
+        self.assertIn("`RunInfraStreamError`", readme)
+        self.assertIn("`RunInfraStreamIncompleteError`", readme)
+        self.assertIn("`[DONE]`", readme)
+        self.assertIn("`response.completed`", readme)
+
+
+class FakeHttpAnswer:
+    """What the standard-library opener returns, as far as the SDK's transport reads it."""
+
+    def __init__(self, body=b"{}", headers=None, lines=None):
+        self.status = 200
+        self.headers = {"content-type": "application/json", "x-request-id": "req_made_up_answer", **(headers or {})}
+        self._body = body
+        self._lines = list(lines or [])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        if isinstance(self._body, BaseException):
+            raise self._body
+        return self._body
+
+    def readline(self):
+        return self._lines.pop(0) if self._lines else b""
+
+    def close(self):
+        pass
+
+
+class RunInfraPythonSdkTimeoutTest(unittest.TestCase):
+    def opened_timeouts(self, call, **client_options):
+        """The timeout the standard-library transport hands to its opener for one call."""
+        seen = []
+
+        def fake_urlopen(request, timeout=None):
+            seen.append(timeout)
+            if request.get_method() == "POST" and b'"stream":true' in (request.data or b""):
+                return FakeHttpAnswer(
+                    headers={"content-type": "text/event-stream"},
+                    lines=[b"data: [DONE]\n", b"\n"],
+                )
+            return FakeHttpAnswer(body=json.dumps(LISTED).encode("utf-8"))
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = call(RunInfra(api_key=MADE_UP_API_KEY, **client_options))
+            if isinstance(result, RunInfraStream):
+                list(result)
+        self.assertEqual(len(seen), 1)
+        return seen[0]
+
+    def test_a_non_streamed_call_is_given_750_seconds_and_a_streamed_call_190_by_default(self):
+        whole = lambda client: client.chat.completions.create(model=MADE_UP_MODEL, messages=MADE_UP_MESSAGES)  # noqa: E731
+        streamed = lambda client: client.chat.completions.create(  # noqa: E731
+            model=MADE_UP_MODEL, messages=MADE_UP_MESSAGES, stream=True
+        )
+        streamed_responses = lambda client: client.responses.create(model=MADE_UP_MODEL, input="Hi", stream=True)  # noqa: E731
+        read = lambda client: client.models.list()  # noqa: E731
+
+        self.assertEqual(self.opened_timeouts(whole), 750.0)
+        self.assertEqual(self.opened_timeouts(read), 750.0)
+        self.assertEqual(self.opened_timeouts(streamed), 190.0)
+        self.assertEqual(self.opened_timeouts(streamed_responses), 190.0)
+
+    def test_the_callers_own_timeout_wins_over_both_defaults_and_the_calls_over_the_clients(self):
+        whole = lambda client: client.chat.completions.create(model=MADE_UP_MODEL, messages=MADE_UP_MESSAGES)  # noqa: E731
+        streamed = lambda client: client.chat.completions.create(  # noqa: E731
+            model=MADE_UP_MODEL, messages=MADE_UP_MESSAGES, stream=True
+        )
+        per_call = lambda client: client.chat.completions.create(  # noqa: E731
+            model=MADE_UP_MODEL, messages=MADE_UP_MESSAGES, stream=True, request_options={"timeout_seconds": 0.5}
+        )
+        patient = lambda client: client.chat.completions.create(  # noqa: E731
+            model=MADE_UP_MODEL, messages=MADE_UP_MESSAGES, request_options={"timeout_seconds": 900}
+        )
+
+        self.assertEqual(self.opened_timeouts(whole, timeout_seconds=2), 2.0)
+        self.assertEqual(self.opened_timeouts(streamed, timeout_seconds=2), 2.0)
+        self.assertEqual(self.opened_timeouts(per_call, timeout_seconds=2), 0.5)
+        # A longer wait than the defaults is the caller's to ask for, too.
+        self.assertEqual(self.opened_timeouts(patient), 900.0)
+
+    def test_a_custom_transport_still_sees_no_timeout_unless_the_caller_named_one_for_the_call(self):
+        transport = RecordingTransport(json_response(LISTED), json_response(LISTED), json_response(LISTED))
+
+        made_up_client(transport).models.list()
+        made_up_client(transport, timeout_seconds=2).models.list()
+        made_up_client(transport).models.list(request_options={"timeout_seconds": 3})
+
+        self.assertEqual([request.timeout_seconds for request in transport.calls], [None, None, 3.0])
+
+    def test_a_call_is_sent_once_and_never_again_after_a_timeout_and_the_error_names_the_request_id_it_sent(self):
+        class TimingOutTransport:
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, request):
+                self.calls.append(request)
+                raise TimeoutError("timed out")
+
+        # Retries are allowed and the calls are safe to send again: only the timeout stops the second request.
+        transport = TimingOutTransport()
+        client = made_up_client(transport, max_retries=3, retry_base_seconds=0)
+
+        with patch("runinfra.time.sleep") as sleep:
+            with self.assertRaises(RunInfraTimeoutError) as read:
+                client.models.list(request_options={"client_request_id": "client-made-up-01"})
+            self.assertEqual(len(transport.calls), 1)
+            self.assertEqual((read.exception.status, read.exception.type), (0, "timeout_error"))
+            self.assertEqual(read.exception.client_request_id, "client-made-up-01")
+            self.assertIsNone(read.exception.request_id)
+
+            with self.assertRaises(RunInfraTimeoutError) as keyed:
+                client.responses.create(
+                    model=MADE_UP_MODEL,
+                    input="Hi",
+                    request_options={"idempotency_key": "idem-made-up-01"},
+                )
+            self.assertEqual(len(transport.calls), 2)
+            # With no id from the caller, the error names the one the SDK generated and sent.
+            sent_id = sent_header(transport.calls[1], "X-Client-Request-Id")
+            self.assertTrue(sent_id)
+            self.assertEqual(keyed.exception.client_request_id, sent_id)
+        sleep.assert_not_called()
+
+    def test_a_keyed_call_is_still_sent_again_after_a_connection_failure(self):
+        transport = ScriptedTransport(OSError("socket closed"), json_response({"id": "resp_made_up"}))
+        client = made_up_client(transport, max_retries=1, retry_base_seconds=0)
+
+        with patch("runinfra.time.sleep"):
+            answer = client.responses.create(
+                model=MADE_UP_MODEL,
+                input="Hi",
+                request_options={"idempotency_key": "idem-made-up-02"},
+            )
+
+        self.assertEqual(answer["id"], "resp_made_up")
+        self.assertEqual(len(transport.calls), 2)
+
+    def test_a_call_is_not_sent_again_when_the_timeout_fires_while_the_answers_body_is_read(self):
+        opened = []
+
+        def fake_urlopen(_request, timeout=None):
+            opened.append(timeout)
+            return FakeHttpAnswer(body=TimeoutError("body timed out"), headers={"x-request-id": "req_made_up_body"})
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen), patch("runinfra.time.sleep") as sleep:
+            client = RunInfra(api_key=MADE_UP_API_KEY, max_retries=2, retry_base_seconds=0, timeout_seconds=1)
+            with self.assertRaises(RunInfraTimeoutError) as raised:
+                client.models.list(request_options={"client_request_id": "client-made-up-02"})
+
+        self.assertEqual(opened, [1.0])
+        sleep.assert_not_called()
+        # A response had begun, so the server's request id is known as well.
+        self.assertEqual(raised.exception.request_id, "req_made_up_body")
+        self.assertEqual(raised.exception.client_request_id, "client-made-up-02")
+
+    def test_a_timeout_while_a_failed_response_body_is_read_is_not_sent_again_either(self):
+        def failing_body():
+            yield b'{"error":'
+            raise TimeoutError("timed out")
+
+        transport = RecordingTransport(
+            RunInfraResponse(503, {"x-request-id": "req_made_up_open_body"}, failing_body()),
+            json_response(LISTED),
+        )
+
+        with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraTimeoutError) as raised:
+            made_up_client(transport, max_retries=2, retry_base_seconds=0).models.list()
+
+        self.assertEqual(len(transport.calls), 1)
+        sleep.assert_not_called()
+        self.assertEqual(raised.exception.request_id, "req_made_up_open_body")
+        self.assertEqual(raised.exception.client_request_id, sent_header(transport.calls[0], "X-Client-Request-Id"))
+
+    def test_readme_documents_the_default_timeouts_and_the_no_resend_rule(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
+
+        self.assertIn("750 seconds", readme)
+        self.assertIn("190 seconds", readme)
+        self.assertIn("never sent again after a timeout", readme)
+        self.assertIn("`client_request_id`", readme)
+
+
+class RunInfraPythonSdkRetryRuleTest(unittest.TestCase):
+    def test_retry_after_ms_is_read_before_retry_after(self):
+        headers = {"Retry-After-Ms": "1500", "Retry-After": "30"}
+        transport = RecordingTransport(busy_response(503, headers), json_response(LISTED))
+
+        with patch("runinfra.time.sleep") as sleep:
+            answer = made_up_client(transport, max_retries=1, retry_base_seconds=0.001).models.list()
+
+        self.assertEqual(answer["data"], [])
+        self.assertEqual(len(transport.calls), 2)
+        sleep.assert_called_once_with(1.5)
+
+        # The same order decides the wait the error carries, whatever case the transport kept the names in.
+        for names in (("Retry-After-Ms", "Retry-After"), ("retry-after-ms", "retry-after"), ("RETRY-AFTER-MS", "RETRY-AFTER")):
+            with self.subTest(names=names):
+                raised_transport = RecordingTransport(busy_response(503, {names[0]: "1500", names[1]: "30"}))
+                with self.assertRaises(RunInfraError) as raised:
+                    made_up_client(raised_transport, max_retries=0).models.list()
+                self.assertEqual(raised.exception.retry_after_seconds, 1.5)
+
+    def test_a_malformed_retry_after_ms_falls_back_to_retry_after(self):
+        for retry_after_ms in ("soon", "-5", "1e3", ""):
+            with self.subTest(retry_after_ms=retry_after_ms):
+                transport = RecordingTransport(busy_response(503, {"Retry-After-Ms": retry_after_ms, "Retry-After": "2"}))
+                with self.assertRaises(RunInfraError) as raised:
+                    made_up_client(transport, max_retries=0).models.list()
+                self.assertEqual(raised.exception.retry_after_seconds, 2.0)
+
+    def test_x_should_retry_false_stops_a_retry(self):
+        transport = RecordingTransport(
+            busy_response(503, {"x-should-retry": "false"}),
+            busy_response(503, {"X-Should-Retry": "FALSE"}),
+        )
+        client = made_up_client(transport, max_retries=3, retry_base_seconds=0)
+
+        # A 503 on a GET is otherwise asked again.
+        with patch("runinfra.time.sleep") as sleep, self.assertRaises(RunInfraError) as read:
+            client.models.list()
+        self.assertEqual((read.exception.status, read.exception.retryable), (503, False))
+        self.assertEqual(len(transport.calls), 1)
+
+        with patch("runinfra.time.sleep"), self.assertRaises(RunInfraError) as keyed:
+            client.responses.create(model=MADE_UP_MODEL, input="Hi", request_options={"idempotency_key": "idem-made-up-03"})
+        self.assertEqual((keyed.exception.status, keyed.exception.retryable), (503, False))
+        self.assertEqual(len(transport.calls), 2)
+        sleep.assert_not_called()
+
+    def test_retryable_false_in_the_error_object_stops_a_retry_and_false_wins_over_a_true_header(self):
+        in_body = RecordingTransport(busy_response(503, retryable=False), json_response(LISTED))
+        with patch("runinfra.time.sleep"), self.assertRaises(RunInfraError) as raised:
+            made_up_client(in_body, max_retries=3, retry_base_seconds=0).models.list()
+        self.assertEqual((raised.exception.status, raised.exception.retryable), (503, False))
+        self.assertEqual(len(in_body.calls), 1)
+
+        disagreeing = RecordingTransport(busy_response(503, {"x-should-retry": "true"}, retryable=False), json_response(LISTED))
+        with patch("runinfra.time.sleep"), self.assertRaises(RunInfraError) as raised:
+            made_up_client(disagreeing, max_retries=3, retry_base_seconds=0).models.list()
+        self.assertIs(raised.exception.retryable, False)
+        self.assertEqual(len(disagreeing.calls), 1)
+
+    def test_a_failure_the_api_marks_retryable_is_asked_again_for_a_call_that_is_safe_to_send_again_only(self):
+        # 529 is not among the statuses the SDK retries by itself.
+        marked = lambda: busy_response(529, {"x-should-retry": "true"})  # noqa: E731
+
+        with patch("runinfra.time.sleep"):
+            unmarked = RecordingTransport(busy_response(529), json_response(LISTED))
+            with self.assertRaises(RunInfraError) as raised:
+                made_up_client(unmarked, max_retries=2, retry_base_seconds=0).models.list()
+            self.assertEqual(raised.exception.status, 529)
+            self.assertEqual(len(unmarked.calls), 1)
+
+            read = RecordingTransport(marked(), json_response(LISTED))
+            self.assertEqual(made_up_client(read, max_retries=2, retry_base_seconds=0).models.list()["data"], [])
+            self.assertEqual(len(read.calls), 2)
+
+            in_body = RecordingTransport(busy_response(529, retryable=True), json_response(LISTED))
+            self.assertEqual(made_up_client(in_body, max_retries=2, retry_base_seconds=0).models.list()["data"], [])
+            self.assertEqual(len(in_body.calls), 2)
+
+            keyed = RecordingTransport(marked(), json_response({"id": "resp_made_up"}))
+            answer = made_up_client(keyed, max_retries=2, retry_base_seconds=0).responses.create(
+                model=MADE_UP_MODEL,
+                input="Hi",
+                request_options={"idempotency_key": "idem-made-up-04"},
+            )
+            self.assertEqual(answer["id"], "resp_made_up")
+            self.assertEqual(len(keyed.calls), 2)
+
+            # No idempotency key: the call is not safe to send again, whatever the API says.
+            unkeyed = RecordingTransport(marked(), json_response({"id": "resp_made_up"}))
+            with self.assertRaises(RunInfraError) as raised:
+                made_up_client(unkeyed, max_retries=2, retry_base_seconds=0).responses.create(model=MADE_UP_MODEL, input="Hi")
+            self.assertEqual((raised.exception.status, raised.exception.retryable), (529, True))
+            self.assertEqual(len(unkeyed.calls), 1)
+
+            # A streamed call is never sent again, keyed or not.
+            streamed = RecordingTransport(marked(), json_response({"id": "resp_made_up"}))
+            with self.assertRaises(RunInfraError) as raised:
+                made_up_client(streamed, max_retries=2, retry_base_seconds=0).responses.create(
+                    model=MADE_UP_MODEL,
+                    input="Hi",
+                    stream=True,
+                    request_options={"idempotency_key": "idem-made-up-05"},
+                )
+            self.assertEqual((raised.exception.status, raised.exception.retryable), (529, True))
+            self.assertEqual(len(streamed.calls), 1)
+
+    def test_a_wait_above_the_longest_the_sdk_sleeps_for_is_raised_at_once_with_the_wait_on_the_error(self):
+        cases = (
+            ({"Retry-After": "3600"}, 3600.0),
+            ({"Retry-After": "61"}, 61.0),
+            ({"Retry-After-Ms": "60001", "Retry-After": "1"}, 60.001),
+        )
+        for headers, expected in cases:
+            with self.subTest(headers=headers):
+                transport = RecordingTransport(
+                    busy_response(503, headers, code="made_up_paused"),
+                    busy_response(503, headers, code="made_up_paused"),
+                )
+                client = made_up_client(transport, max_retries=3, retry_base_seconds=0)
+
+                with patch("runinfra.time.sleep") as sleep:
+                    with self.assertRaises(RunInfraError) as read:
+                        client.models.list()
+                    self.assertEqual(len(transport.calls), 1)
+                    self.assertEqual(
+                        (read.exception.status, read.exception.code, read.exception.retry_after_seconds),
+                        (503, "made_up_paused", expected),
+                    )
+
+                    with self.assertRaises(RunInfraError) as keyed:
+                        client.responses.create(
+                            model=MADE_UP_MODEL,
+                            input="Hi",
+                            request_options={"idempotency_key": "idem-made-up-06"},
+                        )
+                    self.assertEqual(len(transport.calls), 2)
+                    self.assertEqual(keyed.exception.retry_after_seconds, expected)
+                # Nothing was slept, and no request was sent sooner than the API asked.
+                sleep.assert_not_called()
+
+    def test_a_wait_of_exactly_the_longest_the_sdk_sleeps_for_is_slept_then_asked_again(self):
+        transport = RecordingTransport(busy_response(503, {"Retry-After-Ms": "60000"}), json_response(LISTED))
+
+        with patch("runinfra.time.sleep") as sleep:
+            answer = made_up_client(transport, max_retries=1, retry_base_seconds=0).models.list()
+
+        self.assertEqual(answer["data"], [])
+        self.assertEqual(len(transport.calls), 2)
+        sleep.assert_called_once_with(60.0)
+
+    def test_every_typed_error_that_came_with_a_wait_carries_it(self):
+        cases = (
+            (400, RunInfraError),
+            (401, AuthenticationError),
+            (402, InsufficientCreditsError),
+            (403, PermissionDeniedError),
+            (404, ModelNotFoundError),
+            (409, RunInfraError),
+            (429, RateLimitError),
+            (500, RunInfraError),
+            (503, RunInfraError),
+            (504, RunInfraError),
+        )
+        for status, error_class in cases:
+            with self.subTest(status=status):
+                transport = RecordingTransport(busy_response(status, {"Retry-After": "7"}))
+                with self.assertRaises(RunInfraError) as raised:
+                    made_up_client(transport, max_retries=0).models.list()
+                self.assertIs(type(raised.exception), error_class)
+                self.assertEqual(
+                    (raised.exception.status, raised.exception.retry_after_seconds, raised.exception.request_id),
+                    (status, 7.0, "req_made_up_busy"),
+                )
+
+        deployment = RecordingTransport(busy_response(503, {"Retry-After-Ms": "250"}, type="deployment_error"))
+        with self.assertRaises(DeploymentError) as raised:
+            made_up_client(deployment, max_retries=0).models.list()
+        self.assertEqual(raised.exception.retry_after_seconds, 0.25)
+
+    def test_an_error_that_came_with_no_wait_and_no_marker_leaves_both_unset(self):
+        transport = RecordingTransport(busy_response(503))
+
+        with self.assertRaises(RunInfraError) as raised:
+            made_up_client(transport, max_retries=0).models.list()
+
+        self.assertEqual(raised.exception.status, 503)
+        self.assertIsNone(raised.exception.retry_after_seconds)
+        self.assertIsNone(raised.exception.retryable)
+        self.assertIsNone(raised.exception.client_request_id)
+
+    def test_the_wait_and_the_retry_marker_survive_the_redaction_of_the_api_key(self):
+        transport = RecordingTransport(
+            busy_response(
+                503,
+                {"Retry-After": "9", "x-should-retry": "true"},
+                message=f"echoed {MADE_UP_API_KEY} by mistake",
+            )
+        )
+
+        with self.assertRaises(RunInfraError) as raised:
+            made_up_client(transport, max_retries=0).models.list()
+
+        self.assertEqual(str(raised.exception), "echoed [redacted] by mistake")
+        self.assertEqual(
+            (raised.exception.status, raised.exception.retry_after_seconds, raised.exception.retryable),
+            (503, 9.0, True),
+        )
+
+    def test_the_backoff_has_jitter_and_stays_at_most_30_seconds(self):
+        # Without a wait from the API the SDK backs off by itself: base * 2^(attempt - 1), plus up to one base of jitter.
+        transport = ScriptedTransport(busy_response(503), OSError("socket closed"), busy_response(503), json_response(LISTED))
+
+        with patch("runinfra.time.sleep") as sleep, patch("runinfra.random.random", return_value=0.5):
+            answer = made_up_client(transport, max_retries=3, retry_base_seconds=0.2).models.list()
+
+        self.assertEqual(answer["data"], [])
+        waits = [call.args[0] for call in sleep.call_args_list]
+        self.assertEqual(len(waits), 3)
+        for wait, expected in zip(waits, (0.2 + 0.1, 0.4 + 0.1, 0.8 + 0.1)):
+            self.assertAlmostEqual(wait, expected)
+
+        # The jitter is drawn anew for every wait, and never negative.
+        with patch("runinfra.random.random", side_effect=[0.0, 0.999]):
+            self.assertAlmostEqual(runinfra._backoff_delay_seconds(1, 0.2), 0.2)
+            self.assertAlmostEqual(runinfra._backoff_delay_seconds(1, 0.2), 0.2 + 0.999 * 0.2)
+        with patch("runinfra.random.random", return_value=0.5):
+            self.assertEqual(runinfra._backoff_delay_seconds(20, 10), 30.0)
+            self.assertEqual(runinfra._backoff_delay_seconds(3, 0), 0)
+
+    def test_readme_documents_the_retry_rule(self):
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
+
+        self.assertIn("`Retry-After-Ms`", readme)
+        self.assertIn("`x-should-retry`", readme)
+        self.assertIn("`error.retryable`", readme)
+        self.assertIn("raised at once", readme)
+
+
+# The request fields the API's chat reference documents that the SDK did not type before 0.3.1.
+CHAT_FIELDS_TYPED_SINCE_0_3_1 = {
+    "top_k": 40,
+    "min_p": 0.05,
+    "repetition_penalty": 1.1,
+    "n": 2,
+    "best_of": 2,
+    "logit_bias": {"1234": -5},
+    "parallel_tool_calls": False,
+    "reasoning_effort": "low",
+    "reasoning": {"effort": "low", "exclude": True},
+    "include_reasoning": False,
+    "prompt_cache_key": "made-up-session",
+    "service_tier": "default",
+    "store": False,
+    "safety_identifier": "made-up-user",
+    "modalities": ["text"],
+    "audio": {"voice": "made-up-voice"},
+    "prediction": {"type": "content", "content": "made up"},
+    "verbosity": "low",
+    "web_search_options": {},
+    "moderation": {"made_up": True},
+    "functions": [{"name": "made_up_function", "parameters": {"type": "object"}}],
+    "function_call": "auto",
+}
+WEATHER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get the current weather for a city",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+    },
+}
+
+
+def sent_json(transport, call=0):
+    return json.loads(transport.calls[call].body.decode("utf-8"))
+
+
+class RunInfraPythonSdkChatFieldsAndToolCallsTest(unittest.TestCase):
+    def test_every_chat_request_field_typed_since_0_3_1_is_a_keyword_and_is_sent(self):
+        self.assertEqual(len(CHAT_FIELDS_TYPED_SINCE_0_3_1), 22)
+        transport = RecordingTransport()
+        client = made_up_client(transport)
+        signature = inspect.signature(client.chat.completions.create)
+        for overload in get_overloads(client.chat.completions.create):
+            for field in CHAT_FIELDS_TYPED_SINCE_0_3_1:
+                self.assertIn(field, inspect.signature(overload).parameters, field)
+        for field in CHAT_FIELDS_TYPED_SINCE_0_3_1:
+            self.assertIs(signature.parameters[field].default, None, field)
+            self.assertIs(signature.parameters[field].kind, inspect.Parameter.KEYWORD_ONLY, field)
+
+        client.chat.completions.create(model=MADE_UP_MODEL, messages=MADE_UP_MESSAGES, **CHAT_FIELDS_TYPED_SINCE_0_3_1)
+        self.assertEqual(
+            sent_json(transport),
+            {"model": MADE_UP_MODEL, "messages": MADE_UP_MESSAGES, **CHAT_FIELDS_TYPED_SINCE_0_3_1},
+        )
+
+        # Each one passes by itself as well, and one left out is not sent.
+        for index, (field, value) in enumerate(CHAT_FIELDS_TYPED_SINCE_0_3_1.items(), start=1):
+            with self.subTest(field=field):
+                client.chat.completions.create(model=MADE_UP_MODEL, messages=MADE_UP_MESSAGES, **{field: value})
+                self.assertEqual(
+                    sent_json(transport, index),
+                    {"model": MADE_UP_MODEL, "messages": MADE_UP_MESSAGES, field: value},
+                )
+
+    def test_a_field_the_sdk_does_not_know_is_still_refused(self):
+        transport = RecordingTransport()
+
+        with self.assertRaises(TypeError):
+            made_up_client(transport).chat.completions.create(  # type: ignore[call-overload]
+                model=MADE_UP_MODEL,
+                messages=MADE_UP_MESSAGES,
+                made_up_field=True,
+            )
+
+        self.assertEqual(len(transport.calls), 0)
+
+    def test_those_fields_still_ride_extra_body_where_callers_had_to_put_them_and_one_named_twice_is_refused(self):
+        transport = RecordingTransport()
+        client = made_up_client(transport)
+
+        client.chat.completions.create(
+            model=MADE_UP_MODEL,
+            messages=MADE_UP_MESSAGES,
+            extra_body=dict(CHAT_FIELDS_TYPED_SINCE_0_3_1),
+        )
+        self.assertEqual(
+            sent_json(transport),
+            {"model": MADE_UP_MODEL, "messages": MADE_UP_MESSAGES, **CHAT_FIELDS_TYPED_SINCE_0_3_1},
+        )
+
+        with self.assertRaisesRegex(RunInfraError, "extra_body must not override typed request field: reasoning_effort"):
+            client.chat.completions.create(
+                model=MADE_UP_MODEL,
+                messages=MADE_UP_MESSAGES,
+                reasoning_effort="low",
+                extra_body={"reasoning_effort": "none"},
+            )
+        # The older keywords stay closed to extra_body, given or not.
+        with self.assertRaisesRegex(RunInfraError, "extra_body must not override typed request field: temperature"):
+            client.chat.completions.create(
+                model=MADE_UP_MODEL,
+                messages=MADE_UP_MESSAGES,
+                extra_body={"temperature": 0.2},
+            )
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_a_tool_call_round_trip_sends_the_assistants_calls_back_with_the_tools_answer(self):
+        first_answer = {
+            "id": "chatcmpl_made_up_1",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_made_up",
+                                "type": "function",
+                                "function": {"name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
+        second_answer = {
+            "id": "chatcmpl_made_up_2",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "reasoning": "The tool answered.", "content": "It is 21 degrees in Paris."},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        transport = RecordingTransport(json_response(first_answer), json_response(second_answer))
+        client = made_up_client(transport)
+        messages: List[ChatMessage] = [{"role": "user", "content": "What is the weather in Paris?"}]
+
+        first: ChatCompletionResponse = client.chat.completions.create(model=MADE_UP_MODEL, messages=messages, tools=[WEATHER_TOOL])
+        choice: ChatCompletionChoice = first["choices"][0]
+        asked: ChatMessage = choice["message"]
+        self.assertIsNone(asked["content"])
+        self.assertEqual(choice["finish_reason"], "tool_calls")
+        messages.append(asked)
+        for call in asked["tool_calls"]:
+            typed_call: ChatCompletionMessageToolCall = call
+            arguments = json.loads(typed_call["function"]["arguments"])
+            answer: ChatToolMessage = {
+                "role": "tool",
+                "tool_call_id": typed_call["id"],
+                "content": json.dumps({"city": arguments["city"], "temp_c": 21}, separators=(",", ":")),
+            }
+            messages.append(answer)
+        second = client.chat.completions.create(
+            model=MADE_UP_MODEL,
+            messages=messages,
+            tools=[WEATHER_TOOL],
+            parallel_tool_calls=False,
+        )
+
+        self.assertEqual(second["choices"][0]["message"]["content"], "It is 21 degrees in Paris.")
+        self.assertEqual(second["choices"][0]["message"]["reasoning"], "The tool answered.")
+        self.assertEqual(
+            sent_json(transport, 1),
+            {
+                "model": MADE_UP_MODEL,
+                "tools": [WEATHER_TOOL],
+                "parallel_tool_calls": False,
+                "messages": [
+                    {"role": "user", "content": "What is the weather in Paris?"},
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_made_up",
+                                "type": "function",
+                                "function": {"name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
+                            }
+                        ],
+                    },
+                    {"role": "tool", "tool_call_id": "call_made_up", "content": "{\"city\":\"Paris\",\"temp_c\":21}"},
+                ],
+            },
+        )
+
+    def test_an_assistant_message_with_tool_calls_and_no_content_at_all_is_sent_as_given(self):
+        transport = RecordingTransport()
+        messages: List[ChatMessage] = [
+            {"role": "user", "content": "What is the weather in Paris?"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "call_made_up", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_made_up", "content": "{\"temp_c\":21}"},
+        ]
+
+        made_up_client(transport).chat.completions.create(model=MADE_UP_MODEL, messages=messages, tools=[WEATHER_TOOL])
+
+        self.assertEqual(sent_json(transport)["messages"], messages)
+
+    def test_the_tool_call_round_trip_is_typed(self):
+        json_dict = Dict[str, Any]
+        message = get_type_hints(ChatMessage)
+        self.assertEqual(set(message), {"role", "content", "name", "tool_call_id", "tool_calls", "reasoning"})
+        self.assertIs(message["role"], str)
+        self.assertEqual(message["content"], Union[str, List[json_dict], None])
+        self.assertEqual(message["tool_calls"], List[ChatCompletionMessageToolCall])
+        self.assertEqual(message["reasoning"], Optional[str])
+        # Only the role is always there: an assistant message may carry tool calls and no content.
+        self.assertEqual(ChatMessage.__required_keys__, frozenset({"role"}))
+
+        call = get_type_hints(ChatCompletionMessageToolCall)
+        self.assertEqual(call, {"id": str, "type": Literal["function"], "function": ChatCompletionToolCallFunction})
+        self.assertEqual(ChatCompletionMessageToolCall.__required_keys__, frozenset({"id", "type", "function"}))
+        self.assertEqual(get_type_hints(ChatCompletionToolCallFunction), {"name": str, "arguments": str})
+
+        tool_message = get_type_hints(ChatToolMessage)
+        self.assertEqual(
+            tool_message,
+            {"role": Literal["tool"], "content": Union[str, List[json_dict]], "tool_call_id": str},
+        )
+        # A tool message must name the call it answers.
+        self.assertEqual(ChatToolMessage.__required_keys__, frozenset({"role", "content", "tool_call_id"}))
+
+        self.assertEqual(get_type_hints(ChatCompletionResponse)["choices"], List[ChatCompletionChoice])
+        self.assertIs(get_type_hints(ChatCompletionChoice)["message"], ChatMessage)
+        self.assertEqual(get_type_hints(ChatCompletionChoice)["finish_reason"], Optional[str])
+
+        create = made_up_client(RecordingTransport()).chat.completions.create
+        self.assertEqual(
+            get_type_hints(create)["messages"],
+            Sequence[Union[ChatMessage, Mapping[str, object]]],
+        )
+        self.assertEqual(get_type_hints(create)["parallel_tool_calls"], Optional[bool])
+        self.assertEqual(get_type_hints(create)["reasoning_effort"], Optional[str])
+        self.assertEqual(get_type_hints(create)["prompt_cache_key"], Optional[str])
+
+    def test_the_stream_delta_types_tool_calls_and_reasoning(self):
+        delta = get_type_hints(ChatCompletionStreamDelta)
+        self.assertEqual(
+            delta,
+            {
+                "role": str,
+                "content": Optional[str],
+                "reasoning": Optional[str],
+                "tool_calls": List[ChatCompletionStreamToolCallDelta],
+            },
+        )
+        self.assertEqual(ChatCompletionStreamDelta.__required_keys__, frozenset())
+        piece = get_type_hints(ChatCompletionStreamToolCallDelta)
+        self.assertEqual(
+            piece,
+            {"index": int, "id": str, "type": Literal["function"], "function": ChatCompletionStreamToolCallFunction},
+        )
+        # Every piece of a call says which call it belongs to.
+        self.assertEqual(ChatCompletionStreamToolCallDelta.__required_keys__, frozenset({"index"}))
+        self.assertEqual(get_type_hints(ChatCompletionStreamToolCallFunction), {"name": str, "arguments": str})
+        self.assertIs(get_type_hints(ChatCompletionStreamChoice)["delta"], ChatCompletionStreamDelta)
+        self.assertEqual(get_type_hints(ChatCompletionStreamEvent)["choices"], List[ChatCompletionStreamChoice])
+
+    def test_a_streamed_tool_call_and_the_models_reasoning_are_read_from_the_delta(self):
+        def frame(delta, finish_reason=None):
+            return sse_frame({"id": "chatcmpl_made_up", "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]})
+
+        stream = open_chat_stream(
+            frame({"role": "assistant", "content": None, "reasoning": "The user asks "}),
+            frame({"reasoning": "for the weather."}),
+            frame({"tool_calls": [{"index": 0, "id": "call_made_up", "type": "function", "function": {"name": "get_weather", "arguments": ""}}]}),
+            frame({"tool_calls": [{"index": 0, "function": {"arguments": "{\"city\":"}}]}),
+            frame({"tool_calls": [{"index": 0, "function": {"arguments": "\"Paris\"}"}}]}),
+            frame({}, "tool_calls"),
+            CHAT_DONE_FRAME,
+        )
+
+        reasoning = ""
+        call_id = ""
+        name = ""
+        arguments_text = ""
+        finish_reason = None
+        for raw_event in stream:
+            event: ChatCompletionStreamEvent = raw_event  # type: ignore[assignment]
+            choice: ChatCompletionStreamChoice = event["choices"][0]
+            delta: ChatCompletionStreamDelta = choice["delta"]
+            reasoning += delta.get("reasoning") or ""
+            for piece in delta.get("tool_calls", []):
+                if piece["index"] != 0:
+                    continue
+                call_id = call_id or piece.get("id", "")
+                name += piece.get("function", {}).get("name", "")
+                arguments_text += piece.get("function", {}).get("arguments", "")
+            finish_reason = choice.get("finish_reason") or finish_reason
+
+        self.assertEqual(reasoning, "The user asks for the weather.")
+        self.assertEqual((call_id, name, finish_reason), ("call_made_up", "get_weather", "tool_calls"))
+        self.assertEqual(json.loads(arguments_text), {"city": "Paris"})
+
+    def test_the_new_names_are_exported(self):
+        for name in (
+            "ChatCompletionChoice",
+            "ChatCompletionMessageToolCall",
+            "ChatCompletionStreamChoice",
+            "ChatCompletionStreamDelta",
+            "ChatCompletionStreamEvent",
+            "ChatCompletionStreamToolCallDelta",
+            "ChatCompletionStreamToolCallFunction",
+            "ChatCompletionToolCallFunction",
+            "ChatMessage",
+            "ChatToolMessage",
+            "RunInfraStreamError",
+            "RunInfraStreamIncompleteError",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, runinfra.__all__)
+                self.assertTrue(hasattr(runinfra, name))
+
+
+class RunInfraPythonSdkPackageLinksTest(unittest.TestCase):
+    def test_the_documentation_link_points_at_the_public_python_guide(self):
+        root = Path(__file__).resolve().parents[2]
+        pyproject = root.joinpath("python", "pyproject.toml").read_text(encoding="utf-8")
+        package_json = json.loads(root.joinpath("typescript", "package.json").read_text(encoding="utf-8"))
+
+        self.assertIn('Documentation = "https://www.rightnowai.co/docs/sdks/open-models/native-python"', pyproject)
+        self.assertEqual(package_json["homepage"], "https://www.rightnowai.co/docs/sdks/open-models/native-typescript")
+
+    def test_the_root_readme_says_once_that_the_same_key_works_at_the_other_public_host_and_the_default_host_stays(self):
+        root = Path(__file__).resolve().parents[2]
+        readme = root.joinpath("README.md").read_text(encoding="utf-8")
+
+        self.assertEqual(readme.count("https://api.rightnowai.co/v1"), 1)
+        self.assertEqual(inspect.signature(RunInfra.__init__).parameters["base_url"].default, "https://api.runinfra.ai/v1")
 
 
 if __name__ == "__main__":

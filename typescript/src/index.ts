@@ -1,12 +1,33 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const RUNINFRA_SDK_VERSION = "0.3.0";
+/**
+ * The longest wait the API may name (`Retry-After-Ms`, `Retry-After`) that the
+ * SDK sleeps for before it asks again. A longer wait is raised at once, with
+ * the wait on the error.
+ */
 const MAX_AUTOMATIC_RETRY_AFTER_MS = 60_000;
+/**
+ * The timeout of a non-streamed call when the caller names none. The API
+ * allows a whole response up to 740 seconds, so the default sits just above.
+ */
+const DEFAULT_TIMEOUT_MS = 750_000;
+/**
+ * The timeout of a streamed call when the caller names none: the wait for the
+ * response headers, and for each later read. The API allows a stream up to
+ * 180 seconds to its first token, so the default sits just above.
+ */
+const DEFAULT_STREAM_TIMEOUT_MS = 190_000;
 
 export interface RunInfraOptions {
   apiKey: string;
   pipelineId?: string;
   baseURL?: string;
+  /**
+   * The timeout of every call, in milliseconds. Left out, a non-streamed call
+   * is given 750 seconds, and a streamed call 190 seconds to its response
+   * headers and to each later read.
+   */
   timeoutMs?: number;
   maxRetries?: number;
   retryBaseMs?: number;
@@ -17,6 +38,7 @@ export interface RunInfraOptions {
 export interface RunInfraRequestOptions {
   clientRequestId?: string;
   idempotencyKey?: string;
+  /** The timeout of this call, in milliseconds. It wins over the client's `timeoutMs` and over the defaults. */
   timeoutMs?: number;
   maxRetries?: number;
   retryBaseMs?: number;
@@ -24,11 +46,42 @@ export interface RunInfraRequestOptions {
   extraBody?: Record<string, unknown>;
 }
 
+/** One call the model asks for, on an assistant message's `tool_calls`. */
+export interface ChatCompletionMessageToolCall {
+  /** The call's id. The `tool` message that answers the call repeats it as `tool_call_id`. */
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    /** The arguments as a JSON string. Parse and check them before you run the tool. */
+    arguments: string;
+  };
+}
+
+/**
+ * One message of a chat. `system`, `developer` and `user` messages carry
+ * `content`. An `assistant` message carries `content`, a non-empty
+ * `tool_calls`, or both. A `tool` message carries `content` and the
+ * `tool_call_id` of the call it answers; `ChatToolMessage` types that one.
+ */
 export interface ChatMessage {
-  role: "system" | "user" | "assistant" | "tool" | string;
-  content: string | Array<Record<string, unknown>>;
+  role: "system" | "developer" | "user" | "assistant" | "tool" | string;
+  /** `null` or left out on an assistant message that carries only `tool_calls`. */
+  content?: string | Array<Record<string, unknown>> | null;
   name?: string;
+  /** On a `tool` message: the `id` of the call this message answers. */
   tool_call_id?: string;
+  /** On an `assistant` message: the calls the model asked for. */
+  tool_calls?: ChatCompletionMessageToolCall[];
+  /** On an answered `assistant` message: the model's thinking, when the model reports it. */
+  reasoning?: string | null;
+}
+
+/** The message that answers one tool call: the result as `content`, and the call's id. */
+export interface ChatToolMessage extends ChatMessage {
+  role: "tool";
+  content: string | Array<Record<string, unknown>>;
+  tool_call_id: string;
 }
 
 export interface ChatCompletionRequest {
@@ -51,9 +104,44 @@ export interface ChatCompletionRequest {
   seed?: number;
   logprobs?: boolean;
   top_logprobs?: number;
+  /** `-1` or `0` turns it off. */
+  top_k?: number;
+  min_p?: number;
+  repetition_penalty?: number;
+  /** How many choices to generate. */
+  n?: number;
+  best_of?: number;
+  logit_bias?: Record<string, number>;
+  /** `false` asks for one tool call at a time. Whether it is honored depends on the model. */
+  parallel_tool_calls?: boolean;
+  /** How much the model reasons, such as `"none"`, `"low"` or `"high"`. The accepted values depend on the model. */
+  reasoning_effort?: string;
+  /** The reasoning object some routers send. Do not send it beside a `reasoning_effort` that disagrees. */
+  reasoning?: { effort?: string; enabled?: boolean; exclude?: boolean } & Record<string, unknown>;
+  /** `false` hides the model's reasoning from the answer. */
+  include_reasoning?: boolean;
+  /** A cache-affinity hint for requests that share a prompt prefix. */
+  prompt_cache_key?: string;
+  service_tier?: string;
+  store?: boolean;
+  safety_identifier?: string;
+  modalities?: string[];
+  audio?: Record<string, unknown>;
+  prediction?: Record<string, unknown>;
+  verbosity?: string;
+  web_search_options?: Record<string, unknown>;
+  moderation?: unknown;
+  /** The older spelling of `tools`. Prefer `tools`. */
+  functions?: Array<Record<string, unknown>>;
+  /** The older spelling of `tool_choice`. Prefer `tool_choice`. */
+  function_call?: string | Record<string, unknown>;
 }
 
-const CHAT_COMPLETION_REQUEST_KEYS = new Set([
+/**
+ * The chat request fields that `extraBody` has always refused, because the
+ * request type names them.
+ */
+const CHAT_COMPLETION_EXTRA_BODY_CLOSED_KEYS = new Set([
   "model",
   "messages",
   "stream",
@@ -75,12 +163,63 @@ const CHAT_COMPLETION_REQUEST_KEYS = new Set([
   "top_logprobs",
 ]);
 
+/**
+ * Every field a chat request may carry. The fields typed since 0.3.1 are
+ * accepted here and stay accepted in `extraBody`, where callers had to put
+ * them before; naming one in both places is refused.
+ */
+const CHAT_COMPLETION_REQUEST_KEYS = new Set([
+  ...CHAT_COMPLETION_EXTRA_BODY_CLOSED_KEYS,
+  "top_k",
+  "min_p",
+  "repetition_penalty",
+  "n",
+  "best_of",
+  "logit_bias",
+  "parallel_tool_calls",
+  "reasoning_effort",
+  "reasoning",
+  "include_reasoning",
+  "prompt_cache_key",
+  "service_tier",
+  "store",
+  "safety_identifier",
+  "modalities",
+  "audio",
+  "prediction",
+  "verbosity",
+  "web_search_options",
+  "moderation",
+  "functions",
+  "function_call",
+]);
+
+/** One piece of a tool call on a stream. Pieces of the same call share `index`; join their `arguments`. */
+export interface ChatCompletionStreamToolCallDelta {
+  index: number;
+  /** On the first piece of a call. */
+  id?: string;
+  type?: "function";
+  function?: {
+    /** On the first piece of a call. */
+    name?: string;
+    /** The next piece of the arguments' JSON string. */
+    arguments?: string;
+  };
+}
+
 export interface ChatCompletionStreamEvent extends Record<string, unknown> {
   choices?: Array<
     {
+      index?: number;
       delta?: {
-        content?: string;
+        role?: string;
+        content?: string | null;
+        /** The next piece of the model's thinking, when the model reports it. */
+        reasoning?: string | null;
+        tool_calls?: ChatCompletionStreamToolCallDelta[];
       } & Record<string, unknown>;
+      finish_reason?: string | null;
     } & Record<string, unknown>
   >;
 }
@@ -634,6 +773,11 @@ export class RunInfraError extends Error {
   readonly status: number;
   readonly type: string;
   readonly requestId?: string;
+  /**
+   * The wait the API named with the error, in milliseconds: `Retry-After-Ms`
+   * when the response carries it, else `Retry-After`. Set on every error whose
+   * response named a wait, whatever its status.
+   */
   readonly retryAfterMs?: number;
   readonly code?: string;
   readonly param?: string;
@@ -643,6 +787,18 @@ export class RunInfraError extends Error {
    * `flex_not_available`. Other routes do not set it.
    */
   readonly reason?: string;
+  /**
+   * What the API said about asking again, when it said it: `x-should-retry` on
+   * the response, or `retryable` inside the error object. `false` means the
+   * same request will fail again. Left unset when the API said nothing.
+   */
+  readonly retryable?: boolean;
+  /**
+   * The `X-Client-Request-Id` the SDK sent with the call, set on a timeout.
+   * A call that timed out before any response has no server request id, so
+   * this is the id to quote to support.
+   */
+  readonly clientRequestId?: string;
 
   constructor(message: string, input: {
     status: number;
@@ -652,6 +808,8 @@ export class RunInfraError extends Error {
     code?: string;
     param?: string;
     reason?: string;
+    retryable?: boolean;
+    clientRequestId?: string;
   }) {
     super(message);
     this.name = "RunInfraError";
@@ -662,6 +820,8 @@ export class RunInfraError extends Error {
     this.code = input.code;
     this.param = input.param;
     this.reason = input.reason;
+    this.retryable = input.retryable;
+    this.clientRequestId = input.clientRequestId;
   }
 }
 
@@ -734,9 +894,15 @@ export class ModelNotFoundError extends RunInfraError {
   }
 }
 
+/**
+ * A call that ran out of time. `clientRequestId` holds the
+ * `X-Client-Request-Id` the SDK sent with the call; `requestId` is set only
+ * when a response had begun. A call is never sent again after a timeout: the
+ * API may still be working on it.
+ */
 export class RunInfraTimeoutError extends RunInfraError {
-  constructor(message = "RunInfra request timed out", requestId?: string) {
-    super(message, { status: 0, type: "timeout_error", requestId });
+  constructor(message = "RunInfra request timed out", requestId?: string, clientRequestId?: string) {
+    super(message, { status: 0, type: "timeout_error", requestId, clientRequestId });
     this.name = "RunInfraTimeoutError";
   }
 }
@@ -752,6 +918,43 @@ export class RunInfraStreamParseError extends RunInfraError {
   constructor(message = "RunInfra stream event payload was not valid JSON", requestId?: string) {
     super(message, { status: 0, type: "stream_parse_error", requestId });
     this.name = "RunInfraStreamParseError";
+  }
+}
+
+/**
+ * The API ended an open stream with a failure: a frame that holds an `error`
+ * object, or a `response.failed` event on a Responses stream. `type`, `code`
+ * and `param` are the API's own, `retryable` is set when the API marked the
+ * failure, and `requestId` is the request id the frame names, else the
+ * stream's. `status` is `0`: the failure arrived after the HTTP status. The
+ * events before the failure were already yielded. The answer is not whole.
+ */
+export class RunInfraStreamError extends RunInfraError {
+  constructor(message: string, input: {
+    type: string;
+    requestId?: string;
+    code?: string;
+    param?: string;
+    retryable?: boolean;
+  }) {
+    super(message, { status: 0, ...input });
+    this.name = "RunInfraStreamError";
+  }
+}
+
+/**
+ * A stream's body ended without its end marker: `[DONE]` on a chat stream,
+ * `response.completed` on a Responses stream. The connection was cut or the
+ * stream was closed early, so the answer is not whole even though the HTTP
+ * status was 200. The events before the end were already yielded.
+ */
+export class RunInfraStreamIncompleteError extends RunInfraError {
+  constructor(
+    message = "RunInfra stream ended before its end marker; the answer is incomplete",
+    requestId?: string,
+  ) {
+    super(message, { status: 0, type: "stream_incomplete_error", requestId });
+    this.name = "RunInfraStreamIncompleteError";
   }
 }
 
@@ -1086,6 +1289,46 @@ export class RunInfraAudioResponse {
   }
 }
 
+/**
+ * The failure an open stream reported, read from one parsed event: a frame
+ * with a top-level `error` object, or a Responses `response.failed` event,
+ * whose error sits inside `response`. `undefined` for every other event.
+ */
+function streamFailure(event: unknown, streamRequestId?: string): RunInfraStreamError | undefined {
+  if (!isPlainRecord(event)) return undefined;
+  let failure: Record<string, unknown> | undefined;
+  if (isPlainRecord(event.error)) {
+    failure = event.error;
+  } else if (event.type === "response.failed") {
+    const response = isPlainRecord(event.response) ? event.response : {};
+    failure = isPlainRecord(response.error) ? response.error : {};
+  }
+  if (!failure) return undefined;
+  return new RunInfraStreamError(
+    typeof failure.message === "string" && failure.message
+      ? failure.message
+      : "RunInfra stream ended with an error",
+    {
+      type: typeof failure.type === "string" ? failure.type : "api_error",
+      requestId: typeof event.request_id === "string" && event.request_id ? event.request_id : streamRequestId,
+      ...(typeof failure.code === "string" ? { code: failure.code } : {}),
+      ...(typeof failure.param === "string" ? { param: failure.param } : {}),
+      ...(typeof failure.retryable === "boolean" ? { retryable: failure.retryable } : {}),
+    },
+  );
+}
+
+/**
+ * The events of one streamed answer.
+ *
+ * Iterating yields each event as it arrives. The iteration ends quietly only
+ * when the stream carried its end marker: `[DONE]` on a chat stream,
+ * `response.completed` on a Responses stream. It throws instead, after
+ * yielding every event that came first, when the API reports a failure on the
+ * open stream (`RunInfraStreamError`) or when the body ends without the end
+ * marker (`RunInfraStreamIncompleteError`). Leaving the loop early throws
+ * nothing.
+ */
 export class RunInfraStream<TEvent extends Record<string, unknown> = Record<string, unknown>>
   implements AsyncIterable<TEvent> {
   readonly response: Response;
@@ -1101,22 +1344,35 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<TEvent> {
-    if (!this.response.body) return;
+    if (!this.response.body) {
+      throw new RunInfraStreamIncompleteError(undefined, this.requestId);
+    }
     const reader = this.response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let dataLines: string[] = [];
     let readerDone = false;
+    // Whether the end marker arrived: `[DONE]`, or a Responses `response.completed` event.
+    let completed = false;
 
     const dispatchEvent = (): TEvent | null => {
       const payload = dataLines.join("\n").trim();
       dataLines = [];
-      if (!payload || payload === "[DONE]") return null;
+      if (!payload) return null;
+      if (payload === "[DONE]") {
+        completed = true;
+        return null;
+      }
+      let event: unknown;
       try {
-        return JSON.parse(payload) as TEvent;
+        event = JSON.parse(payload);
       } catch {
         throw new RunInfraStreamParseError(undefined, this.requestId);
       }
+      const failure = streamFailure(event, this.requestId);
+      if (failure) throw failure;
+      if (isPlainRecord(event) && event.type === "response.completed") completed = true;
+      return event as TEvent;
     };
 
     const processLine = (line: string): TEvent | null => {
@@ -1168,14 +1424,20 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
       }
 
       buffer += decoder.decode();
-      if (buffer) {
-        const parsed = processLine(buffer);
-        if (parsed) yield parsed;
+      // What is left was not ended by a blank line. If it cannot be read and no end marker came before it, the
+      // body ended inside an event: that is a cut stream, reported below, not a malformed event.
+      const unfinished: TEvent[] = [];
+      try {
+        const lastLine = buffer ? processLine(buffer) : null;
+        if (lastLine) unfinished.push(lastLine);
+        const lastEvent = dataLines.length > 0 ? dispatchEvent() : null;
+        if (lastEvent) unfinished.push(lastEvent);
+      } catch (error) {
+        if (!(error instanceof RunInfraStreamParseError) || completed) throw error;
       }
-      if (dataLines.length > 0) {
-        const parsed = dispatchEvent();
-        if (parsed) yield parsed;
-      }
+      for (const event of unfinished) yield event;
+      // The body is over. Without the end marker the answer was cut short, whatever the HTTP status said.
+      if (!completed) throw new RunInfraStreamIncompleteError(undefined, this.requestId);
     } catch (error) {
       throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
     } finally {
@@ -1843,7 +2105,18 @@ function isBrowserRuntime(): boolean {
     Object.prototype.isPrototypeOf.call(prototype, runtime.self);
 }
 
-function retryAfterMs(response: Response): number | null {
+/** `Retry-After-Ms`: the wait in milliseconds, a plain non-negative number. */
+function retryAfterMsHeader(response: Response): number | null {
+  const value = response.headers.get("retry-after-ms");
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!/^[0-9]+(?:\.[0-9]+)?$/u.test(trimmed)) return null;
+  const milliseconds = Number(trimmed);
+  return Number.isFinite(milliseconds) ? Math.ceil(milliseconds) : null;
+}
+
+/** `Retry-After`: whole seconds, or an HTTP date. */
+function retryAfterHeader(response: Response): number | null {
   const value = response.headers.get("retry-after");
   if (!value) return null;
   const trimmed = value.trim();
@@ -1858,17 +2131,30 @@ function retryAfterMs(response: Response): number | null {
   return null;
 }
 
-function automaticRetryAfterMs(response: Response): number | null {
-  const delay = retryAfterMs(response);
-  if (delay === null || delay > MAX_AUTOMATIC_RETRY_AFTER_MS) return null;
-  return delay;
+/**
+ * The wait the API named with a response, in milliseconds. `Retry-After-Ms` is
+ * read first, because it can name a wait shorter than a second; `Retry-After`
+ * is read when the millisecond header is missing or malformed.
+ */
+function retryAfterMs(response: Response): number | null {
+  return retryAfterMsHeader(response) ?? retryAfterHeader(response);
 }
 
-function retryDelayMs(attempt: number, baseMs: number, response?: Response): number {
-  if (response) {
-    const retryAfter = automaticRetryAfterMs(response);
-    if (retryAfter !== null) return retryAfter;
-  }
+/**
+ * What the API said about asking again: the `x-should-retry` header, and
+ * `retryable` inside the error object. An explicit `false` from either wins.
+ * `undefined` when the API said nothing.
+ */
+function retryMarker(response: Response, bodyRetryable?: boolean): boolean | undefined {
+  const header = response.headers.get("x-should-retry")?.trim().toLowerCase();
+  const headerRetryable = header === "true" ? true : header === "false" ? false : undefined;
+  if (headerRetryable === false || bodyRetryable === false) return false;
+  if (headerRetryable === true || bodyRetryable === true) return true;
+  return undefined;
+}
+
+/** The SDK's own wait before it asks again when the API named none: exponential, with jitter, at most 30 seconds. */
+function backoffDelayMs(attempt: number, baseMs: number): number {
   if (baseMs <= 0) return 0;
   const exponential = baseMs * 2 ** Math.max(0, attempt - 1);
   const jitter = Math.random() * baseMs;
@@ -1879,15 +2165,24 @@ function retryDelayMs(attempt: number, baseMs: number, response?: Response): num
 const BATCH_MAX_AUTOMATIC_RETRY_AFTER_MS = 5_000;
 
 /**
- * Whether a batch route's refusal is raised at once instead of being asked
- * again: a 409, which is final, and a 503 whose `Retry-After` is above five
- * seconds, which the caller gets with that wait instead of a call that blocks.
+ * Whether a failed response may be asked again, for a call that is safe to
+ * send again. The API's own word decides when it gave one: `false` never,
+ * `true` whatever the status. Without it the status decides. A 409 from a
+ * batch route is always final.
  */
-function batchRefusalIsRaisedAtOnce(response: Response): boolean {
-  if (response.status === 409) return true;
-  if (response.status !== 503) return false;
-  const wait = retryAfterMs(response);
-  return wait !== null && wait > BATCH_MAX_AUTOMATIC_RETRY_AFTER_MS;
+function failedResponseMayBeAskedAgain(response: Response, retryable: boolean | undefined, batch: boolean): boolean {
+  if (batch && response.status === 409) return false;
+  if (retryable !== undefined) return retryable;
+  return isRetryableStatus(response.status);
+}
+
+/**
+ * The longest wait named by the API that the SDK sleeps for before it asks
+ * again. A wait above it is raised at once with the wait on the error, so a
+ * call never blocks for minutes and never asks again sooner than it was told.
+ */
+function maxAutomaticRetryAfterMs(response: Response, batch: boolean): number {
+  return batch && response.status === 503 ? BATCH_MAX_AUTOMATIC_RETRY_AFTER_MS : MAX_AUTOMATIC_RETRY_AFTER_MS;
 }
 
 async function parseError(response: Response): Promise<{
@@ -1896,6 +2191,7 @@ async function parseError(response: Response): Promise<{
   code?: string;
   param?: string;
   reason?: string;
+  retryable?: boolean;
   currentBalanceCents?: number;
   requiredCents?: number;
   topupUrl?: string;
@@ -1908,6 +2204,7 @@ async function parseError(response: Response): Promise<{
         code?: unknown;
         param?: unknown;
         reason?: unknown;
+        retryable?: unknown;
         current_balance_cents?: unknown;
         required_cents?: unknown;
         topup_url?: unknown;
@@ -1923,6 +2220,7 @@ async function parseError(response: Response): Promise<{
       ...(typeof error.code === "string" ? { code: error.code } : {}),
       ...(typeof error.param === "string" ? { param: error.param } : {}),
       ...(typeof error.reason === "string" ? { reason: error.reason } : {}),
+      ...(typeof error.retryable === "boolean" ? { retryable: error.retryable } : {}),
       // Structured remediation fields the gateway ships on 402 insufficient_credits.
       ...(typeof error.current_balance_cents === "number" && Number.isFinite(error.current_balance_cents)
         ? { currentBalanceCents: error.current_balance_cents }
@@ -1940,93 +2238,105 @@ async function parseError(response: Response): Promise<{
   }
 }
 
+/**
+ * Reads a failed response's error body, giving up when the call's own timeout
+ * fires first. The body is read before the SDK decides whether to ask again,
+ * because the API can mark a failure as retryable or not inside it.
+ */
+async function parseErrorWithin(
+  response: Response,
+  signal: AbortSignal,
+): Promise<Awaited<ReturnType<typeof parseError>>> {
+  if (signal.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      parseError(response),
+      new Promise<never>((_, reject) => {
+        onAbort = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
 async function discardResponseBody(response: Response): Promise<void> {
   try {
     await response.body?.cancel();
   } catch {
-    // Best-effort cleanup before retrying a failed response.
+    // Best-effort cleanup: the body may already be read, locked or closed.
   }
 }
 
 /**
- * Sets what a batch refusal carries beyond its class: the gateway's cause word
- * and its `Retry-After`. Assigned after construction so no error class changes
- * its constructor.
+ * Sets what an error carries beyond its class: the wait the API named, what
+ * the API said about asking again, a batch refusal's cause word, and the
+ * request id the SDK sent. Assigned after construction so no error class
+ * changes its constructor.
  */
-function withRefusalFacts<TError extends RunInfraError>(
+function withErrorFacts<TError extends RunInfraError>(
   error: TError,
-  facts: { reason?: string; retryAfterMs?: number },
+  facts: { reason?: string; retryAfterMs?: number; retryable?: boolean; clientRequestId?: string },
 ): TError {
-  const target = error as { reason?: string; retryAfterMs?: number };
+  const target = error as { reason?: string; retryAfterMs?: number; retryable?: boolean; clientRequestId?: string };
   if (facts.reason !== undefined) target.reason = facts.reason;
   if (facts.retryAfterMs !== undefined) target.retryAfterMs = facts.retryAfterMs;
+  if (facts.retryable !== undefined) target.retryable = facts.retryable;
+  if (facts.clientRequestId !== undefined) target.clientRequestId = facts.clientRequestId;
   return error;
 }
 
 /**
  * A batch route's refusal as the SDK's typed error. The class follows the HTTP
- * status as on every route, with two differences: only `model_not_sold` is a
+ * status as on every route, with one difference: only `model_not_sold` is a
  * `ModelNotFoundError` (an unknown batch id is a plain 404 `RunInfraError`
- * that keeps the gateway's own type), and every refusal keeps `reason` and
- * `Retry-After` when the gateway sent them.
+ * that keeps the gateway's own type).
  */
 function batchRefusalError(
   response: Response,
   parsed: Awaited<ReturnType<typeof parseError>>,
   requestId?: string,
 ): RunInfraError {
-  const { message, type, code, param, reason, currentBalanceCents, requiredCents, topupUrl } = parsed;
+  const { message, type, code, param, currentBalanceCents, requiredCents, topupUrl } = parsed;
   const status = response.status;
-  const facts = { reason, retryAfterMs: retryAfterMs(response) ?? undefined };
-  if (status === 401) {
-    return withRefusalFacts(new AuthenticationError(message, status, requestId, code, param), facts);
-  }
+  if (status === 401) return new AuthenticationError(message, status, requestId, code, param);
   if (status === 403) {
-    return withRefusalFacts(
-      new PermissionDeniedError(
-        message,
-        status,
-        requestId,
-        code,
-        param,
-        type !== "api_error" ? type : "permission_denied",
-      ),
-      facts,
+    return new PermissionDeniedError(
+      message,
+      status,
+      requestId,
+      code,
+      param,
+      type !== "api_error" ? type : "permission_denied",
     );
   }
   if (status === 402) {
-    return withRefusalFacts(
-      new InsufficientCreditsError(message, status, requestId, code, param, {
-        currentBalanceCents,
-        requiredCents,
-        topupUrl,
-      }),
-      facts,
-    );
+    return new InsufficientCreditsError(message, status, requestId, code, param, {
+      currentBalanceCents,
+      requiredCents,
+      topupUrl,
+    });
   }
   if (status === 404 && code === "model_not_sold") {
-    return withRefusalFacts(new ModelNotFoundError(message, status, requestId, code, param), facts);
+    return new ModelNotFoundError(message, status, requestId, code, param);
   }
-  if (status === 429) {
-    return withRefusalFacts(
-      new RateLimitError(message, status, requestId, facts.retryAfterMs, code, param),
-      facts,
-    );
-  }
-  return withRefusalFacts(new RunInfraError(message, { status, type, requestId, code, param }), facts);
+  if (status === 429) return new RateLimitError(message, status, requestId, undefined, code, param);
+  return new RunInfraError(message, { status, type, requestId, code, param });
 }
 
-async function raiseForStatus(response: Response, batch = false): Promise<void> {
-  if (response.ok) return;
-  const parsed = await parseError(response);
+function routeError(
+  response: Response,
+  parsed: Awaited<ReturnType<typeof parseError>>,
+  requestId?: string,
+): RunInfraError {
   const { message, type, code, param, currentBalanceCents, requiredCents, topupUrl } = parsed;
-  const requestId = response.headers.get("x-request-id") ?? undefined;
-  if (batch) throw batchRefusalError(response, parsed, requestId);
-  if (response.status === 401) throw new AuthenticationError(message, response.status, requestId, code, param);
+  if (response.status === 401) return new AuthenticationError(message, response.status, requestId, code, param);
   if (response.status === 403) {
     // Keep a more specific gateway discriminator (e.g. "byoc_plan_required")
     // on `.type` so callers can branch instead of regex-scraping the message.
-    throw new PermissionDeniedError(
+    return new PermissionDeniedError(
       message,
       response.status,
       requestId,
@@ -2036,27 +2346,40 @@ async function raiseForStatus(response: Response, batch = false): Promise<void> 
     );
   }
   if (response.status === 402) {
-    throw new InsufficientCreditsError(message, response.status, requestId, code, param, {
+    return new InsufficientCreditsError(message, response.status, requestId, code, param, {
       currentBalanceCents,
       requiredCents,
       topupUrl,
     });
   }
   if (response.status === 404 || type === "model_not_found") {
-    throw new ModelNotFoundError(message, response.status, requestId, code, param);
+    return new ModelNotFoundError(message, response.status, requestId, code, param);
   }
   if (response.status === 429) {
-    throw new RateLimitError(
-      message,
-      response.status,
-      requestId,
-      retryAfterMs(response) ?? undefined,
-      code,
-      param,
-    );
+    return new RateLimitError(message, response.status, requestId, undefined, code, param);
   }
-  if (type === "deployment_error") throw new DeploymentError(message, response.status, requestId, code, param);
-  throw new RunInfraError(message, { status: response.status, type, requestId, code, param });
+  if (type === "deployment_error") return new DeploymentError(message, response.status, requestId, code, param);
+  return new RunInfraError(message, { status: response.status, type, requestId, code, param });
+}
+
+/**
+ * A failed response as the SDK's typed error. Whatever its class and status,
+ * the error keeps the wait the API named (`Retry-After-Ms`, else
+ * `Retry-After`) and what the API said about asking again (`x-should-retry`,
+ * `error.retryable`). A batch route's refusal also keeps its cause word.
+ */
+function errorFromResponse(
+  response: Response,
+  parsed: Awaited<ReturnType<typeof parseError>>,
+  batch: boolean,
+): RunInfraError {
+  const requestId = response.headers.get("x-request-id") ?? undefined;
+  const error = batch ? batchRefusalError(response, parsed, requestId) : routeError(response, parsed, requestId);
+  return withErrorFacts(error, {
+    reason: batch ? parsed.reason : undefined,
+    retryAfterMs: retryAfterMs(response) ?? undefined,
+    retryable: retryMarker(response, parsed.retryable),
+  });
 }
 
 async function parseJsonResponse<TResponse>(
@@ -2115,11 +2438,13 @@ function redactSensitiveValues(message: string, sensitiveValues: readonly string
 
 function redactRunInfraError(error: RunInfraError, sensitiveValues: readonly string[]): RunInfraError {
   const redacted = redactedRunInfraErrorCopy(error, sensitiveValues);
-  // A batch refusal's cause and wait ride every error class; the copy rebuilds each class from its own
-  // constructor, which names neither for most of them.
-  return withRefusalFacts(redacted, {
+  // The wait, the retry marker, a batch refusal's cause and the request id the SDK sent ride every error
+  // class; the copy rebuilds each class from its own constructor, which names none of them for most.
+  return withErrorFacts(redacted, {
     reason: error.reason === undefined ? undefined : redactSensitiveValues(error.reason, sensitiveValues),
     retryAfterMs: redacted.retryAfterMs === undefined ? error.retryAfterMs : undefined,
+    retryable: redacted.retryable === undefined ? error.retryable : undefined,
+    clientRequestId: redacted.clientRequestId === undefined ? error.clientRequestId : undefined,
   });
 }
 
@@ -2154,6 +2479,12 @@ function redactedRunInfraErrorCopy(error: RunInfraError, sensitiveValues: readon
   if (error instanceof RunInfraTimeoutError) return new RunInfraTimeoutError(message, error.requestId);
   if (error instanceof RunInfraConnectionError) return new RunInfraConnectionError(message, error.requestId);
   if (error instanceof RunInfraStreamParseError) return new RunInfraStreamParseError(message, error.requestId);
+  if (error instanceof RunInfraStreamIncompleteError) {
+    return new RunInfraStreamIncompleteError(message, error.requestId);
+  }
+  if (error instanceof RunInfraStreamError) {
+    return new RunInfraStreamError(message, { type: error.type, requestId: error.requestId, code, param });
+  }
   if (error instanceof UnsupportedOperationError) return new UnsupportedOperationError(message);
   if (error instanceof WebhookVerificationError) return new WebhookVerificationError(message);
   return new RunInfraError(message, {
@@ -2282,7 +2613,8 @@ export class RunInfra {
   private readonly apiKey: string;
   private readonly baseURL: string;
   private readonly hasPipelineScope: boolean;
-  private readonly timeoutMs: number;
+  /** The caller's own client timeout. Left unset, each call uses the default of its kind. */
+  private readonly timeoutMs?: number;
   private readonly maxRetries: number;
   private readonly retryBaseMs: number;
   private readonly fetcher: typeof fetch;
@@ -2313,7 +2645,9 @@ export class RunInfra {
     );
     this.baseURL = normalizedBaseURL;
     this.hasPipelineScope = Boolean(options.pipelineId) || baseUrlLooksPipelineScoped(normalizedBaseURL);
-    this.timeoutMs = validatePositiveNumber(options.timeoutMs ?? 120_000, "timeoutMs");
+    this.timeoutMs = options.timeoutMs === undefined || options.timeoutMs === null
+      ? undefined
+      : validatePositiveNumber(options.timeoutMs, "timeoutMs");
     this.maxRetries = validateNonNegativeInteger(options.maxRetries ?? 2, "maxRetries");
     this.retryBaseMs = validateNonNegativeNumber(options.retryBaseMs ?? 250, "retryBaseMs");
     if (options.fetch !== undefined && typeof options.fetch !== "function") {
@@ -2331,7 +2665,7 @@ export class RunInfra {
       return this.request("/chat/completions", {
         method: "POST",
         body,
-        typedBodyKeys: CHAT_COMPLETION_REQUEST_KEYS,
+        typedBodyKeys: CHAT_COMPLETION_EXTRA_BODY_CLOSED_KEYS,
         stream: body.stream === true,
         idempotentReplaySafe: true,
       }, requestOptions);
@@ -2498,15 +2832,27 @@ export class RunInfra {
   ): Promise<TResponse | RunInfraStream> {
     if (options.stream) {
       const response = await this.rawRequest(path, options, requestOptions);
-      return new RunInfraStream(response, this.requestTimeoutMs(requestOptions), [this.apiKey]);
+      return new RunInfraStream(response, this.requestTimeoutMs(requestOptions, true), [this.apiKey]);
     }
     return this.sendWithRetry(path, options, requestOptions, parseJsonResponse<TResponse>);
   }
 
-  private requestTimeoutMs(requestOptions: RunInfraRequestOptions = {}): number {
+  /**
+   * The timeout of one call. The caller's own setting wins: the call's
+   * `timeoutMs`, else the client's. With neither, a non-streamed call is given
+   * 750 seconds for the whole call, and a streamed call 190 seconds to its
+   * response headers and to each later read. `minDefaultTimeoutMs` is the
+   * least a call uses when the caller names no timeout for that call.
+   */
+  private requestTimeoutMs(
+    requestOptions: RunInfraRequestOptions = {},
+    stream = false,
+    minDefaultTimeoutMs = 0,
+  ): number {
     const validatedRequestOptions = validateRequestOptions(requestOptions);
+    const defaultTimeoutMs = stream ? DEFAULT_STREAM_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
     return validatePositiveNumber(
-      validatedRequestOptions.timeoutMs ?? this.timeoutMs,
+      validatedRequestOptions.timeoutMs ?? Math.max(this.timeoutMs ?? defaultTimeoutMs, minDefaultTimeoutMs),
       "timeoutMs",
     );
   }
@@ -2590,13 +2936,17 @@ export class RunInfra {
       validatedRequestOptions.retryBaseMs ?? this.retryBaseMs,
       "retryBaseMs",
     );
-    const timeoutMs = validatePositiveNumber(
-      validatedRequestOptions.timeoutMs ?? Math.max(this.timeoutMs, options.minDefaultTimeoutMs ?? 0),
-      "timeoutMs",
+    const timeoutMs = this.requestTimeoutMs(
+      validatedRequestOptions,
+      options.stream === true,
+      options.minDefaultTimeoutMs,
     );
+    const batch = options.batch === true;
     while (true) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      let serverRequestId: string | undefined;
+      let waitMs: number;
       try {
         const response = await this.fetcher(`${this.baseURL}${path}`, {
           method,
@@ -2604,36 +2954,61 @@ export class RunInfra {
           body,
           signal: controller.signal,
         });
+        serverRequestId = response.headers.get("x-request-id") ?? undefined;
+        if (response.ok) return await consumeResponse(response, [this.apiKey]);
+        // The error body is read before the SDK decides anything: the API can say inside it whether asking again helps.
+        const parsed = await parseErrorWithin(response, controller.signal);
+        await discardResponseBody(response);
+        // The timer may fire just as the body read ends: a call that ran out of time is not judged by a body cut short.
+        if (controller.signal.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+        const failure = errorFromResponse(response, parsed, batch);
         if (
-          canRetry &&
-          !response.ok &&
-          isRetryableStatus(response.status) &&
-          !(options.batch === true && batchRefusalIsRaisedAtOnce(response)) &&
-          attempt < maxRetries
+          !canRetry ||
+          attempt >= maxRetries ||
+          !failedResponseMayBeAskedAgain(response, failure.retryable, batch)
         ) {
-          attempt += 1;
-          await discardResponseBody(response);
-          await sleep(retryDelayMs(attempt, retryBaseMs, response));
-          continue;
+          throw failure;
         }
-        await raiseForStatus(response, options.batch === true);
-        return await consumeResponse(response, [this.apiKey]);
+        // A wait longer than the SDK sleeps for is the caller's to plan: raise now, with the wait on the error.
+        if (
+          failure.retryAfterMs !== undefined &&
+          failure.retryAfterMs > maxAutomaticRetryAfterMs(response, batch)
+        ) {
+          throw failure;
+        }
+        waitMs = failure.retryAfterMs ?? backoffDelayMs(attempt + 1, retryBaseMs);
       } catch (error) {
+        // Whether the SDK's own timer ended this attempt.
+        const timedOut = controller.signal.aborted;
+        // A call that ran out of time is never sent again: the API may still be working on it, and a second
+        // send could run and charge it twice. The timeout names the request id the SDK sent.
+        const asTimeout = (failure: RunInfraError): RunInfraError =>
+          withErrorFacts(
+            failure instanceof RunInfraTimeoutError
+              ? failure
+              : new RunInfraTimeoutError(undefined, failure.requestId ?? serverRequestId),
+            { clientRequestId },
+          );
         if (error instanceof ResponseBodyReadError) {
-          if (canRetry && attempt < maxRetries) {
-            attempt += 1;
-            await sleep(retryDelayMs(attempt, retryBaseMs));
-            continue;
-          }
-          throw normalizeTransportError(error.error, error.error.requestId, [this.apiKey]);
+          const bodyError = normalizeTransportError(error.error, error.error.requestId, [this.apiKey]);
+          if (timedOut || bodyError instanceof RunInfraTimeoutError) throw asTimeout(bodyError);
+          if (!canRetry || attempt >= maxRetries) throw bodyError;
+          waitMs = backoffDelayMs(attempt + 1, retryBaseMs);
+        } else if (error instanceof RunInfraError) {
+          // The API's own answer, or an error the injected fetch raised as the SDK's: final either way.
+          const raised = normalizeTransportError(error, error.requestId, [this.apiKey]);
+          throw raised instanceof RunInfraTimeoutError ? asTimeout(raised) : raised;
+        } else {
+          const transportError = normalizeTransportError(error, serverRequestId, [this.apiKey]);
+          if (timedOut || transportError instanceof RunInfraTimeoutError) throw asTimeout(transportError);
+          if (!canRetry || attempt >= maxRetries) throw transportError;
+          waitMs = backoffDelayMs(attempt + 1, retryBaseMs);
         }
-        if (error instanceof RunInfraError) throw normalizeTransportError(error, error.requestId, [this.apiKey]);
-        if (!canRetry || attempt >= maxRetries) throw normalizeTransportError(error, undefined, [this.apiKey]);
-        attempt += 1;
-        await sleep(retryDelayMs(attempt, retryBaseMs));
       } finally {
         clearTimeout(timeout);
       }
+      attempt += 1;
+      await sleep(waitMs);
     }
   }
 }
