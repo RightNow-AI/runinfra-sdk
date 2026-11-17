@@ -10679,6 +10679,65 @@ describe("RunInfra TypeScript SDK timeouts", () => {
     expect(error).toMatchObject({ requestId: "req_made_up_stalled_body" });
   });
 
+  it("names the request id it sent on a timeout while an open stream is read", async () => {
+    const firstRead = (stream: AsyncIterable<unknown>): Promise<unknown> =>
+      settled(stream[Symbol.asyncIterator]().next());
+
+    vi.useFakeTimers();
+    try {
+      // The headers arrive and the stream opens; then no data comes.
+      const fetcher = vi.fn().mockImplementation(async () =>
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream", "x-request-id": "req_made_up_stalled_stream" },
+        }));
+      const client = madeUpClient(fetcher, { timeoutMs: 1_000 });
+
+      const chat = firstRead(
+        await client.chat.completions.create(
+          { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, stream: true },
+          { clientRequestId: "client-made-up-05" },
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+      const chatError = await chat;
+      expect(chatError).toBeInstanceOf(RunInfraTimeoutError);
+      // The response had begun, so the server's request id is known as well.
+      expect(chatError).toMatchObject({ requestId: "req_made_up_stalled_stream", clientRequestId: "client-made-up-05" });
+
+      // With no id from the caller, the error names the one the SDK generated and sent.
+      const responses = firstRead(await client.responses.create({ model: MADE_UP_MODEL, input: "Hi", stream: true }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      const responsesError = await responses;
+      const sentId = sentHeader(fetcher.mock.calls[1]?.[1] as RequestInit, "X-Client-Request-Id");
+      expect(sentId).toBeTruthy();
+      expect(responsesError).toBeInstanceOf(RunInfraTimeoutError);
+      expect((responsesError as RunInfraError).clientRequestId).toBe(sentId);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The runtime's fetch giving up on the body of an open stream is a timeout that names it too.
+    const cutByRuntime = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(runtimeFetchFailure("terminated", "BodyTimeoutError", "UND_ERR_BODY_TIMEOUT"));
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    );
+    const runtimeError = await firstRead(
+      await madeUpClient(cutByRuntime).chat.completions.create(
+        { model: MADE_UP_MODEL, messages: MADE_UP_MESSAGES, stream: true },
+        { clientRequestId: "client-made-up-06" },
+      ),
+    );
+    expect(runtimeError).toBeInstanceOf(RunInfraTimeoutError);
+    expect(runtimeError).toMatchObject({ clientRequestId: "client-made-up-06" });
+  });
+
   it("still sends a call again after the runtime fetch fails to connect: nothing was sent", async () => {
     const fetcher = vi.fn().mockImplementation(async () => {
       throw runtimeFetchFailure("fetch failed", "ConnectTimeoutError", "UND_ERR_CONNECT_TIMEOUT");
@@ -10743,6 +10802,47 @@ describe("RunInfra TypeScript SDK retry rule", () => {
       await expect(madeUpClient(fetcher, { maxRetries: 0 }).models.list()).rejects.toMatchObject({ retryAfterMs: 2_000 });
     },
   );
+
+  it("reads a Retry-After or Retry-After-Ms with more digits than a number can hold as no wait named: its own backoff applies", async () => {
+    // Made up: 400 digits, more than a number can hold, so it reads as infinity.
+    const tooManyDigits = "9".repeat(400);
+    for (const headers of [
+      { "Retry-After": tooManyDigits },
+      { "Retry-After-Ms": tooManyDigits },
+      { "Retry-After-Ms": tooManyDigits, "Retry-After": tooManyDigits },
+    ] as Array<Record<string, string>>) {
+      // The error carries no wait.
+      const raised = vi.fn().mockImplementation(async () => busyResponse(503, headers));
+      const error = (await settled(madeUpClient(raised, { maxRetries: 0 }).models.list())) as RunInfraError;
+      expect(error.status).toBe(503);
+      expect(error.retryAfterMs).toBeUndefined();
+
+      // A call that is safe to send again sleeps the SDK's own backoff, then asks again.
+      vi.useFakeTimers();
+      const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+      try {
+        const fetcher = vi
+          .fn()
+          .mockImplementationOnce(async () => busyResponse(503, headers))
+          .mockResolvedValueOnce(jsonResponse(LISTED));
+        const pending = settled(madeUpClient(fetcher, { maxRetries: 1, retryBaseMs: 40 }).models.list());
+
+        await vi.advanceTimersByTimeAsync(39);
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        // Nothing was raised: the second answer was returned.
+        expect(await pending).toBeNull();
+      } finally {
+        randomSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    }
+
+    // A Retry-After-Ms that names no wait still falls back to a Retry-After that does.
+    const fallback = vi.fn().mockResolvedValue(busyResponse(503, { "Retry-After-Ms": tooManyDigits, "Retry-After": "2" }));
+    await expect(madeUpClient(fallback, { maxRetries: 0 }).models.list()).rejects.toMatchObject({ retryAfterMs: 2_000 });
+  });
 
   it("stops retrying when x-should-retry is false", async () => {
     const fetcher = vi.fn().mockImplementation(async () => busyResponse(503, { "x-should-retry": "false" }));

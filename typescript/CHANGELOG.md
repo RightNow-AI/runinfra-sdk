@@ -53,7 +53,8 @@ after a timeout.
   `RunInfraTimeoutError` where it used to throw `RunInfraConnectionError`, and
   the call is not sent again. A failure to connect is still a
   `RunInfraConnectionError`, and a call that is safe to send again is still
-  sent again after one.
+  sent again after one. A timeout while an open stream is read carries
+  `clientRequestId` too.
 - **The retry rule follows what the API says.** Which calls may be sent again
   has not changed: a `GET`, or a non-streamed chat, Responses or batch create
   call that carries an `idempotencyKey`. For those calls:
@@ -62,6 +63,9 @@ after a timeout.
     `true` allows the retry of a status that used not to be.
   - The wait is read from `Retry-After-Ms` first, then from `Retry-After`.
     Before, `Retry-After-Ms` was not read.
+  - A `Retry-After-Ms` or `Retry-After` with more digits than a number can
+    hold names no wait: the SDK's own backoff applies, and `retryAfterMs` stays
+    unset.
   - A wait above 60 seconds is raised at once, with the wait on the error.
     Before, the SDK slept a short backoff instead and sent the call again
     sooner than the API asked. On a batch route the line stays 5 seconds for a

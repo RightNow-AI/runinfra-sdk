@@ -282,7 +282,7 @@ thinking.
 
 ```python
 import json
-from typing import List
+from typing import List, Union
 
 from runinfra import ChatMessage, ChatToolMessage
 
@@ -294,7 +294,7 @@ tools = [{
         "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
     },
 }]
-messages: List[ChatMessage] = [{"role": "user", "content": "What is the weather in Paris?"}]
+messages: List[Union[ChatMessage, ChatToolMessage]] = [{"role": "user", "content": "What is the weather in Paris?"}]
 
 first = client.chat.completions.create(model="your-deployed-model-id", messages=messages, tools=tools)
 asked = first["choices"][0]["message"]

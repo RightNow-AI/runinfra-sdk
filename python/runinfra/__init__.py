@@ -737,6 +737,9 @@ class RunInfraStream:
         self._sensitive_values = tuple(sensitive_values)
         # The response, when its body is one JSON object instead of an event stream. Set by the client.
         self._answered_with_json: Optional[RunInfraResponse] = None
+        # The X-Client-Request-Id the SDK sent with the call. A timeout while the stream is read names it. Set by
+        # the client.
+        self._client_request_id: Optional[str] = None
 
     def __iter__(self) -> Iterator[JsonDict]:
         buffer = ""
@@ -849,6 +852,10 @@ class RunInfraStream:
             if callable(close_chunks):
                 close_chunks()
         if error_to_raise is not None:
+            if isinstance(error_to_raise, RunInfraTimeoutError) and self._client_request_id is not None:
+                # A timeout while the stream is read names the request id the SDK sent, as a timeout before the
+                # stream opened does.
+                error_to_raise.client_request_id = self._client_request_id
             raise error_to_raise
 
 
@@ -1028,7 +1035,9 @@ def _retry_after_header_seconds(response: RunInfraResponse) -> Optional[float]:
         return None
     value = value.strip()
     if re.fullmatch(r"[0-9]+", value):
-        return float(value)
+        seconds = float(value)
+        # More digits than a float holds reads as infinity. That names no wait: the SDK's own backoff applies.
+        return seconds if math.isfinite(seconds) else None
     if re.match(r"^(?:[+-]|\d)", value):
         return None
     try:
@@ -2079,9 +2088,17 @@ def _stream_answered_with_json(headers: Mapping[str, str]) -> bool:
     return _idempotent_replay_from_headers(headers)
 
 
-def _stream_response(response: RunInfraResponse, sensitive_values: Iterable[str] = ()) -> RunInfraStream:
-    """The stream of a successful answer to a streamed call."""
+def _stream_response(
+    response: RunInfraResponse,
+    sensitive_values: Iterable[str] = (),
+    client_request_id: Optional[str] = None,
+) -> RunInfraStream:
+    """The stream of a successful answer to a streamed call.
+
+    `client_request_id` is the X-Client-Request-Id the SDK sent with the call.
+    """
     stream = RunInfraStream(response.body, _request_id_from_headers(response.headers), sensitive_values)
+    stream._client_request_id = client_request_id
     if _stream_answered_with_json(response.headers):
         stream._answered_with_json = response
     return stream
@@ -2204,12 +2221,15 @@ class _Requester:
         request_options: Optional[Mapping[str, Any]] = None,
         batch: bool = False,
         minimum_default_timeout_seconds: Optional[float] = None,
+        sent_client_request_ids: Optional[List[str]] = None,
     ) -> RunInfraResponse:
         # `batch` marks a batch route: its refusals keep the gateway's reason on
         # the typed error. A 409 is a final answer that is never retried, and a
         # 503 that asks for a wait above five seconds is raised at once.
         # `minimum_default_timeout_seconds` is the smallest timeout the call
-        # uses when the caller names none for it.
+        # uses when the caller names none for it. `sent_client_request_ids`,
+        # when a list is given, receives the X-Client-Request-Id the SDK sends
+        # with the call.
         #
         # A call is sent again only when it is safe to: a GET, or a JSON POST
         # that is marked replay-safe, is not streamed and carries an
@@ -2287,6 +2307,8 @@ class _Requester:
             has_idempotency_key and has_replayable_json_body
         )
         sent_client_request_id = request_headers["X-Client-Request-Id"]
+        if sent_client_request_ids is not None:
+            sent_client_request_ids.append(sent_client_request_id)
         while True:
             error_to_raise: Optional[RunInfraError] = None
             may_send_again = False
@@ -2611,15 +2633,17 @@ class _ChatCompletions:
         )
         _validate_chat_messages(payload.get("messages"))
         is_stream = payload.get("stream") is True
+        sent_client_request_ids: List[str] = []
         response = self._requester.request(
             "/chat/completions",
             json_payload=payload,
             stream=is_stream,
             idempotent_replay_safe=True,
             request_options=request_options,
+            sent_client_request_ids=sent_client_request_ids,
         )
         if is_stream:
-            return _stream_response(response, [self._requester.api_key])
+            return _stream_response(response, [self._requester.api_key], sent_client_request_ids[0])
         return _json_response(response, [self._requester.api_key])
 
 
@@ -2724,15 +2748,17 @@ class _Responses:
         )
         _validate_responses_input(payload.get("input"))
         is_stream = payload.get("stream") is True
+        sent_client_request_ids: List[str] = []
         response = self._requester.request(
             "/responses",
             json_payload=payload,
             stream=is_stream,
             idempotent_replay_safe=True,
             request_options=request_options,
+            sent_client_request_ids=sent_client_request_ids,
         )
         if is_stream:
-            return _stream_response(response, [self._requester.api_key])
+            return _stream_response(response, [self._requester.api_key], sent_client_request_ids[0])
         return _json_response(response, [self._requester.api_key])
 
 

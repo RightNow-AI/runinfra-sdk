@@ -56,7 +56,7 @@ response = client.chat.completions.create(
 print(response["choices"][0]["message"]["content"])
 ```
 
-The same key works at `https://api.rightnowai.co/v1` through the base URL option (`baseURL` in TypeScript, `base_url` in Python).
+The same key also works at `https://api.rightnowai.co/v1` through the base URL option (`baseURL` in TypeScript, `base_url` in Python) for these calls: `POST /v1/chat/completions`, `POST /v1/responses`, `POST /v1/messages`, `GET /v1/models`, `GET /v1/credits`, and `POST /v1/decisions`. Keep the default host for every other call.
 
 ## Packages
 

@@ -5384,6 +5384,44 @@ class RunInfraPythonSdkTimeoutTest(unittest.TestCase):
         self.assertEqual(raised.exception.request_id, "req_made_up_open_body")
         self.assertEqual(raised.exception.client_request_id, sent_header(transport.calls[0], "X-Client-Request-Id"))
 
+    def test_a_timeout_while_an_open_stream_is_read_names_the_request_id_the_sdk_sent(self):
+        def stalled_stream():
+            # The headers arrive, the stream opens and one event comes; then the read runs out of time.
+            def chunks():
+                yield chat_delta("One").encode("utf-8")
+                raise TimeoutError("timed out")
+
+            return RunInfraResponse(
+                200,
+                {"content-type": "text/event-stream", "x-request-id": "req_made_up_stalled_stream"},
+                chunks(),
+            )
+
+        transport = RecordingTransport(stalled_stream(), stalled_stream())
+        client = made_up_client(transport)
+
+        events, error = drain(
+            client.chat.completions.create(
+                model=MADE_UP_MODEL,
+                messages=MADE_UP_MESSAGES,
+                stream=True,
+                request_options={"client_request_id": "client-made-up-05"},
+            )
+        )
+        self.assertEqual(delta_texts(events), ["One"])
+        self.assertIsInstance(error, RunInfraTimeoutError)
+        # The response had begun, so the server's request id is known as well.
+        self.assertEqual(error.request_id, "req_made_up_stalled_stream")
+        self.assertEqual(error.client_request_id, "client-made-up-05")
+
+        # With no id from the caller, the error names the one the SDK generated and sent.
+        events, error = drain(client.responses.create(model=MADE_UP_MODEL, input="Hi", stream=True))
+        sent_id = sent_header(transport.calls[1], "X-Client-Request-Id")
+        self.assertTrue(sent_id)
+        self.assertEqual(len(events), 1)
+        self.assertIsInstance(error, RunInfraTimeoutError)
+        self.assertEqual(error.client_request_id, sent_id)
+
     def test_readme_documents_the_default_timeouts_and_the_no_resend_rule(self):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
 
@@ -5420,6 +5458,36 @@ class RunInfraPythonSdkRetryRuleTest(unittest.TestCase):
                 with self.assertRaises(RunInfraError) as raised:
                     made_up_client(transport, max_retries=0).models.list()
                 self.assertEqual(raised.exception.retry_after_seconds, 2.0)
+
+    def test_a_retry_after_with_more_digits_than_a_number_can_hold_names_no_wait_and_the_sdks_own_backoff_applies(self):
+        # Made up: 400 digits, more than a float can hold, so it reads as infinity.
+        too_many_digits = "9" * 400
+        for headers in (
+            {"Retry-After": too_many_digits},
+            {"Retry-After-Ms": too_many_digits},
+            {"Retry-After-Ms": too_many_digits, "Retry-After": too_many_digits},
+        ):
+            with self.subTest(headers=sorted(headers)):
+                # The error carries no wait.
+                raised_transport = RecordingTransport(busy_response(503, headers))
+                with self.assertRaises(RunInfraError) as raised:
+                    made_up_client(raised_transport, max_retries=0).models.list()
+                self.assertEqual(raised.exception.status, 503)
+                self.assertIsNone(raised.exception.retry_after_seconds)
+
+                # A call that is safe to send again sleeps the SDK's own backoff, then asks again.
+                transport = RecordingTransport(busy_response(503, headers), json_response(LISTED))
+                with patch("runinfra.time.sleep") as sleep, patch("runinfra.random.random", return_value=0.0):
+                    answer = made_up_client(transport, max_retries=1, retry_base_seconds=0.04).models.list()
+                self.assertEqual(answer["data"], [])
+                self.assertEqual(len(transport.calls), 2)
+                sleep.assert_called_once_with(0.04)
+
+        # A Retry-After-Ms that names no wait still falls back to a Retry-After that does.
+        fallback = RecordingTransport(busy_response(503, {"Retry-After-Ms": too_many_digits, "Retry-After": "2"}))
+        with self.assertRaises(RunInfraError) as raised:
+            made_up_client(fallback, max_retries=0).models.list()
+        self.assertEqual(raised.exception.retry_after_seconds, 2.0)
 
     def test_x_should_retry_false_stops_a_retry(self):
         transport = RecordingTransport(
@@ -5774,7 +5842,8 @@ class RunInfraPythonSdkChatFieldsAndToolCallsTest(unittest.TestCase):
         }
         transport = RecordingTransport(json_response(first_answer), json_response(second_answer))
         client = made_up_client(transport)
-        messages: List[ChatMessage] = [{"role": "user", "content": "What is the weather in Paris?"}]
+        # The list holds the tool's answer too, so its annotation names both shapes, as the README's example does.
+        messages: List[Union[ChatMessage, ChatToolMessage]] = [{"role": "user", "content": "What is the weather in Paris?"}]
 
         first: ChatCompletionResponse = client.chat.completions.create(model=MADE_UP_MODEL, messages=messages, tools=[WEATHER_TOOL])
         choice: ChatCompletionChoice = first["choices"][0]

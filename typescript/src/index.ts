@@ -1363,12 +1363,20 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
   readonly requestId?: string;
   private readonly readTimeoutMs?: number;
   private readonly sensitiveValues: readonly string[];
+  /** The `X-Client-Request-Id` the SDK sent with the call. A timeout while the stream is read names it. */
+  private readonly clientRequestId?: string;
 
-  constructor(response: Response, readTimeoutMs?: number, sensitiveValues: readonly string[] = []) {
+  constructor(
+    response: Response,
+    readTimeoutMs?: number,
+    sensitiveValues: readonly string[] = [],
+    clientRequestId?: string,
+  ) {
     this.response = response;
     this.requestId = response.headers.get("x-request-id") ?? undefined;
     this.readTimeoutMs = readTimeoutMs;
     this.sensitiveValues = sensitiveValues;
+    this.clientRequestId = clientRequestId;
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<TEvent> {
@@ -1491,7 +1499,11 @@ export class RunInfraStream<TEvent extends Record<string, unknown> = Record<stri
       // The body is over. Without the end marker the answer was cut short, whatever the HTTP status said.
       if (!completed) throw new RunInfraStreamIncompleteError(undefined, this.requestId);
     } catch (error) {
-      throw normalizeTransportError(error, this.requestId, this.sensitiveValues);
+      const failure = normalizeTransportError(error, this.requestId, this.sensitiveValues);
+      // A timeout while the stream is read names the request id the SDK sent, as a timeout before the stream opened does.
+      throw failure instanceof RunInfraTimeoutError
+        ? withErrorFacts(failure, { clientRequestId: this.clientRequestId })
+        : failure;
     } finally {
       if (!readerDone) {
         try {
@@ -2926,8 +2938,9 @@ export class RunInfra {
     requestOptions?: RunInfraRequestOptions,
   ): Promise<TResponse | RunInfraStream> {
     if (options.stream) {
-      const response = await this.rawRequest(path, options, requestOptions);
-      return new RunInfraStream(response, this.requestTimeoutMs(requestOptions, true), [this.apiKey]);
+      // The stream is handed the X-Client-Request-Id the SDK sent, so a timeout while it is read can name it.
+      return this.sendWithRetry(path, options, requestOptions, async (response, sensitiveValues, clientRequestId) =>
+        new RunInfraStream(response, this.requestTimeoutMs(requestOptions, true), sensitiveValues, clientRequestId));
     }
     return this.sendWithRetry(path, options, requestOptions, parseJsonResponse<TResponse>);
   }
@@ -2964,7 +2977,11 @@ export class RunInfra {
     path: string,
     options: RequestOptions,
     requestOptions: RunInfraRequestOptions = {},
-    consumeResponse: (response: Response, sensitiveValues: readonly string[]) => Promise<TResponse>,
+    consumeResponse: (
+      response: Response,
+      sensitiveValues: readonly string[],
+      clientRequestId: string,
+    ) => Promise<TResponse>,
   ): Promise<TResponse> {
     const validatedRequestOptions = validateRequestOptions(requestOptions);
     const clientRequestId = validateSdkIdentifierHeader(
@@ -3050,7 +3067,7 @@ export class RunInfra {
           signal: controller.signal,
         });
         serverRequestId = response.headers.get("x-request-id") ?? undefined;
-        if (response.ok) return await consumeResponse(response, [this.apiKey]);
+        if (response.ok) return await consumeResponse(response, [this.apiKey], clientRequestId);
         // The error body is read before the SDK decides anything: the API can say inside it whether asking again helps.
         const parsed = await parseErrorWithin(response, controller.signal);
         await discardResponseBody(response);
