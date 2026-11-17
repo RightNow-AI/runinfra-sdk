@@ -10,7 +10,7 @@ Requires Node.js 18 or newer.
 npm install @runinfra/sdk
 ```
 
-## Modality status (v0.2.0)
+## Modality status (v0.3.0)
 
 This SDK is in **beta**. The surfaces below have different verification levels:
 
@@ -23,7 +23,7 @@ This SDK is in **beta**. The surfaces below have different verification levels:
 | Audio (ASR) | `client.audio.transcriptions.create` | Preview. Available when the deployment exposes transcription. |
 | Webhooks | `client.webhooks.verifySignature`, `client.webhooks.constructEvent`, `verifyWebhookSignature`, `constructWebhookEvent` | Local verification helpers only; delivery management is outside the public SDK surface |
 | Voice pipeline | `client.voice.pipeline.create` | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |
-| Batch | `client.batches.create`, `client.batches.list`, `client.batches.retrieve`, `client.batches.cancel`, `verifyBatchDelivery` | Preview, from the release after 0.2.0. Batch jobs for models that offer batch, with signed webhook deliveries. |
+| Batch | `client.batches.create`, `client.batches.list`, `client.batches.retrieve`, `client.batches.cancel`, `verifyBatchDelivery` | Preview, from 0.3.0. Batch jobs for models that offer batch, with signed webhook deliveries. |
 
 The dashboard only shows snippets for operations the selected deployment
 supports. If a route is unsupported for a deployment, the SDK returns a typed
@@ -207,7 +207,7 @@ you want SDK read-timeout wrapping for a finite body.
 
 ## Batch jobs
 
-Preview, from the release after 0.2.0. A batch job takes a JSONL file of chat completion requests and posts each answer to your webhook address. A job has a window of 24 hours. Lines run when the model has spare capacity. A line the job has not run when its window ends is counted `expired` and is not charged. Batch needs a workspace-scoped key and a model that offers batch.
+Preview, from 0.3.0. A batch job takes a JSONL file of chat completion requests and posts each answer to your webhook address. A job has a window of 24 hours. Lines run when the model has spare capacity. A line the job has not run when its window ends is counted `expired` and is not charged. Batch needs a workspace-scoped key and a model that offers batch.
 
 ```ts
 const { batch } = await client.batches.create(
