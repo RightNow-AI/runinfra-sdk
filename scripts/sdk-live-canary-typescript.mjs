@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createHmac } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -582,7 +582,9 @@ const {
   RunInfraError,
   RunInfraStreamParseError,
   RunInfraTimeoutError,
+  WebhookVerificationError,
   constructWebhookEvent,
+  verifyBatchDelivery,
   verifyWebhookSignature,
 } = sdkModule;
 
@@ -2507,6 +2509,216 @@ await record("webhooks.construct_event.export", [], async () => {
   assertObject(event, "exported webhook event");
   assertString(event.type, "exported webhook event.type");
   return { eventType: event.type };
+});
+
+const batchCanaryId = "00000000-0000-4000-8000-0000000000f1";
+const batchCanaryRequest = {
+  model: "runinfra-local-batch-model",
+  input_url: "https://example.org/sdk-canary/input.jsonl",
+  destination: { type: "webhook", url: "https://example.org/sdk-canary/hook" },
+  max_cost_cents: 100,
+};
+
+function batchCanaryJob(state = "validating") {
+  return {
+    id: batchCanaryId,
+    model_slug: batchCanaryRequest.model,
+    batch_state: state,
+    pause_reason: null,
+    made_by: { kind: "key" },
+    lines_total: 0,
+    lines_invalid: 0,
+    succeeded: 0,
+    failed: 0,
+    expired: 0,
+    cancelled: 0,
+    undelivered: 0,
+    cost_microcents: 0,
+    max_cost_cents: batchCanaryRequest.max_cost_cents,
+    created_at: "2026-01-01T00:00:00.000Z",
+    started_at: null,
+    expires_at: "2026-01-02T00:00:00.000Z",
+    finished_at: null,
+    destination_type: "webhook",
+    notice: null,
+    key_id: null,
+    end_reason: null,
+    check_error: null,
+    name: null,
+  };
+}
+
+function assertBatchCanaryJob(job, label) {
+  assertObject(job, label);
+  if (job.id !== batchCanaryId) throw new Error(`${label} must be a JSON object with the local batch id`);
+  assertString(job.batch_state, `${label}.batch_state`);
+}
+
+function assertBatchCanaryCall(call, method, pathSuffix, label) {
+  if (call.method !== method) throw new Error(`${label} expected ${method}, got ${call.method}`);
+  if (!call.url.endsWith(pathSuffix)) throw new Error(`${label} called an unexpected path`);
+}
+
+await record("batches.create.local", [], async () => {
+  const row = "batches.create.local";
+  const { client: local, calls } = localRetryClient([
+    localRetryFailure("req-local-batch-create-first"),
+    localRetryJsonResponse({ batch: batchCanaryJob() }, 200, "req-local-batch-create-second"),
+  ]);
+  const response = await local.batches.create(
+    batchCanaryRequest,
+    { idempotencyKey: "idem-local-batch-create", maxRetries: 1, retryBaseMs: 0 },
+  );
+  for (const call of calls) assertBatchCanaryCall(call, "POST", "/batches", row);
+  assertIdempotencyHeader(calls, "idem-local-batch-create", row);
+  if (calls[0].body !== calls[1].body || JSON.parse(calls[0].body).input_url !== batchCanaryRequest.input_url) {
+    throw new Error(`${row} retried with a different body`);
+  }
+  assertBatchCanaryJob(response.batch, `${row} batch`);
+  assertRequestId(response._request_id, row);
+  return {
+    ...assertRetryCallCount(calls, 2, row),
+    requestId: response._request_id,
+    idempotencyHeader: "present",
+    batchState: response.batch.batch_state,
+  };
+});
+
+await record("batches.list.local", [], async () => {
+  const row = "batches.list.local";
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse({ batches: [batchCanaryJob("running")], next_cursor: null }, 200, "req-local-batch-list"),
+  ]);
+  const response = await local.batches.list({ limit: 1, state: "running" });
+  assertBatchCanaryCall(calls[0], "GET", "/batches?limit=1&state=running", row);
+  assertArray(response.batches, `${row} batches`);
+  assertBatchCanaryJob(response.batches[0], `${row} batches[0]`);
+  if (response.next_cursor !== null) throw new Error(`${row} expected a null next_cursor`);
+  assertRequestId(response._request_id, row);
+  return { ...assertRetryCallCount(calls, 1, row), requestId: response._request_id, itemCount: response.batches.length };
+});
+
+await record("batches.retrieve.local", [], async () => {
+  const row = "batches.retrieve.local";
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse(
+      { batch: { ...batchCanaryJob("checked"), errors: [{ code: "invalid_request", count: 1, first_lines: [2] }], quote: null } },
+      200,
+      "req-local-batch-retrieve",
+    ),
+  ]);
+  const response = await local.batches.retrieve(batchCanaryId);
+  assertBatchCanaryCall(calls[0], "GET", `/batches/${batchCanaryId}`, row);
+  assertBatchCanaryJob(response.batch, `${row} batch`);
+  assertArray(response.batch.errors, `${row} batch.errors`);
+  assertRequestId(response._request_id, row);
+  return {
+    ...assertRetryCallCount(calls, 1, row),
+    requestId: response._request_id,
+    batchState: response.batch.batch_state,
+    checkErrorCodes: response.batch.errors.length,
+  };
+});
+
+await record("batches.cancel.local", [], async () => {
+  const row = "batches.cancel.local";
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse({ batch_id: batchCanaryId, batch_state: "cancelled" }, 200, "req-local-batch-cancel"),
+  ]);
+  const response = await local.batches.cancel(batchCanaryId);
+  assertBatchCanaryCall(calls[0], "POST", `/batches/${batchCanaryId}/cancel`, row);
+  if (calls[0].body !== undefined) throw new Error(`${row} must send no body`);
+  if (response.batch_id !== batchCanaryId || response.batch_state !== "cancelled") {
+    throw new Error(`${row} must be a JSON object with the cancelled batch`);
+  }
+  assertRequestId(response._request_id, row);
+
+  // A cancel is sent once, also when an idempotency key and retries are asked for.
+  const { client: busy, calls: busyCalls } = localRetryClient([localRetryFailure("req-local-batch-cancel-busy")]);
+  try {
+    await busy.batches.cancel(batchCanaryId, { idempotencyKey: "idem-local-batch-cancel", maxRetries: 1, retryBaseMs: 0 });
+  } catch (error) {
+    return {
+      ...assertRetryableError(error, row),
+      ...assertRetryCallCount(calls, 1, row),
+      requestId: response._request_id,
+      batchState: response.batch_state,
+      noRetryAttempts: assertRetryCallCount(busyCalls, 1, row).attempts,
+    };
+  }
+  throw new Error("batch cancel unexpectedly retried into success");
+});
+
+await record("batches.refusal.local", [], async () => {
+  const row = "batches.refusal.local";
+  const { client: local, calls } = localRetryClient([
+    localRetryJsonResponse(
+      {
+        error: {
+          reason: "partner",
+          message: "local batch refusal probe",
+          type: "invalid_request_error",
+          param: null,
+          code: "flex_not_available",
+        },
+      },
+      409,
+      "req-local-batch-refusal",
+      { "Retry-After": "2" },
+    ),
+  ]);
+  try {
+    await local.batches.create(batchCanaryRequest, { idempotencyKey: "idem-local-batch-refusal", maxRetries: 1, retryBaseMs: 0 });
+  } catch (error) {
+    if (!(error instanceof RunInfraError) || error.status !== 409 || error.type !== "invalid_request_error") {
+      throw new Error(`${row} refusal mapped unexpectedly: ${error?.status ?? error?.name ?? typeof error}`);
+    }
+    if (error.code !== "flex_not_available" || error.reason !== "partner" || error.retryAfterMs !== 2000) {
+      throw new Error(`${row} refusal lost its code, reason, or Retry-After`);
+    }
+    assertRequestId(error.requestId, row);
+    // A 409 on a batch route is a final refusal: one call, whatever the retry options say.
+    return {
+      ...assertRetryCallCount(calls, 1, row),
+      errorStatus: error.status,
+      errorType: error.type,
+      errorCode: error.code,
+      errorReason: error.reason,
+      retryAfterMs: error.retryAfterMs,
+      requestId: error.requestId,
+    };
+  }
+  throw new Error("local batch refusal unexpectedly succeeded");
+});
+
+await record("batches.verify_delivery.export", [], async () => {
+  const row = "batches.verify_delivery.export";
+  // A throwaway key made for this run. The secret a receiver configures is the prefix plus the key's base64.
+  const key = randomBytes(32);
+  const secret = `whsec_${key.toString("base64")}`;
+  const id = "bdt_0123456789abcdef0123456789abcdef";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const payload = JSON.stringify({ id, test: true, value: "sdk-canary-echo" });
+  const signature = createHmac("sha256", key).update(`${id}.${timestamp}.${payload}`).digest("base64");
+  const headers = {
+    "Webhook-Id": id,
+    "Webhook-Timestamp": String(timestamp),
+    "Webhook-Signature": `v1,${signature}`,
+  };
+  // Signed a moment ago, so it is inside the helper's default timestamp tolerance.
+  const delivery = verifyBatchDelivery({ payload, headers, secret });
+  if (delivery.test !== true || delivery.value !== "sdk-canary-echo") {
+    throw new Error(`${row} must be a JSON object with the test delivery's value`);
+  }
+  try {
+    verifyBatchDelivery({ payload: payload.replace("echo", "echO"), headers, secret });
+  } catch (error) {
+    if (!(error instanceof WebhookVerificationError)) {
+      throw new Error(`${row} expected WebhookVerificationError, got ${error?.name ?? typeof error}`);
+    }
+    return { verified: true, deliveryKind: "test", changedBody: "rejected" };
+  }
+  throw new Error("changed batch delivery body unexpectedly verified");
 });
 
 await record("idempotency.replay.responses", () => {

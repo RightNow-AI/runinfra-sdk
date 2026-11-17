@@ -23,6 +23,7 @@ This SDK is in **beta**. The surfaces below have different verification levels:
 | Audio (ASR) | `client.audio.transcriptions.create` | Preview. Available when the deployment exposes transcription. |
 | Webhooks | `client.webhooks.verify_signature`, `client.webhooks.construct_event`, `verify_webhook_signature`, `construct_webhook_event` | Local verification helpers only; delivery management is outside the public SDK surface |
 | Voice pipeline | `client.voice.pipeline.create` | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |
+| Batch | `client.batches.create`, `client.batches.list`, `client.batches.retrieve`, `client.batches.cancel`, `verify_batch_delivery` | Preview, from the release after 0.2.0. Batch jobs for models that offer batch, with signed webhook deliveries. |
 
 The dashboard only shows snippets for operations the selected deployment
 supports. If a route is unsupported for a deployment, the SDK returns a typed
@@ -163,6 +164,10 @@ async def create_job(prompt: str, background_tasks: BackgroundTasks) -> dict[str
 - `audio.transcriptions.create()`
 - `images.generate()`
 - `voice.pipeline.create()`
+- `batches.create()`
+- `batches.list()`
+- `batches.retrieve(batch_id)`
+- `batches.cancel(batch_id)`
 
 ## OpenAI-compatible parameter scope
 
@@ -233,6 +238,90 @@ audio = client.audio.speech.create(
 )
 ```
 
+## Batch jobs
+
+Preview, from the release after 0.2.0. A batch job takes a JSONL file of chat completion requests and posts each answer to your webhook address. A job has a window of 24 hours. Lines run when the model has spare capacity. A line the job has not run when its window ends is counted `expired` and is not charged. Batch needs a workspace-scoped key and a model that offers batch.
+
+```python
+created = client.batches.create(
+    model="deepseek-v4-1-flash-1017",
+    input_url="https://example.org/batch/input.jsonl",
+    destination={"type": "webhook", "url": "https://example.org/batch/answers"},
+    max_cost_cents=100,
+    window_hours=24,
+    name="nightly-evals",
+    request_options={"idempotency_key": "nightly-evals-2026-11-16"},
+)
+
+job = client.batches.retrieve(created["batch"]["id"])
+print(job["batch"]["batch_state"], job["batch"]["errors"], job["batch"]["cost_microcents"])
+```
+
+Sending the same create again with the same `idempotency_key` and the same body answers the earlier job as a normal success: no error and no second job. The same key with a different body is refused with `409`.
+
+- `model`, `input_url`, `destination`, and `max_cost_cents` are required. `max_cost_cents` is the most the job may cost, a whole number from 1 to 100,000,000. `window_hours` is 24, the only value and the default. `name` is a label of at most 64 characters.
+- `input_url` is a public HTTPS link on port 443, at most 8,192 bytes, to a JSONL file of at most 50 MiB whose host serves byte ranges (signed links from the common storage services do). A signed link must stay valid until the job's window ends. `destination.url` is a public HTTPS address on port 443.
+- Each line of the file is `{"custom_id": "...", "method": "POST", "url": "/v1/chat/completions", "body": {...}}`, at most 4 MiB. `custom_id` is unique in the file (1 to 512 characters) and `body` is a text-only, non-streaming chat completion body whose `model` is the job's model.
+- The job starts by itself. It is answered in `batch_state` `validating` and moves through `checked` and `queued` to `running`; `completed`, `expired`, `cancelled`, and `failed` are final, and `end_reason` says why. `batches.retrieve()` adds `errors` (the lines the file check refused, by code, with their first line numbers) and `quote`.
+- `failed` never includes an undelivered line, and once a job has ended the counts `succeeded`, `failed`, `expired`, `cancelled`, `undelivered`, and `lines_invalid` add up to `lines_total`.
+- `batches.list(limit=..., cursor=..., state=..., model=...)` answers `{"batches": [...], "next_cursor": ...}`, newest first; pass `next_cursor` as `cursor` for the next page. `batches.cancel(batch_id)` answers `{"batch_id": ..., "batch_state": ...}` with `cancelled` or `cancelling`.
+
+Before it answers, `batches.create()` posts a signed test delivery `{"id": "bdt_...", "test": true, "value": "..."}` to the destination address. The address passes only when it replies 2xx with a body that contains the posted `value`, within 20 seconds; otherwise the create is refused with `destination_unreachable`. Because of that test the call's default timeout is never below 30 seconds, whatever the client's `timeout_seconds`; a per-request `timeout_seconds` is used as given.
+
+`batches.create()` is sent once unless you pass `idempotency_key`. With a key, transient failures are retried with the same key and body. `batches.cancel()` is always sent once. A `409` from a batch route is a final refusal and is never retried. A `503` that asks for a wait above 5 seconds in `Retry-After` is raised at once with `retry_after_seconds` set, so a call never blocks on a long wait; a `503` that asks for 5 seconds or less is asked again by the retry rule.
+
+Every refusal of a batch route is a typed error that keeps the gateway's `code`, the `param` it names, `reason`, `retry_after_seconds` when the gateway sent `Retry-After`, and `request_id`:
+
+```python
+from runinfra import RunInfraError
+
+try:
+    client.batches.cancel(created["batch"]["id"])
+except RunInfraError as error:
+    if error.code == "batch_ended":
+        pass  # The job had already ended.
+    elif error.code == "flex_not_available":
+        print(error.reason)  # "model", "partner", or "price"
+    else:
+        raise
+```
+
+The refusal codes are `batch_not_open` (`503`: ask again after the wait the error carries), `invalid_request`, `not_found`, `model_not_sold`, `flex_not_available`, `url_not_public`, `link_expires_too_soon`, `destination_unreachable`, `needs_funds`, `key_spend_limit_reached`, `batch_ended`, and `batches_scope_violation`. `model_not_sold` is a `ModelNotFoundError`; an unknown batch id is a plain `RunInfraError` with status `404` and code `not_found`. A `402` on a batch route is an `InsufficientCreditsError`; read `code` to tell `needs_funds` (the account has never added funds) from `key_spend_limit_reached` (this API key reached its own monthly limit; raise the key's limit or use another key). A file that is refused when it is read, after the create answered, ends the job `failed` with `check_error` `url_not_public`, `link_expires_too_soon`, `file_too_large`, `link_changed`, or `link_not_supported`.
+
+### Verify batch deliveries
+
+Each answered line arrives at your address as one signed `POST`. Copy the workspace's batch signing secret from the dashboard and verify the exact raw body before you use it.
+
+```python
+import os
+
+from runinfra import verify_batch_delivery
+
+signing_secret = os.environ.get("RUNINFRA_BATCH_SIGNING_SECRET")
+if not signing_secret or not signing_secret.strip():
+    raise RuntimeError("Set RUNINFRA_BATCH_SIGNING_SECRET before verifying batch deliveries.")
+
+delivery = verify_batch_delivery(
+    payload=raw_body,
+    headers=request_headers,
+    secret=signing_secret,
+)
+
+if delivery["test"]:
+    # The create's test delivery: reply 2xx with a body that contains delivery["value"].
+    reply_status, reply_body = 200, delivery["value"]
+elif "error" in delivery:
+    print(delivery["custom_id"] or f"line {delivery['line']}", delivery["error"]["code"])
+    reply_status, reply_body = 204, ""
+else:
+    print(delivery["custom_id"], delivery["response"], delivery["cost"])
+    reply_status, reply_body = 204, ""
+```
+
+`verify_batch_delivery` takes the raw request body (`bytes` or `str`, never an object you parsed and serialized again) and the request's headers in any case. It checks `webhook-signature`, which is `v1,` followed by the base64 HMAC-SHA-256 of `<webhook-id>.<webhook-timestamp>.<raw body>`, in constant time. The secret is `whsec_` followed by base64, and the HMAC key is the decoded bytes, so any Standard Webhooks library verifies the same deliveries. By default the delivery's `webhook-timestamp` must be within 300 seconds of your clock, so a captured delivery cannot be replayed later. Pass a number as `tolerance_seconds` for another tolerance, or `tolerance_seconds=None` to turn the check off; `now` sets the clock in Unix seconds. A failed check raises `WebhookVerificationError`.
+
+The helper returns one of three typed shapes: `BatchTestDelivery` (`test` true), `BatchAnswerDelivery` with `custom_id`, `line`, `attempt`, the chat completion in `response`, `usage`, and `cost`, or `BatchErrorDelivery` with `error` for a line that failed after the job started. `id` is the same for the same line and attempt. Key your own writes on it. Any 2xx acknowledges a line. Each answered line is sent to the address once: if the address does not answer 2xx in time, the line is counted `undelivered`, it is not charged, and it is not sent again. So answer 2xx first and do slow work afterwards.
+
 ## Timeouts and retries
 
 ```python
@@ -298,7 +387,7 @@ When `idempotency_key` is provided, the SDK sends it as `Idempotency-Key`. Use a
 
 Successful JSON object responses include `_request_id` when the gateway returns `x-request-id`. Streaming responses expose the same value as `stream.request_id`, malformed stream frames raise `RunInfraStreamParseError` with that request id, and binary audio responses expose it as `audio.request_id`. Gateway errors expose `request_id`, `type`, and, when returned by the API, OpenAI-style `code` and `param` metadata such as `unsupported_parameter` and `dimensions`. Log the request id with production errors and customer support reports.
 
-The wheel ships `py.typed` so type checkers can inspect the package. Fixed-shape helpers expose `TypedDict` response contracts: `ModelListResponse`, `ModelObject`, `ResponsesCreateResponse`, `ChatCompletionResponse`, `EmbeddingResponse`, `TranscriptionResponse`, and `ImageGenerationResponse`. Stream-capable helpers are typed as either the JSON response contract or `RunInfraStream` when `stream=True`.
+The wheel ships `py.typed` so type checkers can inspect the package. Fixed-shape helpers expose `TypedDict` response contracts: `ModelListResponse`, `ModelObject`, `ResponsesCreateResponse`, `ChatCompletionResponse`, `EmbeddingResponse`, `TranscriptionResponse`, and `ImageGenerationResponse`. Batch helpers return `BatchCreateResponse`, `BatchRetrieveResponse`, `BatchListResponse`, and `BatchCancelResponse` around the typed `BatchJob`. Stream-capable helpers are typed as either the JSON response contract or `RunInfraStream` when `stream=True`.
 
 ## Webhook verification
 
