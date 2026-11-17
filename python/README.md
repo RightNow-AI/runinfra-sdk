@@ -10,7 +10,7 @@ Requires Python 3.9 or newer.
 pip install runinfra
 ```
 
-## Modality status (v0.2.0)
+## Modality status (v0.3.0)
 
 This SDK is in **beta**. The surfaces below have different verification levels:
 
@@ -23,7 +23,7 @@ This SDK is in **beta**. The surfaces below have different verification levels:
 | Audio (ASR) | `client.audio.transcriptions.create` | Preview. Available when the deployment exposes transcription. |
 | Webhooks | `client.webhooks.verify_signature`, `client.webhooks.construct_event`, `verify_webhook_signature`, `construct_webhook_event` | Local verification helpers only; delivery management is outside the public SDK surface |
 | Voice pipeline | `client.voice.pipeline.create` | Preview. Pipeline-scoped helper for co-located audio-to-response deployments. |
-| Batch | `client.batches.create`, `client.batches.list`, `client.batches.retrieve`, `client.batches.cancel`, `verify_batch_delivery` | Preview, from the release after 0.2.0. Batch jobs for models that offer batch, with signed webhook deliveries. |
+| Batch | `client.batches.create`, `client.batches.list`, `client.batches.retrieve`, `client.batches.cancel`, `verify_batch_delivery` | Preview, from 0.3.0. Batch jobs for models that offer batch, with signed webhook deliveries. |
 
 The dashboard only shows snippets for operations the selected deployment
 supports. If a route is unsupported for a deployment, the SDK returns a typed
@@ -112,7 +112,7 @@ RunInfra `/v1/responses` is a chat-completions compatibility adapter. The gatewa
 
 ## Async Python runtimes
 
-`RunInfra` is intentionally sync-only in v0.2.0 and uses Python's standard
+`RunInfra` is intentionally sync-only in v0.3.0 and uses Python's standard
 library HTTP stack. FastAPI, Starlette, Django ASGI, and other asyncio apps
 should run SDK calls in a worker thread, task queue, or background job so an
 inference request does not block the event loop. Do not instantiate an
@@ -240,7 +240,7 @@ audio = client.audio.speech.create(
 
 ## Batch jobs
 
-Preview, from the release after 0.2.0. A batch job takes a JSONL file of chat completion requests and posts each answer to your webhook address. A job has a window of 24 hours. Lines run when the model has spare capacity. A line the job has not run when its window ends is counted `expired` and is not charged. Batch needs a workspace-scoped key and a model that offers batch.
+Preview, from 0.3.0. A batch job takes a JSONL file of chat completion requests and posts each answer to your webhook address. A job has a window of 24 hours. Lines run when the model has spare capacity. A line the job has not run when its window ends is counted `expired` and is not charged. Batch needs a workspace-scoped key and a model that offers batch.
 
 ```python
 created = client.batches.create(
