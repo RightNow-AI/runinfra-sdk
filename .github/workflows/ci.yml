@@ -67,6 +67,7 @@ jobs:
         run: pnpm build
 
       - name: Test
+        if: ${{ matrix.node-version != 18 }}
         working-directory: typescript
         run: pnpm test
 

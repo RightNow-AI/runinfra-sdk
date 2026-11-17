@@ -3197,7 +3197,8 @@ class RunInfra:
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as { engines?: { node?: string } };
     const { evaluateWorkflowPolicy } = await import("../../scripts/workflow-policy.mjs");
-    const nodeLabel = "CI tests every supported Node major";
+    const nodeLabel = "CI builds and smoke-tests every supported Node major";
+    const unitTestSkipLabel = "CI skips only unit tests on Node 18";
     const pythonLabel = "CI tests every supported Python minor";
     const requiredContextsLabel = "CI preserves protected required status contexts";
     const validActionRevisionsLabel = "workflows avoid invalid action revisions";
@@ -3207,6 +3208,7 @@ class RunInfra:
     expect(packageJson.engines?.node).toBe(">=18 <25");
     const checks = evaluateWorkflowPolicy({ publish, ci, hasCustomCodeqlWorkflow: false });
     expect(checks.find((check) => check.label === nodeLabel)?.ok).toBe(true);
+    expect(checks.find((check) => check.label === unitTestSkipLabel)?.ok).toBe(true);
     expect(checks.find((check) => check.label === pythonLabel)?.ok).toBe(true);
     expect(checks.find((check) => check.label === requiredContextsLabel)?.ok).toBe(true);
     expect(checks.find((check) => check.label === validActionRevisionsLabel)?.ok).toBe(true);
@@ -3217,6 +3219,28 @@ class RunInfra:
     expect(withoutNode18).not.toBe(ci);
     expect(evaluateWorkflowPolicy({ publish, ci: withoutNode18, hasCustomCodeqlWorkflow: false })
       .find((check) => check.label === nodeLabel)?.ok).toBe(false);
+
+    const node18UnitTestCondition = "        if: ${{ matrix.node-version != 18 }}\n";
+    const withoutUnitTestCondition = ci.replace(node18UnitTestCondition, "");
+    expect(withoutUnitTestCondition).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withoutUnitTestCondition, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === unitTestSkipLabel)?.ok).toBe(false);
+
+    for (const stepName of ["Type-check", "Build", "Pack (sanity check)"]) {
+      const stepHeader = `      - name: ${stepName}\n`;
+      const withSkippedRuntimeCheck = ci.replace(stepHeader, `${stepHeader}${node18UnitTestCondition}`);
+      expect(withSkippedRuntimeCheck, stepName).not.toBe(ci);
+      expect(evaluateWorkflowPolicy({ publish, ci: withSkippedRuntimeCheck, hasCustomCodeqlWorkflow: false })
+        .find((check) => check.label === unitTestSkipLabel)?.ok, stepName).toBe(false);
+    }
+
+    const withNode20UnitTestSkip = ci.replace(
+      node18UnitTestCondition,
+      "        if: ${{ matrix.node-version != 20 }}\n",
+    );
+    expect(withNode20UnitTestSkip).not.toBe(ci);
+    expect(evaluateWorkflowPolicy({ publish, ci: withNode20UnitTestSkip, hasCustomCodeqlWorkflow: false })
+      .find((check) => check.label === unitTestSkipLabel)?.ok).toBe(false);
 
     const withoutPython39 = ci.replace(
       'python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]',
@@ -3280,7 +3304,17 @@ class RunInfra:
     const normalizedContributing = contributing.replace(/\r\n/gu, "\n");
 
     expect(pyproject).toContain('requires-python = ">=3.9"');
-    expect(pyproject).toContain('requires = ["setuptools==82.0.1"]');
+    // The whole [build-system] table, exactly: setuptools 84.1.0 builds on
+    // Python 3.10+ (every published artifact builds on 3.11); 3.9 keeps
+    // 82.0.1 because no fixed setuptools supports it. No other requirement
+    // may slip in beside these two.
+    expect(pyproject.replace(/\r\n/gu, "\n").match(/^\[build-system\]\n([\s\S]*?)\n\n/mu)?.[1]).toBe([
+      "requires = [",
+      "  \"setuptools==84.1.0; python_version >= '3.10'\",",
+      "  \"setuptools==82.0.1; python_version < '3.10'\",",
+      "]",
+      "build-backend = \"setuptools.build_meta\"",
+    ].join("\n"));
     expect(pyproject).not.toContain("setuptools>=");
     expect(requirements).toContain("typing_extensions==4.15.0");
     expect(requirements).not.toMatch(/^pytest(?:[<=>~!]|$)/mu);

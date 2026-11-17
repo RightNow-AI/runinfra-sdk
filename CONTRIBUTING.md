@@ -74,6 +74,8 @@ repo, so the PR title becomes the commit message — make it clean.
 
 ## Tests
 
+Unit tests need Node 20 or newer (Vitest 4). CI still type-checks, builds, packs and smoke-tests the package on Node 18.
+
 Both SDKs have unit tests that mock the HTTP layer:
 - TypeScript: `typescript/src/index.test.ts` — runs via `vitest`.
 - Python: `python/tests/test_runinfra_sdk.py` — runs via stdlib `unittest`.
