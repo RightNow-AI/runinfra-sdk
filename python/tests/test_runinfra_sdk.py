@@ -2939,7 +2939,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             def read(self):
                 raise OSError(f"body reader exposed {api_key}")
 
-        with patch("urllib.request.urlopen", return_value=FailingBodyResponse()):
+        with patch("runinfra._keepalive_urlopen", return_value=FailingBodyResponse()):
             client = RunInfra(
                 api_key=api_key,
                 transport=runinfra._default_transport(120),
@@ -3050,7 +3050,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             def read(self):
                 raise OSError("socket closed")
 
-        with patch("urllib.request.urlopen", return_value=FailingBodyResponse()):
+        with patch("runinfra._keepalive_urlopen", return_value=FailingBodyResponse()):
             client = RunInfra(
                 api_key="sk-ri-test",
                 transport=runinfra._default_transport(120),
@@ -3096,7 +3096,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         def fake_urlopen(_request, timeout=None):
             return responses.pop(0)
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen), patch("runinfra.time.sleep") as sleep:
+        with patch("runinfra._keepalive_urlopen", side_effect=fake_urlopen), patch("runinfra.time.sleep") as sleep:
             client = RunInfra(
                 api_key="sk-ri-test",
                 transport=runinfra._default_transport(120),
@@ -3142,7 +3142,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         def fake_urlopen(_request, timeout=None):
             return responses.pop(0)
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen), patch("runinfra.time.sleep") as sleep:
+        with patch("runinfra._keepalive_urlopen", side_effect=fake_urlopen), patch("runinfra.time.sleep") as sleep:
             client = RunInfra(
                 api_key="sk-ri-test",
                 transport=runinfra._default_transport(120),
@@ -3192,7 +3192,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         def fake_urlopen(_request, timeout=None):
             return responses.pop(0)
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen), patch("runinfra.time.sleep") as sleep:
+        with patch("runinfra._keepalive_urlopen", side_effect=fake_urlopen), patch("runinfra.time.sleep") as sleep:
             client = RunInfra(
                 api_key="sk-ri-test",
                 transport=runinfra._default_transport(120),
@@ -3221,7 +3221,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
             def read(self):
                 raise TimeoutError("body timed out")
 
-        with patch("urllib.request.urlopen", return_value=TimeoutBodyResponse()):
+        with patch("runinfra._keepalive_urlopen", return_value=TimeoutBodyResponse()):
             client = RunInfra(
                 api_key="sk-ri-test",
                 transport=runinfra._default_transport(120),
@@ -4087,7 +4087,7 @@ class RunInfraPythonSdkBatchTest(unittest.TestCase):
             seen.append(timeout)
             return Answer()
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("runinfra._keepalive_urlopen", side_effect=fake_urlopen):
             RunInfra(api_key=BATCH_TEST_API_KEY, timeout_seconds=5).batches.create(**BATCH_CREATE_REQUEST)
             RunInfra(api_key=BATCH_TEST_API_KEY).batches.create(**BATCH_CREATE_REQUEST)
             RunInfra(api_key=BATCH_TEST_API_KEY, timeout_seconds=5).batches.retrieve(BATCH_ID)
@@ -5253,7 +5253,7 @@ class RunInfraPythonSdkTimeoutTest(unittest.TestCase):
                 )
             return FakeHttpAnswer(body=json.dumps(LISTED).encode("utf-8"))
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("runinfra._keepalive_urlopen", side_effect=fake_urlopen):
             result = call(RunInfra(api_key=MADE_UP_API_KEY, **client_options))
             if isinstance(result, RunInfraStream):
                 list(result)
@@ -5355,7 +5355,7 @@ class RunInfraPythonSdkTimeoutTest(unittest.TestCase):
             opened.append(timeout)
             return FakeHttpAnswer(body=TimeoutError("body timed out"), headers={"x-request-id": "req_made_up_body"})
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen), patch("runinfra.time.sleep") as sleep:
+        with patch("runinfra._keepalive_urlopen", side_effect=fake_urlopen), patch("runinfra.time.sleep") as sleep:
             client = RunInfra(api_key=MADE_UP_API_KEY, max_retries=2, retry_base_seconds=0, timeout_seconds=1)
             with self.assertRaises(RunInfraTimeoutError) as raised:
                 client.models.list(request_options={"client_request_id": "client-made-up-02"})
@@ -6074,6 +6074,183 @@ class RunInfraPythonSdkPackageLinksTest(unittest.TestCase):
 
         self.assertEqual(readme.count("https://api.rightnowai.co/v1"), 1)
         self.assertEqual(inspect.signature(RunInfra.__init__).parameters["base_url"].default, "https://api.runinfra.ai/v1")
+
+
+class _KeepAliveServer:
+    """A local HTTP/1.1 server that records which client connection carried each request."""
+
+    def __init__(self):
+        import http.server
+        import threading
+
+        owner = self
+        self.requests = []
+        self.closed = threading.Event()
+        self.drop_second_request = False
+        self.close_after_answer = False
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_args):
+                pass
+
+            def setup(self):
+                super().setup()
+                self.served = 0
+
+            def answer(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length) if length else b""
+                self.served += 1
+                owner.requests.append((self.client_address[1], self.command, self.path, body, dict(self.headers)))
+                if owner.drop_second_request and self.served == 2:
+                    # The server ends the connection after reading the request and answers nothing.
+                    self.close_connection = True
+                    return
+                if self.path.endswith("/stream"):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    for line in (b"data: one\n\n", b"data: two\n\n"):
+                        self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+                    self.wfile.write(b"0\r\n\r\n")
+                    return
+                status = 404 if self.path.endswith("/missing") else 200
+                payload = json.dumps({"path": self.path}).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                if owner.close_after_answer:
+                    # Closed with no Connection: close header, as a server that ends an idle connection does.
+                    self.close_connection = True
+
+            do_GET = answer
+            do_POST = answer
+
+        class Server(http.server.ThreadingHTTPServer):
+            daemon_threads = True
+
+            def shutdown_request(self, request):
+                super().shutdown_request(request)
+                owner.closed.set()
+
+        self.server = Server(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def connections(self):
+        return len({port for port, *_rest in self.requests})
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class RunInfraPythonSdkKeepAliveTest(unittest.TestCase):
+    def setUp(self):
+        self.server = _KeepAliveServer()
+        self.addCleanup(self.server.stop)
+        self.addCleanup(runinfra._KEEPALIVE_POOL.close_idle)
+        self.transport = runinfra._default_transport(5)
+
+    def send(self, method, path, body=None, headers=None, stream=False):
+        return self.transport(runinfra.RunInfraRequest(
+            method=method,
+            url=f"{self.server.url}{path}",
+            headers={"Authorization": "Bearer made-up", **(headers or {})},
+            body=body,
+            stream=stream,
+        ))
+
+    def test_calls_in_a_row_share_one_connection(self):
+        for _ in range(3):
+            self.assertEqual(self.send("GET", "/v1/models").status, 200)
+        self.assertEqual(self.send("POST", "/v1/chat/completions", body=b"{}", headers={"Content-Type": "application/json"}).status, 200)
+        self.assertEqual(self.server.connections(), 1)
+        _port, method, _path, body, headers = self.server.requests[-1]
+        self.assertEqual((method, body, headers["Content-Type"]), ("POST", b"{}", "application/json"))
+        self.assertEqual(headers["User-Agent"], f"Python-urllib/{runinfra.urllib.request.__version__}")
+
+    def test_an_error_status_is_answered_and_keeps_the_connection(self):
+        missing = self.send("GET", "/v1/missing")
+        self.assertEqual((missing.status, json.loads(missing.body)), (404, {"path": "/v1/missing"}))
+        self.assertEqual(self.send("GET", "/v1/models").status, 200)
+        self.assertEqual(self.server.connections(), 1)
+
+    def test_a_stream_read_to_its_end_gives_its_connection_back(self):
+        streamed = self.send("POST", "/v1/stream", body=b"{}", stream=True)
+        self.assertEqual(b"".join(streamed.body), b"data: one\n\ndata: two\n\n")
+        self.send("GET", "/v1/models")
+        self.assertEqual(self.server.connections(), 1)
+
+    def test_a_stream_left_unread_never_lends_its_connection(self):
+        streamed = self.send("POST", "/v1/stream", body=b"{}", stream=True)
+        lines = iter(streamed.body)
+        self.assertEqual(next(lines), b"data: one\n")
+        lines.close()
+        self.assertEqual(self.send("GET", "/v1/models").status, 200)
+        self.assertEqual(self.server.connections(), 2)
+
+    def test_a_connection_the_server_closed_while_idle_is_not_used(self):
+        self.server.close_after_answer = True
+        self.send("GET", "/v1/models")
+        self.assertTrue(self.server.closed.wait(5))
+        host = self.server.url[len("http://"):]
+        [idle] = [connections for key, connections in runinfra._KEEPALIVE_POOL._idle.items() if key[1] == host]
+        self.assertEqual(len(idle), 1)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and runinfra._connection_is_open(idle[0][0]):
+            time.sleep(0.01)
+        self.server.close_after_answer = False
+        # A POST with no Idempotency-Key is never sent twice, so it answers only if the closed connection was not used.
+        self.assertEqual(self.send("POST", "/v1/chat/completions", body=b"{}").status, 200)
+        self.assertEqual([method for _port, method, *_rest in self.server.requests], ["GET", "POST"])
+        self.assertEqual(self.server.connections(), 2)
+
+    def test_a_post_the_server_dropped_on_a_reused_connection_is_not_sent_again(self):
+        self.server.drop_second_request = True
+        self.send("GET", "/v1/models")
+        with self.assertRaises(Exception):
+            self.send("POST", "/v1/chat/completions", body=b"{}")
+        # The server read the request: without an Idempotency-Key it may have run it, so it is sent once.
+        self.assertEqual([method for _port, method, *_rest in self.server.requests], ["GET", "POST"])
+
+    def test_a_replayable_call_the_server_dropped_on_a_reused_connection_is_sent_once_more(self):
+        self.server.drop_second_request = True
+        self.send("GET", "/v1/models")
+        answered = self.send("POST", "/v1/chat/completions", body=b"{}", headers={"Idempotency-Key": "made-up-key"})
+        self.assertEqual(answered.status, 200)
+        self.assertEqual([method for _port, method, *_rest in self.server.requests], ["GET", "POST", "POST"])
+        self.assertEqual(self.server.connections(), 2)
+
+    def test_urllibs_own_opener_from_an_earlier_urlopen_keeps_the_pool(self):
+        with patch.object(runinfra.urllib.request, "_opener", runinfra.urllib.request.build_opener()):
+            for _ in range(2):
+                self.assertEqual(self.send("GET", "/v1/models").status, 200)
+        self.assertEqual(self.server.connections(), 1)
+
+    def test_an_opener_the_application_installed_carries_the_call(self):
+        opened = []
+        cookies = runinfra.urllib.request.HTTPCookieProcessor()
+        with patch.object(runinfra.urllib.request, "_opener", runinfra.urllib.request.build_opener(cookies)), \
+                patch("urllib.request.urlopen", side_effect=lambda request, timeout=None: opened.append(request.full_url) or FakeHttpAnswer()):
+            self.assertEqual(self.send("GET", "/v1/models").status, 200)
+        self.assertEqual(opened, [f"{self.server.url}/v1/models"])
+        self.assertEqual(self.server.requests, [])
+
+    def test_a_proxy_from_the_environment_goes_through_urllib(self):
+        opened = []
+        with patch.object(runinfra, "_URLLIB_PROXIES", {"http": "http://proxy.invalid:3128"}), \
+                patch("urllib.request.proxy_bypass", return_value=False), \
+                patch("urllib.request.urlopen", side_effect=lambda request, timeout=None: opened.append(request.full_url) or FakeHttpAnswer()):
+            self.assertEqual(self.send("GET", "/v1/models").status, 200)
+        self.assertEqual(opened, [f"{self.server.url}/v1/models"])
+        self.assertEqual(self.server.requests, [])
 
 
 if __name__ == "__main__":
