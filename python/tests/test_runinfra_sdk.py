@@ -819,7 +819,7 @@ class RunInfraPythonSdkTest(unittest.TestCase):
         readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
 
         self.assertIn("## Async Python runtimes", readme)
-        self.assertIn("`RunInfra` is intentionally sync-only in v0.3.1", readme)
+        self.assertIn("`RunInfra` is intentionally sync-only in v0.3.2", readme)
         self.assertIn("does not block the event loop", readme)
         self.assertIn("Do not instantiate an\n`AsyncRunInfra` client", readme)
 

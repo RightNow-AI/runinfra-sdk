@@ -67,7 +67,7 @@ The same key also works at `https://api.rightnowai.co/v1` through the base URL o
 
 See each package's own README + CHANGELOG for surface-level docs.
 
-## Modality status (v0.3.1)
+## Modality status (v0.3.2)
 
 | Surface | Status |
 |---|---|

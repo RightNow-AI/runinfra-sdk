@@ -3,6 +3,11 @@
 All notable changes to `@runinfra/sdk` are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-11-25
+
+No change to the TypeScript SDK. The version moves with the Python SDK, whose standard transport now keeps its
+connections open between calls.
+
 ## [0.3.1] - 2026-11-17
 
 Read "Changed" before you upgrade. A stream now throws where it used to end

@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Literal, Mappi
 JsonDict = Dict[str, Any]
 Transport = Callable[["RunInfraRequest"], "RunInfraResponse"]
 ResponseBody = Union[bytes, Iterable[bytes]]
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 # The longest wait the API may name (Retry-After-Ms, Retry-After) that the SDK
 # sleeps for before it asks again. A longer wait is raised at once, with the
 # wait on the error.

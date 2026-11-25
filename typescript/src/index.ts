@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const RUNINFRA_SDK_VERSION = "0.3.1";
+export const RUNINFRA_SDK_VERSION = "0.3.2";
 /**
  * The longest wait the API may name (`Retry-After-Ms`, `Retry-After`) that the
  * SDK sleeps for before it asks again. A longer wait is raised at once, with

@@ -3,6 +3,17 @@
 All notable changes to the `runinfra` Python SDK are documented here. This
 project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-11-25
+
+### Changed
+
+- The standard transport keeps its connections open between calls, one per host and thread, so a call no longer opens
+  a new TCP and TLS connection each time. `urllib.request.urlopen` still carries a call that goes through a proxy, an
+  opener the application installed, or a redirect.
+- A kept connection the server has closed is found before it is used. When a call on a kept connection fails anyway,
+  it is sent once more on a new connection only when no server can have run it: the request was not fully sent, or it
+  is a GET, HEAD or OPTIONS, or it carries an `Idempotency-Key`. Otherwise the error is raised as before.
+
 ## [0.3.1] - 2026-11-17
 
 Read "Changed" before you upgrade. A stream now raises where it used to end
