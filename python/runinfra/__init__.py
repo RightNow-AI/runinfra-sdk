@@ -5,9 +5,13 @@ import codecs
 import json
 import hashlib
 import hmac
+import http.client
 import math
+import os
 import random
 import re
+import select
+import threading
 import time
 import uuid
 import urllib.error
@@ -935,13 +939,283 @@ def _base_url_looks_pipeline_scoped(base_url: str) -> bool:
     return len(segments) > last_v1 + 1
 
 
+# Keep-alive for the standard-library transport. urllib.request.urlopen opens a new TCP and TLS connection for every
+# call; these keep a finished call's connection open so the next call to the same host reuses it.
+# A connection idle longer than this is closed rather than reused.
+_KEEPALIVE_MAX_IDLE_SECONDS = 30.0
+# The most idle connections kept for one host; a connection finished past it is closed.
+_KEEPALIVE_MAX_IDLE_PER_HOST = 8
+_KEEPALIVE_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_KEEPALIVE_REPLAYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _connection_is_open(connection: http.client.HTTPConnection) -> bool:
+    """False when the server has closed an idle connection: its socket then reads as ready (EOF)."""
+    sock = connection.sock
+    if sock is None:
+        return False
+    try:
+        readable, _, _ = select.select([sock], [], [], 0)
+    except (OSError, ValueError):
+        return False
+    return not readable
+
+
+class _KeepAlivePool:
+    """Idle connections by scheme and host, shared by every client of this process (thread safe)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._idle: Dict[Any, List[Any]] = {}
+        self._pid = os.getpid()
+
+    def _for_this_process(self) -> None:
+        # A forked child never shares its parent's sockets.
+        if self._pid != os.getpid():
+            self._idle = {}
+            self._pid = os.getpid()
+
+    def take(self, key: Any) -> Optional[http.client.HTTPConnection]:
+        with self._lock:
+            self._for_this_process()
+            idle = self._idle.get(key)
+            now = time.monotonic()
+            while idle:
+                connection, since = idle.pop()
+                if now - since <= _KEEPALIVE_MAX_IDLE_SECONDS and _connection_is_open(connection):
+                    return connection
+                connection.close()
+        return None
+
+    def put(self, key: Any, connection: http.client.HTTPConnection) -> None:
+        with self._lock:
+            self._for_this_process()
+            idle = self._idle.setdefault(key, [])
+            if len(idle) < _KEEPALIVE_MAX_IDLE_PER_HOST:
+                idle.append((connection, time.monotonic()))
+                return
+        connection.close()
+
+    def close_idle(self) -> None:
+        """Closes every idle connection."""
+        with self._lock:
+            idle, self._idle = self._idle, {}
+        for connections in idle.values():
+            for connection, _since in connections:
+                connection.close()
+
+
+_KEEPALIVE_POOL = _KeepAlivePool()
+
+
+class _PooledResponse:
+    """An http.client response that gives its connection back to the pool once its body is read to the end.
+
+    A body left unread, or a read that fails, closes the connection instead: it is never reused mid-response.
+    """
+
+    def __init__(self, key: Any, connection: http.client.HTTPConnection, response: http.client.HTTPResponse) -> None:
+        self._key = key
+        self._connection: Optional[http.client.HTTPConnection] = connection
+        self._response = response
+        self.status = response.status
+        self.reason = response.reason
+        self.headers = response.headers
+        self.msg = response.msg
+
+    def getcode(self) -> int:
+        return self.status
+
+    def read(self, amt: Optional[int] = None) -> bytes:
+        try:
+            data = self._response.read() if amt is None else self._response.read(amt)
+        except BaseException:
+            self._discard()
+            raise
+        if amt is None or not data:
+            self.close()
+        return data
+
+    def readline(self, limit: int = -1) -> bytes:
+        try:
+            line = self._response.readline(limit)
+        except BaseException:
+            self._discard()
+            raise
+        if not line:
+            self.close()
+        return line
+
+    def close(self) -> None:
+        connection, self._connection = self._connection, None
+        if connection is None:
+            return
+        # A response read to its end on a connection the server keeps open: the connection goes back to the pool.
+        if self._response.isclosed() and connection.sock is not None:
+            _KEEPALIVE_POOL.put(self._key, connection)
+            return
+        self._response.close()
+        connection.close()
+
+    def _discard(self) -> None:
+        connection, self._connection = self._connection, None
+        if connection is not None:
+            self._response.close()
+            connection.close()
+
+    def __enter__(self) -> "_PooledResponse":
+        return self
+
+    def __exit__(self, *_exc: Any) -> bool:
+        self.close()
+        return False
+
+
+_URLLIB_PROXIES: Optional[Dict[str, str]] = None
+# The handlers of the opener urlopen builds for itself (urllib.request.build_opener's defaults).
+_URLLIB_DEFAULT_HANDLER_TYPES = frozenset({
+    urllib.request.ProxyHandler,
+    urllib.request.UnknownHandler,
+    urllib.request.HTTPHandler,
+    urllib.request.HTTPDefaultErrorHandler,
+    urllib.request.HTTPRedirectHandler,
+    urllib.request.FTPHandler,
+    urllib.request.FileHandler,
+    urllib.request.HTTPErrorProcessor,
+    urllib.request.DataHandler,
+    urllib.request.HTTPSHandler,
+})
+
+
+def _urllib_urlopen(req: urllib.request.Request, timeout: float) -> Any:
+    """urllib.request.urlopen itself: proxies, an opener the application installed, redirects."""
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def _installed_opener_context(opener: Any) -> Any:
+    """The SSL context of an installed opener made of urllib's standard handlers only (None when it names none).
+
+    Raises LookupError for an opener with handlers of its own or proxies other than the environment's: urlopen then
+    carries the call. Python 3.13 and later give urlopen's own HTTPS handler a context, and an application's handler may
+    carry its own certificates: either way the pool connects with that context.
+    """
+    context = None
+    try:
+        handlers = list(opener.handlers)
+    except Exception:
+        raise LookupError("opener")
+    for handler in handlers:
+        if type(handler) not in _URLLIB_DEFAULT_HANDLER_TYPES:
+            raise LookupError("handler")
+        if isinstance(handler, urllib.request.ProxyHandler) and handler.proxies != urllib.request.getproxies():
+            raise LookupError("proxies")
+        if isinstance(handler, urllib.request.HTTPSHandler):
+            context = getattr(handler, "_context", None)
+    return context
+
+
+def _keepalive_route(req: urllib.request.Request) -> Optional[tuple]:
+    """None when urlopen itself must carry the call; else (the pool key, the SSL context to connect with)."""
+    global _URLLIB_PROXIES
+    if req.type not in ("http", "https"):
+        return None
+    context = None
+    installed = getattr(urllib.request, "_opener", None)
+    if installed is not None:
+        try:
+            context = _installed_opener_context(installed)
+        except LookupError:
+            return None
+    if _URLLIB_PROXIES is None:
+        # Read once, as urllib's own default opener reads them once.
+        _URLLIB_PROXIES = urllib.request.getproxies()
+    if _URLLIB_PROXIES.get(req.type) and not urllib.request.proxy_bypass(req.host):
+        return None
+    return (req.type, req.host.lower(), id(context) if context is not None else None), context
+
+
+def _keepalive_headers(req: urllib.request.Request) -> Dict[str, str]:
+    """The headers urllib would send, without its `Connection: close`."""
+    headers = dict(req.unredirected_hdrs)
+    headers.update({name: value for name, value in req.headers.items() if name not in headers})
+    if req.data is not None and "Content-type" not in headers:
+        headers["Content-type"] = "application/x-www-form-urlencoded"
+    if "User-agent" not in headers:
+        headers["User-agent"] = f"Python-urllib/{urllib.request.__version__}"
+    return {name.title(): value for name, value in headers.items()}
+
+
+def _keepalive_urlopen(req: urllib.request.Request, timeout: float) -> Any:
+    """urllib.request.urlopen, answered the same way, on a connection kept open between calls.
+
+    A 2xx answer is returned and any other status raises urllib.error.HTTPError, as urlopen does. A proxy, an
+    opener the application installed, or a redirect urlopen would follow goes through urlopen itself.
+
+    A reused connection the server has closed is detected before it is used. When one fails anyway, the call is sent
+    once more on a new connection only when no server can have run it: the request was not fully sent, or it is a GET,
+    HEAD or OPTIONS, or it carries an Idempotency-Key. Otherwise the error is raised as it would be without the pool.
+    """
+    route = _keepalive_route(req)
+    if route is None:
+        return _urllib_urlopen(req, timeout)
+    key, context = route
+    method = req.get_method()
+    headers = _keepalive_headers(req)
+    connection = _KEEPALIVE_POOL.take(key)
+    reused = connection is not None
+    while True:
+        if connection is None:
+            if req.type == "https":
+                connection = http.client.HTTPSConnection(req.host, timeout=timeout, context=context)
+            else:
+                connection = http.client.HTTPConnection(req.host, timeout=timeout)
+        else:
+            connection.timeout = timeout
+            if connection.sock is not None:
+                connection.sock.settimeout(timeout)
+        try:
+            connection.request(method, req.selector, req.data, headers)
+        except OSError as err:
+            connection.close()
+            if reused:
+                # A request not fully sent is never run: send it on a new connection.
+                connection, reused = None, False
+                continue
+            raise urllib.error.URLError(err)
+        except BaseException:
+            connection.close()
+            raise
+        try:
+            response = connection.getresponse()
+        except (http.client.RemoteDisconnected, ConnectionResetError, ConnectionAbortedError) as err:
+            connection.close()
+            if reused and (method in _KEEPALIVE_REPLAYABLE_METHODS or req.has_header("Idempotency-key")):
+                connection, reused = None, False
+                continue
+            raise err
+        except BaseException:
+            connection.close()
+            raise
+        break
+    pooled = _PooledResponse(key, connection, response)
+    if 200 <= response.status < 300:
+        return pooled
+    if response.status in _KEEPALIVE_REDIRECT_STATUSES and (
+        method in ("GET", "HEAD") or (method == "POST" and response.status in (301, 302, 303))
+    ):
+        pooled._discard()
+        return _urllib_urlopen(req, timeout)
+    raise urllib.error.HTTPError(req.full_url, response.status, response.reason, response.headers, pooled)
+
+
 def _default_transport(timeout: Optional[float] = None) -> Transport:
     """The standard-library transport.
 
     `timeout` is the client's own timeout. A request's own `timeout_seconds`
     wins over it. With neither, a non-streamed request is given 750 seconds and
     a streamed request 190 seconds; the timeout bounds the wait for the
-    response headers and each later read.
+    response headers and each later read. A finished call's connection is
+    kept open and reused by the next call to the same host.
     """
 
     def send(request: RunInfraRequest) -> RunInfraResponse:
@@ -952,7 +1226,7 @@ def _default_transport(timeout: Optional[float] = None) -> Transport:
             method=request.method,
         )
         try:
-            response = urllib.request.urlopen(
+            response = _keepalive_urlopen(
                 req,
                 timeout=request.timeout_seconds
                 or timeout

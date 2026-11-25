@@ -99,6 +99,19 @@ after a timeout.
   `ChatCompletionStreamChoice`, `ChatCompletionStreamDelta`, and
   `ChatCompletionStreamToolCallDelta` for a chat stream, whose delta types
   `tool_calls` and `reasoning`.
+- **Connections are kept open between calls.** The standard-library transport
+  used to open a new TCP and TLS connection for every call. A finished call's
+  connection now stays open (up to 8 per host, each idle for at most 30
+  seconds) and the next call to the same host reuses it, which saves the
+  connection setup on every call after the first: about 70 to 95 ms each from
+  the United States, more from farther away. A connection the server has
+  closed is never used. A call that fails on a reused connection is sent once
+  more on a new one only when no server can have run it: it was not fully
+  sent, or it is a `GET`, `HEAD` or `OPTIONS`, or it carries an
+  `Idempotency-Key`. A proxy from the environment, an opener installed with
+  `urllib.request.install_opener`, and redirects still go through
+  `urllib.request.urlopen` as before. A transport you pass yourself is
+  unchanged.
 
 ## [0.3.0] - 2026-11-16
 
