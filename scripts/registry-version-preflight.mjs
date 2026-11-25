@@ -42,6 +42,34 @@ export async function registryAvailabilityErrors(checks, packageExists = default
   return errors;
 }
 
+// npm lists a just-published version a few minutes after `npm publish` returns
+// (0.3.2: published 19:44:51Z, listed 19:47:28Z), so a check right after a
+// publish waits for the listing instead of failing a release that went out.
+export async function waitForRegistryAvailability(checks, {
+  attempts,
+  delayMs,
+  packageExists = defaultRegistryPackageExists,
+  sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms)),
+  log = (message) => console.log(message),
+}) {
+  let pending = checks;
+  let errors = [];
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const results = await Promise.all(pending.map(async (check) => ({
+      check,
+      errors: await registryAvailabilityErrors([check], packageExists),
+    })));
+    pending = results.filter((result) => result.errors.length).map((result) => result.check);
+    errors = results.flatMap((result) => result.errors);
+    if (!errors.length) return [];
+    if (attempt < attempts) {
+      log(`Registry version preflight attempt ${attempt}/${attempts} is waiting on ${pending.map(packageSpec).join(", ")}; checking again in ${delayMs}ms.`);
+      await sleep(delayMs);
+    }
+  }
+  return errors;
+}
+
 async function defaultRegistryPackageExists(url) {
   const response = await fetch(url, {
     headers: { accept: "application/json" },

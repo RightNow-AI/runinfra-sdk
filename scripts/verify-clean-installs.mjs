@@ -10,7 +10,7 @@ import {
   pythonRegistryInstallArgs,
   pythonRegistrySourceInstallArgs,
 } from "./clean-install-policy.mjs";
-import { registryAvailabilityErrors, registryVersionChecks } from "./registry-version-preflight.mjs";
+import { registryVersionChecks, waitForRegistryAvailability } from "./registry-version-preflight.mjs";
 import { findForbiddenContent } from "./secret-scan-policy.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,6 +26,16 @@ const registryInstallAttempts = parsePositiveInteger(
 const registryRetryDelayMs = parsePositiveInteger(
   optionValue("--registry-retry-delay-ms") ?? "10000",
   "--registry-retry-delay-ms",
+);
+// 30 checks 10 s apart: up to 5 minutes for a registry to list a version that
+// was just published (npm took about 2.5 minutes for 0.3.2).
+const registryPreflightAttempts = parsePositiveInteger(
+  optionValue("--registry-preflight-attempts") ?? "30",
+  "--registry-preflight-attempts",
+);
+const registryPreflightDelayMs = parsePositiveInteger(
+  optionValue("--registry-preflight-delay-ms") ?? "10000",
+  "--registry-preflight-delay-ms",
 );
 const maxCleanInstallCommandTimeoutMs = 3_600_000;
 const cleanInstallCommandTimeoutMs = parsePositiveInteger(
@@ -378,7 +388,10 @@ function verifyPython(workspace) {
 async function preflightRegistryAvailability() {
   if (mode !== "registry") return;
   const checks = registryVersionChecks(version, packageSelection);
-  const errors = await registryAvailabilityErrors(checks);
+  const errors = await waitForRegistryAvailability(checks, {
+    attempts: registryPreflightAttempts,
+    delayMs: registryPreflightDelayMs,
+  });
   if (errors.length) {
     fail(`Registry version preflight failed:\n${errors.join("\n")}`);
   }
