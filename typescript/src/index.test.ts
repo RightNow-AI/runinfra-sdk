@@ -697,6 +697,62 @@ describe("RunInfra TypeScript SDK", () => {
     expect(preflight.registryVersionChecks("0.1.4", "python").map((check) => check.label)).toEqual(["PyPI"]);
   });
 
+  it("waits for a just-published version to be listed before failing the registry preflight", async () => {
+    type Check = { label: string; packageName: string; version: string; url: string };
+    const preflight = await import("../../scripts/registry-version-preflight.mjs") as {
+      registryVersionChecks: (version: string, packageSelection: "both" | "typescript" | "python") => Check[];
+      waitForRegistryAvailability: (checks: Check[], options: {
+        attempts: number;
+        delayMs: number;
+        packageExists: (url: string) => Promise<boolean>;
+        sleep: (ms: number) => Promise<void>;
+        log: (message: string) => void;
+      }) => Promise<string[]>;
+    };
+    const checks = preflight.registryVersionChecks("0.3.2", "both");
+
+    // npm lists the version on the third look; PyPI already has it.
+    const looks: string[] = [];
+    const sleeps: number[] = [];
+    const logs: string[] = [];
+    let npmLooks = 0;
+    await expect(preflight.waitForRegistryAvailability(checks, {
+      attempts: 5,
+      delayMs: 7,
+      packageExists: async (url) => {
+        looks.push(url.includes("pypi") ? "PyPI" : "npm");
+        if (url.includes("pypi")) return true;
+        npmLooks += 1;
+        return npmLooks >= 3;
+      },
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      log: (message) => logs.push(message),
+    })).resolves.toEqual([]);
+    expect(looks).toEqual(["npm", "PyPI", "npm", "npm"]);
+    expect(sleeps).toEqual([7, 7]);
+    expect(logs[0]).toBe(
+      "Registry version preflight attempt 1/5 is waiting on @runinfra/sdk@0.3.2; checking again in 7ms.",
+    );
+
+    // A version that never appears fails after the last attempt, without a sleep after it.
+    const neverSleeps: number[] = [];
+    await expect(preflight.waitForRegistryAvailability(checks, {
+      attempts: 3,
+      delayMs: 1,
+      packageExists: async () => false,
+      sleep: async (ms) => {
+        neverSleeps.push(ms);
+      },
+      log: () => undefined,
+    })).resolves.toEqual([
+      "npm package @runinfra/sdk@0.3.2 is not available from the canonical registry.",
+      "PyPI package runinfra==0.3.2 is not available from the canonical registry.",
+    ]);
+    expect(neverSleeps).toEqual([1, 1]);
+  });
+
   it("fails the release gate on open high or critical GitHub code-scanning alerts", async () => {
     const alerts = [
       {
@@ -1798,6 +1854,8 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
         "1",
         "--registry-retry-delay-ms",
         "1",
+        "--registry-preflight-attempts",
+        "1",
       ], {
         cwd: new URL("..", import.meta.url),
         encoding: "utf8",
@@ -1806,6 +1864,7 @@ console.log(JSON.stringify({ blockingNumbers, blockingErrors, cleanErrors }));
       const output = `${result.stdout}${result.stderr}`;
       expect(result.status).toBe(1);
       expect(output).toContain("Registry version preflight failed:");
+      expect(output).not.toContain("checking again");
       expect(output).toContain(
         "npm package @runinfra/sdk@0.0.0-runinfra-missing is not available from the canonical registry.",
       );
