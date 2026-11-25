@@ -8,8 +8,8 @@ history, no workspace identifiers, and no operational secrets.
 
 | Registry | Package | Source dir | Source version |
 |---|---|---|---|
-| npm | `@runinfra/sdk` | `typescript/` | `0.3.1` |
-| PyPI | `runinfra` | `python/` | `0.3.1` |
+| npm | `@runinfra/sdk` | `typescript/` | `0.3.2` |
+| PyPI | `runinfra` | `python/` | `0.3.2` |
 
 Registry latest is `0.2.0` on both npm and PyPI. Future releases must still use
 the protected trusted-publish workflow from `main`.
@@ -89,7 +89,7 @@ Important PyPI details:
 | `client.webhooks.verifySignature`, `client.webhooks.constructEvent` | Local helpers, covered by unit tests |
 | Webhook delivery create/list | Not shipped and not exposed on the public SDK surface |
 
-Python remains sync-only in `0.3.1`. Do not claim async support until an
+Python remains sync-only in `0.3.2`. Do not claim async support until an
 `AsyncRunInfra` client has matching unit tests, streaming tests, live canaries,
 and clean-install coverage.
 
